@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Localhost Inspector",
+  "version": "0.1.0",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "action": { "default_title": "Attach Localhost Inspector" },
+  "options_page": "settings.html",
+  "background": { "service_worker": "worker.js" }
+}
