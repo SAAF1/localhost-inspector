@@ -2,6 +2,18 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHarness } from './harness.mjs'
 
+test('font failure leaves a visible, usable inspector with an explicit fallback state', async () => {
+  const h = await createHarness({ fontFailure: true })
+  try {
+    assert.equal(await h.host.getAttribute('data-font-state'), 'fallback')
+    assert.equal(await h.host.getByRole('button', { name: 'Inspector', exact: true }).isVisible(), true)
+    await h.open(); await h.select()
+    await h.enter('Font size', 18); await h.settled()
+    assert.equal(await h.css('font-size'), '18px')
+    assert.equal((await h.journal()).length, 1)
+  } finally { await h.close() }
+})
+
 test('reverse flex directions align to the physical edge selected in the matrix', async () => {
   const h = await createHarness()
   try {

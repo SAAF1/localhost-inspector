@@ -34,14 +34,18 @@
       input.addEventListener('keydown', event => {
         if (event.key === 'Enter') { event.preventDefault(); input.blur() }
       })
-      input.onchange = () => run(async () => {
-        if (!node.isConnected) return
-        if (!input.checkValidity() || !input.value.trim()) {
-          input.setAttribute('aria-invalid', 'true')
-          throw Error('Enter a valid value')
-        }
-        await submit(input)
-      })
+      input.onchange = () => {
+        // Disabled inputs do not participate in browser constraint validation.
+        const valid = input.checkValidity() && Boolean(input.value.trim())
+        return run(async () => {
+          if (!node.isConnected) return
+          if (!valid) {
+            input.setAttribute('aria-invalid', 'true')
+            throw Error('Enter a valid value')
+          }
+          await submit(input)
+        })
+      }
     }
     const numeric = (property, label, glyph, settings = {}) => {
       const field = ui.element('div', 'li-field')
@@ -73,7 +77,7 @@
         const trigger = button('Width mode', 'chevronDown', () => {})
         trigger.classList.add('li-field-trigger', 'li-width-mode-trigger')
         attachMenu(trigger, 'Width mode', [['fill', 'Fill container'], ['hug', 'Hug contents']], '',
-          mode => change(property, mode === 'fill' ? '100%' : 'fit-content'))
+          mode => change(property, mode === 'fill' ? '100%' : 'fit-content'), { commands: true })
         field.append(trigger)
       }
       return field

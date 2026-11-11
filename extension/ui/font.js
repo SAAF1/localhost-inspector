@@ -98,12 +98,26 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 (() => {
   const ui = window.LocalhostInspector ||= {}
   const url = chrome.runtime.getURL('assets/inter-latin.woff2')
-  ui.fontReady = fetch(url).then(response => {
+  const controller = new AbortController()
+  let timeout
+  const load = async () => {
+    const response = await fetch(url, { signal: controller.signal })
     if (!response.ok) throw Error('Inspector font unavailable')
-    return response.arrayBuffer()
-  }).then(async data => {
+    const data = await response.arrayBuffer()
     const face = new FontFace('Localhost Inspector Inter', data, { weight: '100 900' })
-    document.fonts.add(await face.load())
+    return face.load()
+  }
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort()
+      reject(Error('Inspector font loading timed out'))
+    }, 3000)
+  })
+  ui.fontReady = Promise.race([load(), deadline]).then(face => {
+    document.fonts.add(face)
     return true
-  }).catch(() => false)
+  }).catch(error => {
+    console.warn('Localhost Inspector: using fallback font.', error.message)
+    return false
+  }).finally(() => clearTimeout(timeout))
 })()

@@ -3,7 +3,7 @@
   let closeActive = () => {}
   ui.closeMenu = () => closeActive()
 
-  ui.openMenu = (anchor, options, current, onChoose, { label = 'Options', size = false } = {}) => {
+  ui.openMenu = (anchor, options, current, onChoose, { label = 'Options', size = false, commands = false } = {}) => {
     closeActive()
     const root = anchor.getRootNode()
     const menu = ui.element('div', 'li-menu' + (size ? ' li-size-menu' : ''))
@@ -15,10 +15,10 @@
     const buttons = options.map(([value, name]) => {
       const button = ui.element('button', 'li-menu-option')
       button.type = 'button'
-      button.setAttribute('role', 'menuitemradio')
-      button.setAttribute('aria-checked', String(value === current))
+      button.setAttribute('role', commands ? 'menuitem' : 'menuitemradio')
+      if (!commands) button.setAttribute('aria-checked', String(value === current))
       const check = ui.element('span', 'li-menu-check')
-      if (value === current) check.append(ui.icon('menuCheck'))
+      if (!commands && value === current) check.append(ui.icon('menuCheck'))
       button.append(check, ui.element('span', '', name))
       button.onclick = () => { close(); onChoose(value) }
       list.append(button)
@@ -46,11 +46,18 @@
     }
     const reposition = event => { if (!event.composedPath().includes(menu)) close(false) }
     menu.onkeydown = event => {
-      const index = buttons.indexOf(root.activeElement)
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close() }
-      if (event.key === 'Tab') close(false)
-      const moves = { ArrowDown: (index + 1) % buttons.length, ArrowUp: (index - 1 + buttons.length) % buttons.length, Home: 0, End: buttons.length - 1 }
-      if (event.key in moves) { event.preventDefault(); buttons[moves[event.key]].focus() }
+      // Restore the trigger before native Tab traversal, so focus advances from
+      // its position rather than from the menu node we just removed.
+      if (event.key === 'Tab') { close(); return }
+      const controls = Array.from(menu.querySelectorAll('button'))
+      const index = controls.indexOf(root.activeElement)
+      const moves = { ArrowDown: (index + 1) % controls.length, ArrowUp: (index - 1 + controls.length) % controls.length }
+      if (event.key in moves) { event.preventDefault(); controls[moves[event.key]].focus() }
+      if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault()
+        buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus()
+      }
     }
     root.append(menu)
     const rect = anchor.getBoundingClientRect()
@@ -64,5 +71,6 @@
     document.addEventListener('scroll', reposition, true)
     closeActive = close
     buttons[selected]?.focus({ preventScroll: true })
+    buttons[selected]?.scrollIntoView({ block: 'nearest' })
   }
 })()

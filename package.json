@@ -7,6 +7,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "dev": "node scripts/dev.mjs",
     "lint": "biome lint extension local-helper.mjs tests scripts",
     "test": "node --test tests/*.test.mjs",
     "test:browser": "node --test tests/browser/*.test.mjs",

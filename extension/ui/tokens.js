@@ -11,9 +11,13 @@
       --li-gap: 8px;
       --li-radius: 6px;
       --li-icon-size: 16px;
+      --li-alignment-height: 56px;
+      --li-flow-width: 92px;
+      --li-flow-option-width: 46px;
       --li-font: 'Localhost Inspector Inter', Inter, sans-serif;
       --li-type-size: 11px;
       --li-line-height: 16px;
+      --li-label-line-height: 12px;
       --li-caption-size: 9.75px;
       --li-label-size: 9px;
       --li-heading-size: 11px;

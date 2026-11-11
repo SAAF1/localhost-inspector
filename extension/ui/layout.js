@@ -68,7 +68,7 @@
       controls.attachMenu(advanced, 'Container alignment', [
         ...[...new Set([controls.value('justify-content'), ...ui.choices.distribution])].map(value => ['justify-content:' + value, 'Distribution: ' + value]),
         ...[...new Set([controls.value('align-items'), ...ui.choices.alignment])].map(value => ['align-items:' + value, 'Alignment: ' + value]),
-      ], '', value => { const [property, requested] = value.split(':'); controls.change(property, requested) })
+      ], '', value => { const [property, requested] = value.split(':'); controls.change(property, requested) }, { commands: true })
       const row = ui.row(ui.stack('Alignment', matrix), ui.stack('Gap', controls.numeric('gap', 'Gap', 'gapHorizontal')), advanced)
       row.classList.add('li-alignment-row')
       content.push(row)

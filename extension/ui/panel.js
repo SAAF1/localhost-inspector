@@ -3,7 +3,12 @@
   ui.createPanel = () => {
     const host = document.createElement('div')
     host.id = 'localhost-inspector'
-    host.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:2147483647'
+    host.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:2147483647;visibility:hidden'
+    host.dataset.fontState = 'loading'
+    ui.fontReady.then(loaded => {
+      host.dataset.fontState = loaded ? 'loaded' : 'fallback'
+      host.style.removeProperty('visibility')
+    })
     const root = host.attachShadow({ mode: 'open' })
     const style = document.createElement('style')
     style.textContent = ui.tokens + ui.styles
