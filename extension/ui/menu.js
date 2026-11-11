@@ -12,14 +12,21 @@
     anchor.setAttribute('aria-expanded', 'true')
     const list = ui.element('div', 'li-menu-list')
     menu.append(list)
-    const buttons = options.map(([value, name]) => {
+    const buttons = options.map(([value, name, detail = {}]) => {
+      if (detail.separator) {
+        const divider = ui.element('div', 'li-menu-divider')
+        divider.setAttribute('role', 'separator')
+        list.append(divider)
+      }
       const button = ui.element('button', 'li-menu-option')
       button.type = 'button'
       button.setAttribute('role', commands ? 'menuitem' : 'menuitemradio')
       if (!commands) button.setAttribute('aria-checked', String(value === current))
       const check = ui.element('span', 'li-menu-check')
       if (!commands && value === current) check.append(ui.icon('menuCheck'))
-      button.append(check, ui.element('span', '', name))
+      button.append(check)
+      if (detail.icon) button.append(ui.icon(detail.icon))
+      button.append(ui.element('span', '', name))
       button.onclick = () => { close(); onChoose(value) }
       list.append(button)
       return button

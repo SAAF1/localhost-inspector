@@ -32,7 +32,7 @@ async function inject(tabId) {
   if (!mounted) {await chrome.scripting.executeScript({ target: { tabId }, files: [
     'bridge.js', 'ui/font.js', 'ui/tokens.js', 'ui/styles.js', 'ui/icons.js', 'ui/dom.js',
     'ui/policy.js', 'ui/menu.js', 'ui/controls.js', 'ui/padding.js',
-    'ui/layout.js', 'ui/sections.js', 'ui/panel.js', 'inspector.js',
+    'ui/resizing.js', 'ui/layout.js', 'ui/sections.js', 'ui/panel.js', 'inspector.js',
   ] })}
 }
 

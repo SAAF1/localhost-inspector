@@ -69,6 +69,7 @@ async function run() {
     const host = page.locator('#localhost-inspector')
     await host.locator('#entry').click()
     await page.locator('body > #target').click({ modifiers: ['Meta'], position: { x: 5, y: 5 } })
+    await host.locator('.li-layout-section').waitFor({ state: 'visible', timeout: 5000 })
     await page.bringToFront()
     console.log('Inspector development fixture: ' + origin)
     console.log('Use the Chrome for Testing window for the inspector. Command-click selects; edits are temporary. Stop or close Chrome to clean up.')

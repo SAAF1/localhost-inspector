@@ -81,6 +81,8 @@ const colors = new Set(['color','background-color','border-color'])
 function validValue(property, value) {
   if (typeof value !== 'string' || value.length > 100) return false
   if (property === 'width' && ['100%', 'fit-content'].includes(value)) return true
+  if (['min-width', 'min-height'].includes(property) && value === 'auto') return true
+  if (['max-width', 'max-height'].includes(property) && value === 'none') return true
   if (pixelProperties.has(property)) return /^-?\d+(\.\d+)?px$/.test(value)
   if (property === 'font-weight') return /^(normal|bold|[1-9]00)$/.test(value)
   if (colors.has(property)) return /^(#[0-9a-f]{3,8}|rgba?\([\d.,% /]+\)|[a-z]{3,20})$/i.test(value)

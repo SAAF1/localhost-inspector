@@ -73,11 +73,12 @@
           size => change(property, size + 'px'), { size: true })
         field.append(trigger)
       }
-      if (property === 'width' && ui.widthModes(node).length) {
-        const trigger = button('Width mode', 'chevronDown', () => {})
-        trigger.classList.add('li-field-trigger', 'li-width-mode-trigger')
-        attachMenu(trigger, 'Width mode', [['fill', 'Fill container'], ['hug', 'Hug contents']], '',
-          mode => change(property, mode === 'fill' ? '100%' : 'fit-content'), { commands: true })
+      if (settings.menu?.options.length) {
+        const { label: menuLabel, options, choose, current: selected = '' } = settings.menu
+        const trigger = button(menuLabel, 'chevronDown', () => {})
+        trigger.classList.add('li-field-trigger')
+        if (property === 'width' || property === 'height') trigger.classList.add('li-width-mode-trigger')
+        attachMenu(trigger, menuLabel, options, selected, choose, { commands: true })
         field.append(trigger)
       }
       return field

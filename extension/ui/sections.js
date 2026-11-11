@@ -27,7 +27,10 @@
     ui.closeMenu()
     container.replaceChildren()
     const controls = ui.createControls(context)
-    const refresh = () => ui.renderInspector(container, { ...context, style: getComputedStyle(context.node) })
+    const refresh = focusProperty => {
+      ui.renderInspector(container, { ...context, style: getComputedStyle(context.node) })
+      if (focusProperty) container.querySelector('#control-' + focusProperty)?.focus()
+    }
     const appearance = ui.section('Appearance', ui.stack('Corner radius', controls.numeric('border-radius', 'Corner radius', 'cornerRadius')))
     appearance.classList.add('li-appearance-section')
     container.append(

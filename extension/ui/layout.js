@@ -18,18 +18,7 @@
       row.classList.add('li-flow-actions')
       content.push(ui.stack('Flow', row))
     }
-    content.push(ui.stack('Resizing', ui.row(
-      controls.numeric('width', 'Width', null, { prefix: 'W' }), controls.numeric('height', 'Height', null, { prefix: 'H' }),
-    )))
-    const bound = (property, label, icon) => ui.stack(label, controls.numeric(property, label, icon, {
-      placeholder: controls.value(property) === 'none' ? (property === 'max-width' ? 'Max W' : 'Max H') : controls.value(property),
-    }), true)
-    const bounds = ui.element('div', 'li-bounds')
-    bounds.append(
-      ui.row(bound('min-width', 'Min width', 'minWidth'), bound('max-width', 'Max width', 'maxWidth')),
-      ui.row(bound('min-height', 'Min height', 'minHeight'), bound('max-height', 'Max height', 'maxHeight')),
-    )
-    content.push(bounds)
+    content.push(...ui.resizingControls(context, controls, refresh))
     // Grid-only editing remains deferred; no grid mode or grid conversion is added.
     if (['flex', 'inline-flex'].includes(style.display)) {
       const matrix = ui.element('div', 'li-matrix')

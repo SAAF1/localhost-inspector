@@ -38,6 +38,10 @@ test('invalid and failed saves leave the inspected app unchanged', async () => {
     assert.equal(await h.css('font-size'), '12px')
     assert.match(await h.host.locator('#status').innerText(), /save failure/)
     assert.equal((await h.journal()).length, 0)
+    await h.page.evaluate(() => { window.LocalhostInspector.resizingControls = undefined })
+    await h.select()
+    assert.match(await h.host.locator('#status').innerText(), /controls could not load/)
+    assert.match(await h.host.locator('#fields').innerText(), /Reload the extension/)
   } finally { await h.close() }
 })
 
@@ -111,4 +115,64 @@ test('padding expansion preserves unequal values and axis edits have reversible 
     assert.equal(await h.field('Left padding').inputValue(), '30')
     assert.equal(await h.field('Right padding').inputValue(), '24')
   } finally { await h.close() }
+})
+
+test('optional bounds add without edits, remove through the journal, and survive failed removal and Undo', async () => {
+  for (const [axis, bound, reset] of [['width', 'min', 'auto'], ['height', 'max', 'none']]) {
+    const h = await createHarness({ failSave: 3 })
+    try {
+      await h.open(); await h.select()
+      const label = bound[0].toUpperCase() + bound.slice(1) + ' ' + axis
+      const property = bound + '-' + axis
+      const field = h.field(label)
+      assert.equal(await field.count(), 0, 'Default bounds are hidden')
+      await h.host.getByRole('button', { name: (axis === 'width' ? 'Width' : 'Height') + ' resizing', exact: true }).click()
+      assert.equal(await h.host.getByRole('menuitem', { name: /Fill container|Hug contents/ }).count(), axis === 'width' ? 2 : 0)
+      await h.host.getByRole('menuitem', { name: 'Add ' + bound + ' ' + axis + '…', exact: true }).click()
+      assert.equal(await field.inputValue(), '')
+      assert.equal(await field.evaluate(input => input.getRootNode().activeElement === input), true, 'The revealed field is ready to type into')
+      assert.equal(await field.getAttribute('placeholder'), bound[0].toUpperCase() + bound.slice(1) + ' ' + (axis === 'width' ? 'W' : 'H'))
+      assert.equal((await h.journal()).length, 0, 'Revealing a field does not change the app')
+      await h.enter(label, 40); await h.settled()
+      assert.equal(await h.css(property), '40px')
+      const remove = async () => {
+        await h.host.getByRole('button', { name: label + ' options', exact: true }).click()
+        await h.host.getByRole('menuitem', { name: 'Remove ' + bound + ' ' + axis, exact: true }).click()
+        await h.settled()
+      }
+      await remove()
+      assert.equal(await field.count(), 0)
+      assert.equal((await h.journal()).at(-1).requested, reset)
+      await h.host.getByRole('button', { name: 'Undo', exact: true }).click(); await h.settled()
+      assert.equal(await field.inputValue(), '40')
+      assert.equal(await h.css(property), '40px')
+      await remove()
+      assert.equal(await field.inputValue(), '40', 'Failed removal keeps the constraint visible')
+      assert.equal(await h.css(property), '40px')
+      assert.equal((await h.journal()).length, 2)
+      assert.match(await h.host.locator('#status').innerText(), /save failure/)
+      await h.page.locator('body > #other').evaluate(node => { node.style.minHeight = '20px'; node.parentElement.style.display = 'flex' })
+      await h.select('body > #other')
+      assert.equal(await h.field('Min height').inputValue(), '20', 'Existing constraints are visible without an Add command')
+      await h.host.getByRole('button', { name: 'Width resizing', exact: true }).click()
+      assert.equal(await h.host.getByRole('menuitem', { name: /Fill container|Hug contents/ }).count(), 0, 'Bounds menus remain available where width modes are ineligible')
+      if (axis === 'width') {
+        await h.page.keyboard.press('Escape')
+        await h.page.evaluate(() => {
+          const wrapper = document.createElement('div')
+          const inline = document.createElement('span')
+          inline.id = 'inline-target'
+          inline.textContent = 'Inline target'
+          wrapper.append(inline)
+          document.body.append(wrapper)
+        })
+        await h.select('#inline-target')
+        for (const bound of ['min', 'max']) {
+          await h.host.getByRole('button', { name: 'Width resizing', exact: true }).click()
+          await h.host.getByRole('menuitem', { name: 'Add ' + bound + ' width…', exact: true }).click()
+        }
+        assert.equal(await h.host.getByRole('button', { name: 'Width resizing', exact: true }).count(), 0, 'No empty menu trigger remains when every available bound is revealed')
+      }
+    } finally { await h.close() }
+  }
 })

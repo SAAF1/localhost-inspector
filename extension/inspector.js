@@ -54,15 +54,22 @@
     }
     const node = selected
     const version = activeRouteVersion
-    ui.renderInspector(fields, {
-      node, style: getComputedStyle(node), disabled: comparing || busy, run,
-      commit: async (property, requested) => {
-        if (selected !== node || !node.isConnected || version !== activeRouteVersion) {
-          throw Error('Selection changed. Earlier saved changes remain available to Undo.')
-        }
-        await commitEdit(node, property, requested)
-      },
-    })
+    try {
+      ui.renderInspector(fields, {
+        node, style: getComputedStyle(node), disabled: comparing || busy, run,
+        commit: async (property, requested) => {
+          if (selected !== node || !node.isConnected || version !== activeRouteVersion) {
+            throw Error('Selection changed. Earlier saved changes remain available to Undo.')
+          }
+          await commitEdit(node, property, requested)
+        },
+      })
+    } catch (error) {
+      console.error('Localhost Inspector controls failed to render:', error)
+      const message = 'Inspector controls could not load. Reload the extension and try again.'
+      fields.replaceChildren(ui.element('p', 'li-empty', message))
+      status(message)
+    }
   }
   function select(node) {
     selected = node
@@ -102,7 +109,8 @@
     const mode = ['100%', 'fit-content'].includes(requested)
     const dimensions = property === 'width' || property === 'height'
     const changedSize = () => Math.abs(measure() - beforeSize) > 0.5
-    const sameValue = () => observed === declared || observed === requested
+    const sameValue = () => observed === declared || observed === requested ||
+      (['min-width', 'min-height'].includes(property) && requested === 'auto' && observed === '0px')
     const verified = () => mode ? changedSize() : sameValue() && (!dimensions || changedSize() || baseline === observed)
     const deadline = performance.now() + 550
     while (node.isConnected && !verified() && performance.now() < deadline) {

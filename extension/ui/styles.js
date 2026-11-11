@@ -54,7 +54,7 @@
       padding: 5px 8px 16px 16px;
     }
     .li-flow-actions { justify-content: space-between; }
-    .li-bounds { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+    .li-bounds { display: flex; flex-direction: column; gap: 8px; }
     .li-layout-section .li-body { padding-top: 8px; }
     .li-layout-section .li-body > .li-stack:has(.li-flow-actions) + .li-stack { margin-top: -4px; }
     .li-padding { margin-top: -2px; }
