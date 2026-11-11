@@ -4,6 +4,10 @@ Localhost Inspector brings a Figma-style design inspector to a running local web
 
 The Chrome extension handles selection and previews. A local helper remembers which working copy serves the app and saves edits to a JSON journal. A coding agent can read that journal, inspect the source, and make a scoped change without a clipboard handoff.
 
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) before changing the extension. It describes the module boundaries, edit-safety rules, current scope, and the checks expected before handoff.
+
 ## The workflow
 
 1. Start a local app as usual and attach the inspector to its tab.

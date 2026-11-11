@@ -1,0 +1,36 @@
+{
+  "files": {
+    "includes": [
+      "extension/**",
+      "local-helper.mjs",
+      "tests/**",
+      "scripts/**"
+    ]
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "assist": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnreachable": "error",
+        "noUnsafeFinally": "error",
+        "noUnusedImports": "error"
+      },
+      "suspicious": {
+        "noDoubleEquals": "error",
+        "noDuplicateObjectKeys": "error",
+        "noVar": "error"
+      },
+      "style": {
+        "useConst": "error"
+      },
+      "preset": "none"
+    }
+  }
+}

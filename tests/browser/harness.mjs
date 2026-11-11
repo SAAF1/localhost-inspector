@@ -1,0 +1,78 @@
+import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { chromium } from 'playwright'
+import { injectedFiles, project } from '../../scripts/check-modules.mjs'
+
+const fixture = `<!doctype html><style>
+  body{margin:24px;font:14px sans-serif;background:#eee}
+  #target{box-sizing:border-box;display:flex;flex-direction:row;align-items:center;justify-content:start;
+    width:240px;height:100px;padding:16px;gap:8px;border:1px solid #1c1c1c;border-radius:0;
+    font-size:12px;line-height:16px;letter-spacing:0;color:#1c1c1c;background:#fff}
+  #target span{width:24px;height:20px;flex:none;background:#ddd}
+  #other{display:block;margin-top:24px;width:120px;height:30px}
+</style><div id="target"><span>One</span><span>Two</span></div><button id="other">Other target</button>
+<div role="dialog" id="dialog">Overlay target</div>`
+
+export async function createHarness(options = {}) {
+  const server = createServer(async (request, response) => {
+    if (request.url === '/assets/inter-latin.woff2') {
+      response.setHeader('Content-Type', 'font/woff2')
+      response.end(await readFile(join(project, 'extension/assets/inter-latin.woff2')))
+    } else { response.setHeader('Content-Type', 'text/html'); response.end(fixture) }
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  let browser
+  try {
+    browser = await chromium.launch({ headless: true, ...(process.env.INSPECTOR_BROWSER ? { executablePath: process.env.INSPECTOR_BROWSER } : {}) })
+    const page = await browser.newPage({ viewport: { width: 1100, height: 1400 }, deviceScaleFactor: 2 })
+    const errors = []
+    page.on('pageerror', error => errors.push(error.message))
+    await page.goto('http://127.0.0.1:' + server.address().port)
+    await page.evaluate(settings => {
+      window.chrome = { runtime: { getURL: path => location.origin + '/' + path } }
+      window.__journal = settings.journal || []
+      window.__saveCount = 0
+      window.__settings = settings
+      if (settings.restoreFailure) {
+        const style = document.createElement('style')
+        style.textContent = '#target { width: 240px !important }'
+        document.head.append(style)
+      }
+      window.phaseABridge = async message => {
+        if (message.type === 'load') return window.__journal
+        if (message.type === 'save') {
+          window.__saveCount++
+          if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
+          if (window.__settings.failSave === window.__saveCount) throw Error('Simulated save failure')
+          window.__journal.push(message.record)
+        }
+        if (message.type === 'undo') window.__journal.find(edit => edit.id === message.id).undone = true
+        if (message.type === 'reset') window.__journal.forEach(edit => { if (edit.route === message.route) edit.undone = true })
+      }
+    }, options)
+    for (const file of (await injectedFiles()).filter(file => file !== 'bridge.js')) {
+      await page.addScriptTag({ content: await readFile(join(project, 'extension', file), 'utf8') })
+    }
+    await page.evaluate(() => window.phaseAInspectorReady)
+    await page.evaluate(() => window.LocalhostInspector.fontReady)
+    const host = page.locator('#localhost-inspector')
+    const open = async () => host.locator('#entry').click()
+    const select = async (selector = 'body > #target') => page.locator(selector).click({ modifiers: ['Meta'], position: { x: 5, y: 5 } })
+    const field = name => host.getByRole('spinbutton', { name, exact: true })
+    const enter = async (name, value) => { await field(name).fill(String(value)); await field(name).press('Enter') }
+    const journal = () => page.evaluate(() => window.__journal)
+    const css = property => page.locator('body > #target').evaluate((node, key) => getComputedStyle(node).getPropertyValue(key), property)
+    const settled = () => page.waitForFunction(() => !document.querySelector('#localhost-inspector').shadowRoot.getElementById('clear').disabled)
+    const close = async () => {
+      try { await browser.close(); assert.deepEqual(errors, [], 'No uncaught browser errors') }
+      finally { await new Promise(resolve => server.close(resolve)) }
+    }
+    return { page, host, open, select, field, enter, journal, css, settled, close }
+  } catch (error) {
+    await browser?.close()
+    await new Promise(resolve => server.close(resolve))
+    throw error
+  }
+}

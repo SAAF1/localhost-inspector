@@ -29,7 +29,11 @@ async function inject(tabId) {
   const [{ result: mounted }] = await chrome.scripting.executeScript({
     target: { tabId }, func: () => Boolean(window.phaseAInspectorReady),
   })
-  if (!mounted) await chrome.scripting.executeScript({ target: { tabId }, files: ['bridge.js', 'inspector.js'] })
+  if (!mounted) {await chrome.scripting.executeScript({ target: { tabId }, files: [
+    'bridge.js', 'ui/font.js', 'ui/tokens.js', 'ui/styles.js', 'ui/icons.js', 'ui/dom.js',
+    'ui/policy.js', 'ui/menu.js', 'ui/controls.js', 'ui/padding.js',
+    'ui/layout.js', 'ui/sections.js', 'ui/panel.js', 'inspector.js',
+  ] })}
 }
 
 async function attach(tabId, origin) {
