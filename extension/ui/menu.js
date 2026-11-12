@@ -4,8 +4,12 @@
   ui.closeMenu = () => closeActive()
 
   ui.openMenu = (anchor, options, current, onChoose, { label = 'Options', size = false, commands = false } = {}) => {
+    ui.dismissTooltip()
     closeActive()
     const root = anchor.getRootNode()
+    const owner = anchor.ownerDocument
+    const viewport = owner.defaultView
+    const eventDocuments = owner === document ? [owner] : [owner, document]
     const menu = ui.element('div', 'li-menu' + (size ? ' li-size-menu' : ''))
     menu.setAttribute('role', 'menu')
     menu.setAttribute('aria-label', label)
@@ -42,9 +46,11 @@
     const close = (focus = true) => {
       menu.remove()
       anchor.setAttribute('aria-expanded', 'false')
-      document.removeEventListener('pointerdown', outside, true)
-      window.removeEventListener('resize', reposition)
-      document.removeEventListener('scroll', reposition, true)
+      for (const target of eventDocuments) {
+        target.removeEventListener('pointerdown', outside, true)
+        target.removeEventListener('scroll', reposition, true)
+      }
+      viewport.removeEventListener('resize', reposition)
       closeActive = () => {}
       if (focus && anchor.isConnected) anchor.focus()
     }
@@ -69,13 +75,15 @@
     root.append(menu)
     const rect = anchor.getBoundingClientRect()
     const selected = Math.max(0, options.findIndex(([value]) => value === current))
-    const height = Math.min(menu.scrollHeight, innerHeight - 16)
-    menu.style.maxHeight = (innerHeight - 16) + 'px'
-    menu.style.left = Math.max(8, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8)) + 'px'
-    menu.style.top = Math.max(8, Math.min(rect.top - selected * 24 - 8, innerHeight - height - 8)) + 'px'
-    document.addEventListener('pointerdown', outside, true)
-    window.addEventListener('resize', reposition)
-    document.addEventListener('scroll', reposition, true)
+    const height = Math.min(menu.scrollHeight, viewport.innerHeight - 16)
+    menu.style.maxHeight = (viewport.innerHeight - 16) + 'px'
+    menu.style.left = Math.max(8, Math.min(rect.right - menu.offsetWidth, viewport.innerWidth - menu.offsetWidth - 8)) + 'px'
+    menu.style.top = Math.max(8, Math.min(rect.top - selected * 24 - 8, viewport.innerHeight - height - 8)) + 'px'
+    for (const target of eventDocuments) {
+      target.addEventListener('pointerdown', outside, true)
+      target.addEventListener('scroll', reposition, true)
+    }
+    viewport.addEventListener('resize', reposition)
     closeActive = close
     buttons[selected]?.focus({ preventScroll: true })
     buttons[selected]?.scrollIntoView({ block: 'nearest' })

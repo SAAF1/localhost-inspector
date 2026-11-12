@@ -1,96 +1,82 @@
 (() => {
   if (!window.phaseABridge) return
   const ui = window.LocalhostInspector
-  const { host, root, panel, get } = ui.createPanel()
-  const entries = new Map()
-  const history = []
-  let selected
+  const { host, root, panel, setOpen, get } = ui.createPanel()
+  const selection = ui.createSelection({ host, panel, get, onSelect: renderFields })
+  const revertDialog = ui.createRevertDialog(root)
+  const temporary = new Set()
+  const recovery = ui.createPreviewRecovery({ apply: applyRestored, remove, canEdit })
+  const fields = get('fields')
+  let renderedSelection
   let busy = false
+  let loadingRoute = true
   let comparing = false
-  let comparison = []
-  let selectionObserver
+  let recoveryScheduled = false
+  let recoveryRequested = false
   let activeRouteVersion = 0
 
-  const normalize = (text) => text?.trim().replace(/\s+/g, ' ') ?? ''
-  function describe(node) {
-    return {
-      tag: node.localName,
-      id: node.id || null,
-      slot: node.getAttribute('data-slot'),
-      text: normalize(node.innerText).slice(0, 100),
-    }
-  }
-  function candidates(target) {
-    return Array.from(document.getElementsByTagName(target.tag)).filter(node =>
-      node.isConnected && (target.id ? node.id === target.id : (
-        node.getAttribute('data-slot') === target.slot &&
-        Boolean(target.text) && normalize(node.innerText).slice(0, 100) === target.text
-      ))
-    )
-  }
-  const supported = ui.supported
-  function syncOutline() {
-    const outline = get('outline')
-    outline.hidden = panel.hidden || !selected?.isConnected
-    if (outline.hidden) return
-    const box = selected.getBoundingClientRect()
-    Object.assign(outline.style, { left: box.left + 'px', top: box.top + 'px', width: box.width + 'px', height: box.height + 'px' })
+  function canEdit(node, property) {
+    return node.isConnected && !overlayFor(node) && ui.supported(property, node)
   }
   function overlayFor(node) {
     return node?.closest('[role=menu], [role=dialog], [role=alertdialog], [role=listbox], dialog[open], :popover-open')
   }
+  function renderActions() {
+    const pageActionsUnavailable = busy || loadingRoute
+    const parent = get('parent')
+    parent.hidden = !selection.parent()
+    parent.disabled = busy
+    get('undo').disabled = pageActionsUnavailable || comparing || !recovery.hasSaved
+    const compare = get('clear')
+    compare.disabled = pageActionsUnavailable || (!comparing && !recovery.hasAttached)
+    compare.setAttribute('aria-pressed', String(comparing))
+    ui.setTooltip(compare, comparing ? 'Show previews' : 'Show original')
+    get('comparison-mode').hidden = !comparing
+    get('reset').disabled = pageActionsUnavailable || !recovery.hasSaved
+  }
   function renderFields() {
+    ui.dismissTooltip()
     ui.closeMenu()
-    const fields = get('fields')
-    fields.replaceChildren()
-    get('parent').disabled = busy || !selected?.parentElement
-    get('undo').disabled = busy || comparing || history.length === 0
-    get('clear').disabled = busy
-    get('reset').disabled = busy
-    if (!selected?.isConnected) return
-    if (overlayFor(selected)) {
-      fields.append(ui.element('p', 'li-empty', 'Editing inside an open overlay is unavailable.'))
+    renderActions()
+    const node = selection.current
+    const hasSelection = Boolean(node?.isConnected)
+    get('guidance').hidden = hasSelection
+    if (node !== renderedSelection) {
+      renderedSelection = node
+      fields.replaceChildren()
+    }
+    if (!hasSelection) return
+    if (overlayFor(node)) {
+      ui.updateInspectorFields(fields, [ui.element('p', 'li-empty', 'Editing inside an open overlay is unavailable.')])
       return
     }
-    const node = selected
     const version = activeRouteVersion
     try {
       ui.renderInspector(fields, {
-        node, style: getComputedStyle(node), disabled: comparing || busy, run,
-        commit: async (property, requested) => {
-          if (selected !== node || !node.isConnected || version !== activeRouteVersion) {
+        node, style: getComputedStyle(node), disabled: comparing || loadingRoute, run,
+        commit: async (property, requested, target = node) => {
+          if (selection.current !== node || !node.isConnected || !isCurrentRoute(currentRoute, version) || loadingRoute ||
+              (target !== node && (!node.contains(target) || !ui.textTargets(node).includes(target)))) {
             throw Error('Selection changed. Earlier saved changes remain available to Undo.')
           }
-          await commitEdit(node, property, requested)
+          await commitEdit(target, property, requested)
         },
       })
+      ui.setFieldsSaving(fields, busy)
     } catch (error) {
       console.error('Localhost Inspector controls failed to render:', error)
       const message = 'Inspector controls could not load. Reload the extension and try again.'
-      fields.replaceChildren(ui.element('p', 'li-empty', message))
-      status(message)
+      ui.updateInspectorFields(fields, [ui.element('p', 'li-empty', message)])
+      status(message, true)
     }
   }
-  function select(node) {
-    selected = node
-    selectionObserver?.disconnect()
-    if (node) {
-      selectionObserver = new ResizeObserver(syncOutline)
-      selectionObserver.observe(node)
-    }
-    get('target').textContent = node ? node.localName + ' · ' + normalize(node.innerText).slice(0, 36) : 'Command-click an element'
-    renderFields()
-    syncOutline()
-  }
-  window.addEventListener('scroll', syncOutline, true)
-  window.addEventListener('resize', syncOutline)
   function remove(entry) {
     const { node, property, prior, priorPriority, requested } = entry
     if (node.style.getPropertyValue(property) !== requested || node.style.getPropertyPriority(property) !== '') return
     if (prior) node.style.setProperty(property, prior, priorPriority)
     else node.style.removeProperty(property)
   }
-  async function apply(node, property, requested) {
+  async function apply(node, property, requested, isCurrent) {
     if (!CSS.supports(property, requested)) throw Error('That value is not valid for this control')
     const baseline = getComputedStyle(node).getPropertyValue(property)
     const prior = node.style.getPropertyValue(property)
@@ -105,6 +91,8 @@
     const beforeSize = measure()
     node.style.setProperty(property, requested)
     const declared = node.style.getPropertyValue(property)
+    const entry = { node, property, requested: declared, before: baseline, prior, priorPriority }
+    temporary.add(entry)
     let observed = getComputedStyle(node).getPropertyValue(property)
     const mode = ['100%', 'fit-content'].includes(requested)
     const dimensions = property === 'width' || property === 'height'
@@ -113,159 +101,251 @@
       (['min-width', 'min-height'].includes(property) && requested === 'auto' && observed === '0px')
     const verified = () => mode ? changedSize() : sameValue() && (!dimensions || changedSize() || baseline === observed)
     const deadline = performance.now() + 550
-    while (node.isConnected && !verified() && performance.now() < deadline) {
+    while (isCurrent() && node.isConnected && !verified() && performance.now() < deadline) {
       await new Promise(requestAnimationFrame)
       observed = getComputedStyle(node).getPropertyValue(property)
     }
-    const entry = { node, property, input: requested, requested: declared, before: baseline, observed, prior, priorPriority }
-    if (!node.isConnected || !verified()) {
-      remove(entry)
+    if (!isCurrent() || !node.isConnected || !verified()) {
+      discardTemporary(entry)
       throw Error(dimensions ? 'The box did not resize as requested. Check its layout constraints.' : 'The browser kept a different value')
     }
+    entry.observed = observed
     return entry
   }
+  function discardTemporary(entry) {
+    if (temporary.delete(entry)) remove(entry)
+  }
+  async function applyRestored(node, property, value, isCurrent) {
+    const entry = await apply(node, property, value, isCurrent)
+    return temporary.delete(entry) ? entry : null
+  }
   const route = () => location.pathname + location.search
-  const status = (message) => { get('status').textContent = message }
+  const isCurrentRoute = (path, version) => path === route() && version === activeRouteVersion
+  function status(message, error = false) {
+    const notice = get('status')
+    notice.textContent = message
+    notice.toggleAttribute('data-error', error)
+  }
   const send = (message) => window.phaseABridge(message)
   async function run(action) {
-    if (busy) return
-    busy = true
-    root.querySelectorAll('input, button').forEach(control => { if (control.id !== 'entry') control.disabled = true })
-    try { await action() } catch (error) { status(error.message) }
-    finally { busy = false; renderFields(); syncOutline() }
-  }
-  get('entry').onclick = () => { ui.closeMenu(); panel.hidden = !panel.hidden; get('entry').setAttribute('aria-expanded', String(!panel.hidden)); syncOutline() }
-  get('parent').onclick = () => { if (selected?.parentElement) select(selected.parentElement) }
-  function isSelectionGesture(event) {
-    return !panel.hidden && event.metaKey && event.button === 0 && !event.composedPath().includes(host)
-  }
-  function preventPress(event) {
-    if (!isSelectionGesture(event)) return
-    event.preventDefault()
-    event.stopImmediatePropagation()
-  }
-  document.addEventListener('pointerdown', preventPress, true)
-  document.addEventListener('mousedown', preventPress, true)
-  document.addEventListener('click', event => {
-    if (event.composedPath().includes(host) || panel.hidden) return
-    if (!event.metaKey) { select(null); return }
-    if (!isSelectionGesture(event)) return
-    const node = event.composedPath().find(target => target instanceof HTMLElement)
-    if (!node) return
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    select(node)
-  }, true)
-  async function commitEdit(node, property, requested) {
-    if (comparing || !node.isConnected || overlayFor(node) || !supported(property, node)) return
-    const editRoute = route()
+    if (busy || loadingRoute || currentRoute !== route()) return
+    const startedRoute = route()
     const version = activeRouteVersion
-    const target = describe(node)
-    const unique = candidates(target).length === 1
-    status('Saving preview…')
-    const entry = await apply(node, property, requested)
-    const id = crypto.randomUUID()
+    const focusedAction = root.activeElement?.closest('.li-panel-actions button')
+    busy = true
+    status('')
+    panel.setAttribute('aria-busy', 'true')
+    renderActions()
+    ui.setFieldsSaving(fields, true)
     try {
-      await send({ type: 'save', record: {
-        id, route: editRoute, target, property, before: entry.before,
-        requested, observed: entry.observed, restore: unique ? 'unique' : 'ambiguous',
-        viewport: { width: innerWidth, height: innerHeight },
-      } })
+      await action()
     } catch (error) {
-      remove(entry)
+      if (isCurrentRoute(startedRoute, version)) status(error.message, true)
+    } finally {
+      busy = false
+      panel.setAttribute('aria-busy', 'false')
+      renderFields()
+      selection.syncOutline()
+      queueRecovery()
+      const owner = panel.ownerDocument
+      if (focusedAction && !panel.hidden && !root.activeElement && owner.activeElement === owner.body) {
+        const focusTarget = focusedAction.disabled || focusedAction.hidden ? panel : focusedAction
+        focusTarget.focus({ preventScroll: true })
+      }
+    }
+  }
+  fields.addEventListener('click', event => {
+    if (!busy || !event.target.closest?.('button')) return
+    event.preventDefault()
+    event.stopPropagation()
+  }, true)
+  const entry = get('entry')
+  const closeInspector = get('close-inspector')
+  function toggleInspector() {
+    const open = panel.hidden
+    ui.dismissTooltip()
+    ui.closeMenu()
+    setOpen(open)
+    selection.syncOutlines()
+    const focusTarget = open ? closeInspector : entry
+    focusTarget.focus({ preventScroll: true })
+  }
+  entry.onclick = toggleInspector
+  closeInspector.onclick = toggleInspector
+  get('parent').onclick = () => {
+    const parent = selection.parent()
+    if (!parent) return
+    selection.select(parent)
+    if (!selection.parent()) closeInspector.focus({ preventScroll: true })
+  }
+  ui.bindInspectorShortcuts({ root, panel, selection, undo: get('undo'), parent: get('parent') })
+  window.addEventListener('pagehide', () => { ui.dismissTooltip(); ui.closeMenu(); revertDialog.dismiss() })
+  async function commitEdit(node, property, requested) {
+    if (comparing || !canEdit(node, property)) return
+    const editRoute = currentRoute
+    const version = activeRouteVersion
+    const isCurrent = () => isCurrentRoute(editRoute, version)
+    const target = ui.describePreviewTarget(node)
+    const entry = await apply(node, property, requested, isCurrent)
+    if (!isCurrent() || !ui.matchesPreviewTarget(node, target)) {
+      discardTemporary(entry)
+      throw Error('Selection changed. Earlier saved changes remain available to Undo.')
+    }
+    const edit = {
+      id: crypto.randomUUID(), route: editRoute, target, property, before: entry.before,
+      requested, observed: entry.observed,
+      restore: ui.findPreviewTarget(target) === node ? 'unique' : 'ambiguous',
+      viewport: { width: innerWidth, height: innerHeight },
+    }
+    try {
+      await send({ type: 'save', record: edit })
+    } catch (error) {
+      discardTemporary(entry)
       throw error
     }
-    if (activeRouteVersion === version && node.isConnected) {
-      entries.set(id, entry)
-      history.push(id)
-    } else remove(entry)
-    status(unique ? 'Preview saved' : 'Preview saved · target ambiguous on reload')
+    if (!isCurrent()) {
+      discardTemporary(entry)
+      if (currentRoute === editRoute) window.phaseAInspectorReady = loadRoute()
+      return
+    }
+    if (ui.matchesPreviewTarget(node, target)) {
+      temporary.delete(entry)
+      recovery.remember(edit, entry)
+    } else {
+      discardTemporary(entry)
+      recovery.remember(edit)
+      recoveryRequested = true
+    }
+    reportRecovery()
   }
   get('undo').onclick = () => run(async () => {
-    const id = history.at(-1)
+    const id = recovery.lastSavedId
     if (!id || comparing) return
-    const entry = entries.get(id)
-    status('Undoing…')
+    const requestedRoute = currentRoute
+    const version = activeRouteVersion
     await send({ type: 'undo', id })
-    remove(entry)
-    entries.delete(id)
-    const index = history.lastIndexOf(id)
-    if (index >= 0) history.splice(index, 1)
-    status('Undone')
+    if (isCurrentRoute(requestedRoute, version)) {
+      recovery.forget(id)
+      reportRecovery()
+    } else if (currentRoute === requestedRoute) {
+      window.phaseAInspectorReady = loadRoute()
+    }
   })
-  function clearVisible() {
-    for (const entry of Array.from(entries.values()).reverse()) remove(entry)
-    entries.clear()
-    history.length = 0
-  }
   get('clear').onclick = () => run(async () => {
     comparing = !comparing
-    get('clear').textContent = comparing ? 'After' : 'Before'
     if (comparing) {
-      comparison = Array.from(entries, ([id, entry]) => ({ id, entry, target: describe(entry.node) }))
-      clearVisible()
+      recovery.showOriginal()
     } else {
-      for (const { id, entry, target } of comparison) {
-        const { node, property, before, input } = entry
-        if (!node.isConnected || JSON.stringify(describe(node)) !== JSON.stringify(target) ||
-            getComputedStyle(node).getPropertyValue(property) !== before) continue
-        entries.set(id, await apply(node, property, input))
-        history.push(id)
+      const requestedRoute = currentRoute
+      const version = activeRouteVersion
+      try {
+        await loadSavedEdits(requestedRoute, version)
+      } catch (error) {
+        if (isCurrentRoute(requestedRoute, version)) comparing = true
+        throw error
       }
-      comparison = []
-      await restore(route(), activeRouteVersion)
+      await restore(requestedRoute, version, true)
     }
-    status(comparing ? 'Original view' : 'Previews on')
   })
-  get('reset').onclick = () => run(async () => {
-    await send({ type: 'reset', route: route() })
-    comparison = []
-    clearVisible()
-    status('Previews reset on this page')
-  })
-  async function restore(requestedRoute, version) {
-    const journal = await send({ type: 'load' })
-    for (const edit of journal.filter(e => !e.undone && e.route === requestedRoute)) {
-      if (version !== activeRouteVersion || comparing || route() !== requestedRoute) return
-      if (edit.restore !== 'unique' || entries.has(edit.id)) continue
-      let matches = candidates(edit.target)
-      const deadline = performance.now() + 1800
-      while (route() === requestedRoute && matches.length === 0 && performance.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 40))
-        matches = candidates(edit.target)
+  const reset = get('reset')
+  reset.onclick = async () => {
+    const requestedRoute = route()
+    const version = activeRouteVersion
+    if (reset.disabled || !await revertDialog.confirm()) return
+    if (!isCurrentRoute(requestedRoute, version) || reset.disabled) return
+    closeInspector.focus({ preventScroll: true })
+    await run(async () => {
+      await send({ type: 'reset', route: requestedRoute })
+      if (route() !== requestedRoute) return
+      if (currentRoute !== requestedRoute) {
+        onRouteChange()
+        return
       }
-      if (version !== activeRouteVersion || comparing || route() !== requestedRoute) return
-      if (matches.length !== 1) continue
-      if (getComputedStyle(matches[0]).getPropertyValue(edit.property) !== edit.before) continue
-      const entry = await apply(matches[0], edit.property, edit.requested)
-      if (version !== activeRouteVersion || comparing || route() !== requestedRoute || !entry.node.isConnected) { remove(entry); return }
-      entries.set(edit.id, entry)
-      history.push(edit.id)
+      // A return visit can restore previews while the confirmed revert is pending.
+      const revisit = version !== activeRouteVersion
+      if (revisit) {
+        const staleLoad = window.phaseAInspectorReady
+        const epoch = ++activeRouteVersion
+        await staleLoad
+        if (!isCurrentRoute(requestedRoute, epoch)) return
+      }
+      comparing = false
+      recovery.clear()
+      if (revisit) {
+        window.phaseAInspectorReady = loadRoute()
+        await window.phaseAInspectorReady
+      }
+    })
+  }
+  function reportRecovery() {
+    const notice = get('status')
+    if (notice.hasAttribute('data-error')) return
+    status(!comparing && recovery.hasUnattached ? 'Some saved previews could not be restored.' : '')
+  }
+  async function restore(requestedRoute, version, fromOriginal = false) {
+    await recovery.restore(() => isCurrentRoute(requestedRoute, version) && !comparing, fromOriginal)
+    if (isCurrentRoute(requestedRoute, version)) reportRecovery()
+  }
+  async function loadSavedEdits(requestedRoute, version) {
+    const journal = await send({ type: 'load' })
+    if (isCurrentRoute(requestedRoute, version)) {
+      recovery.load(journal.filter(edit => !edit.undone && edit.route === requestedRoute))
     }
   }
   let currentRoute = route()
-  let generation = 0
-  function loadRoute() {
+  async function loadRoute() {
     const requestedRoute = currentRoute
-    const version = ++generation
-    status('Loading previews…')
-    const epoch = ++activeRouteVersion
-    return (comparing ? Promise.resolve() : restore(requestedRoute, epoch)).then(() => {
-      if (generation === version) { status('Ready'); renderFields() }
-    }).catch(error => {
-      if (generation === version) { status(error.message); renderFields() }
+    const version = ++activeRouteVersion
+    loadingRoute = true
+    status('')
+    recovery.clear()
+    renderActions()
+    try {
+      await loadSavedEdits(requestedRoute, version)
+      if (isCurrentRoute(requestedRoute, version)) await restore(requestedRoute, version)
+    } catch (error) {
+      if (isCurrentRoute(requestedRoute, version)) status(error.message, true)
+    } finally {
+      if (isCurrentRoute(requestedRoute, version)) {
+        loadingRoute = false
+        renderFields()
+        queueRecovery()
+      }
+    }
+  }
+  function queueRecovery() {
+    if (recoveryScheduled || !recoveryRequested || busy || loadingRoute || comparing) return
+    recoveryScheduled = true
+    requestAnimationFrame(() => {
+      recoveryScheduled = false
+      if (busy || loadingRoute || comparing || route() !== currentRoute) return
+      recoveryRequested = false
+      if (!recovery.needsRestore) return
+      const requestedRoute = currentRoute
+      const version = activeRouteVersion
+      void run(() => restore(requestedRoute, version))
     })
   }
   function onRouteChange() {
-    if (selected && !selected.isConnected) select(null)
     if (currentRoute === route()) return
     currentRoute = route()
-    comparison = []
-    clearVisible()
-    select(null)
+    revertDialog.dismiss()
+    comparing = false
+    recoveryRequested = false
+    for (const entry of temporary) discardTemporary(entry)
     window.phaseAInspectorReady = loadRoute()
+    selection.select(null)
   }
-  new MutationObserver(onRouteChange).observe(document.documentElement, { childList: true, subtree: true })
+  new MutationObserver(() => {
+    onRouteChange()
+    selection.refresh()
+    if (!recovery.hasSaved) return
+    recoveryRequested = true
+    queueRecovery()
+  }).observe(document.documentElement, {
+    childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['id', 'data-slot'],
+  })
   window.addEventListener('popstate', onRouteChange)
+  window.navigation?.addEventListener('currententrychange', onRouteChange)
   window.phaseAInspectorReady = loadRoute()
 })()

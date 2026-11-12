@@ -3,12 +3,17 @@
   const state = new WeakMap()
   ui.paddingControls = (context, controls, refresh) => {
     const { node, disabled, commit } = context
-    const expanded = state.get(node) ?? true
+    const padding = Object.fromEntries(
+      ['left', 'right', 'top', 'bottom'].map(side => [side, controls.value('padding-' + side)]),
+    )
+    const asymmetric = padding.left !== padding.right || padding.top !== padding.bottom
+    const expanded = state.get(node) ?? asymmetric
     const group = ui.element('div', 'li-stack li-padding')
     const toggle = controls.button(expanded ? 'Collapse individual padding' : 'Expand individual padding', 'paddingSidesToggle', () => {
       state.set(node, !expanded)
-      refresh()
+      refresh('padding-toggle')
     })
+    toggle.id = 'control-padding-toggle'
     toggle.setAttribute('aria-expanded', String(expanded))
     toggle.setAttribute('aria-pressed', String(expanded))
     toggle.disabled = disabled
@@ -22,13 +27,13 @@
       )
     } else {
       const axis = (name, first, second, icon) => {
-        const a = controls.value('padding-' + first)
-        const b = controls.value('padding-' + second)
+        const a = padding[first]
+        const b = padding[second]
         return controls.numeric('padding-' + name, name === 'horizontal' ? 'Horizontal padding' : 'Vertical padding', icon, {
           value: a === b ? a : '', placeholder: a === b ? a : 'Mixed',
           submit: async number => {
             // Each side remains its own durable, reversible journal entry.
-            await ui.commitPair(commit, [['padding-' + first, number + 'px'], ['padding-' + second, number + 'px']])
+            await ui.commitChanges(commit, [['padding-' + first, number + 'px'], ['padding-' + second, number + 'px']])
           },
         })
       }

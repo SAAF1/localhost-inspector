@@ -2,6 +2,11 @@
   'use strict'
   const ui = window.LocalhostInspector = window.LocalhostInspector || {}
   const markup = {
+  "launcherSliders": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><path d=\"M2 4h2m3 0h7M2 8h7m3 0h2M2 12h4m3 0h5\"/><circle cx=\"5.5\" cy=\"4\" r=\"1.5\"/><circle cx=\"10.5\" cy=\"8\" r=\"1.5\"/><circle cx=\"7.5\" cy=\"12\" r=\"1.5\"/></svg>",
+  "selectParent": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><path d=\"M8 3H3.5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8\"/><rect x=\"5\" y=\"7\" width=\"4.5\" height=\"3.5\" rx=\".5\"/><path d=\"M12 6V2m-1.75 1.75L12 2l1.75 1.75\"/></svg>",
+  "undoPreview": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><path d=\"m6 4-3 3 3 3M3 7h6a4 4 0 0 1 4 4v2\"/></svg>",
+  "comparePreview": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><rect x=\"2.5\" y=\"2.5\" width=\"11\" height=\"11\" rx=\"1\"/><path d=\"M8 2.5v11\"/></svg>",
+  "revertPreviews": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><path d=\"M2.5 4v4h4m-4 0A5.5 5.5 0 1 1 4 12\"/></svg>",
   "alignmentMark": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><rect width=\"2\" height=\"7\" x=\"3\" y=\"4.5\" fill=\"currentColor\" rx=\"1\"/><rect width=\"2\" height=\"10\" x=\"7\" y=\"3\" fill=\"currentColor\" rx=\"1\"/><rect width=\"2\" height=\"5\" x=\"11\" y=\"5.5\" fill=\"currentColor\" rx=\"1\"/></svg>",
   "minWidth": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M8.5 2v11M2 7.5h5m-2.5-2 2 2-2 2m10.5-2h-5m2.5-2-2 2 2 2\"/></svg>",
   "maxWidth": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" d=\"M1.5 2v12m13-12v12\"/><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M3 8h10M5.5 5.5 3 8l2.5 2.5m5-5L13 8l-2.5 2.5\"/></svg>",

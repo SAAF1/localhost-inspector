@@ -114,7 +114,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     }, 3000)
   })
   ui.fontReady = Promise.race([load(), deadline]).then(face => {
-    document.fonts.add(face)
+    const ownerDocument = window.localhostInspectorDock?.ownerDocument ?? document
+    ownerDocument.fonts.add(face)
     return true
   }).catch(error => {
     console.warn('Localhost Inspector: using fallback font.', error.message)

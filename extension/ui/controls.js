@@ -7,11 +7,14 @@
     return match ? match.slice(1).map(n => Number(n).toString(16).padStart(2, '0')).join('').toUpperCase() : value
   }
   ui.colorValue = value => /^[a-f\d]{6}([a-f\d]{2})?$/i.test(value) ? '#' + value : value
-  ui.commitPair = async (commit, updates) => {
+  ui.commitChanges = async (commit, updates) => {
     for (let index = 0; index < updates.length; index++) {
       try { await commit(...updates[index]) }
       catch (error) {
-        if (index > 0) throw Error('First change saved; next change failed. Undo is available. ' + error.message)
+        if (index > 0) {
+          const saved = index === 1 ? 'First change saved' : index + ' changes saved'
+          throw Error(saved + '; next change failed. Undo is available. ' + error.message)
+        }
         throw error
       }
     }
@@ -19,32 +22,48 @@
 
   ui.createControls = context => {
     const { node, style, disabled, run, commit } = context
-    const value = property => style.getPropertyValue(property).trim()
+    const value = context.value ?? (property => style.getPropertyValue(property).trim())
     const change = (property, requested) => run(() => commit(property, requested))
     const button = (label, glyph, handler) => ui.action(label, glyph, handler, disabled)
     const attachMenu = (anchor, label, options, selected, onChoose, settings) => {
       anchor.setAttribute('aria-haspopup', 'menu')
       anchor.setAttribute('aria-expanded', 'false')
-      anchor.onclick = () => ui.openMenu(anchor, options, selected, onChoose, { label, ...settings })
+      anchor.onclick = event => ui.openMenu(event.currentTarget, options, selected, onChoose, { label, ...settings })
       anchor.onkeydown = event => {
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); anchor.click() }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); event.currentTarget.click() }
       }
     }
-    const inputEvents = (input, submit) => {
-      input.addEventListener('keydown', event => {
-        if (event.key === 'Enter') { event.preventDefault(); input.blur() }
-      })
-      input.onchange = () => {
-        // Disabled inputs do not participate in browser constraint validation.
-        const valid = input.checkValidity() && Boolean(input.value.trim())
-        return run(async () => {
-          if (!node.isConnected) return
-          if (!valid) {
-            input.setAttribute('aria-invalid', 'true')
-            throw Error('Enter a valid value')
-          }
-          await submit(input)
-        })
+    const inputEvents = (input, submit, invalidMessage = 'Enter a valid value.') => {
+      function clearValidation(input) {
+        input.parentElement.querySelector('.li-validation')?.remove()
+        input.removeAttribute('aria-invalid')
+        input.removeAttribute('aria-describedby')
+      }
+      input.oninput = event => clearValidation(event.currentTarget)
+      input.onkeydown = event => {
+        if (event.key !== 'Enter' || event.currentTarget.readOnly) return
+        event.preventDefault()
+        const field = event.currentTarget
+        const panel = field.closest('.li-panel')
+        field.blur()
+        if (field.getAttribute('aria-invalid') === 'true') field.focus({ preventScroll: true })
+        else panel?.focus({ preventScroll: true })
+      }
+      input.onchange = event => {
+        const input = event.currentTarget
+        if (!node.isConnected || input.readOnly) return
+        clearValidation(input)
+        if (!input.checkValidity() || !input.value.trim()) {
+          const message = ui.element('span', 'li-validation', invalidMessage)
+          message.id = input.id + '-error'
+          message.setAttribute('role', 'alert')
+          input.setAttribute('aria-invalid', 'true')
+          input.setAttribute('aria-describedby', message.id)
+          input.parentElement.append(message)
+          return
+        }
+        if (input.value === input.defaultValue) return
+        return run(() => submit(input))
       }
     }
     const numeric = (property, label, glyph, settings = {}) => {
@@ -61,10 +80,13 @@
       input.max = '2000'
       input.disabled = disabled
       const current = settings.value ?? value(property)
-      input.value = /^-?[\d.]+px$/.test(current) ? String(parseFloat(current)) : ''
-      input.placeholder = settings.placeholder ?? current
-      input.title = label + (current ? ': ' + current : '')
-      inputEvents(input, entry => settings.submit ? settings.submit(entry.valueAsNumber) : commit(property, entry.valueAsNumber + 'px'))
+      input.defaultValue = /^-?[\d.]+px$/.test(current) ? String(parseFloat(current)) : ''
+      input.placeholder = settings.placeholder ?? (current ?? 'Mixed')
+      input.title = label + (current ? ': ' + current : current === null ? ': Mixed' : '')
+      if (current === null) input.setAttribute('aria-valuetext', 'Mixed')
+      inputEvents(input, entry => settings.submit
+        ? settings.submit(entry.valueAsNumber)
+        : commit(property, entry.valueAsNumber + 'px'), property === 'gap' ? 'Enter a valid gap value.' : undefined)
       field.append(input)
       if (property === 'font-size') {
         const trigger = button('Font size presets', 'chevronDown', () => {})
@@ -85,12 +107,14 @@
     }
     const color = (property, label) => {
       const field = ui.element('div', 'li-field li-color')
+      const current = value(property)
       const swatch = ui.element('span', 'li-swatch')
-      swatch.style.backgroundColor = value(property)
+      swatch.style.backgroundColor = current ?? ''
       const input = ui.element('input')
       input.id = 'control-' + property
       input.setAttribute('aria-label', label)
-      input.value = ui.colorText(value(property))
+      input.defaultValue = current === null ? '' : ui.colorText(current)
+      if (current === null) input.placeholder = 'Mixed'
       input.disabled = disabled
       input.spellcheck = false
       inputEvents(input, entry => commit(property, ui.colorValue(entry.value.trim())))
@@ -104,8 +128,10 @@
       trigger.disabled = disabled
       trigger.id = 'control-' + property
       trigger.setAttribute('aria-label', label)
-      trigger.append(ui.element('span', '', format(current)), ui.icon('chevronDown'))
-      const options = [...new Set([current, ...choices])].map(item => [item, format(item)])
+      const text = current === null ? 'Mixed' : format(current)
+      ui.setTooltip(trigger, label + ': ' + text)
+      trigger.append(ui.element('span', '', text), ui.icon('chevronDown'))
+      const options = [...new Set(current === null ? choices : [current, ...choices])].map(item => [item, format(item)])
       attachMenu(trigger, label, options, current, item => change(property, item))
       return trigger
     }

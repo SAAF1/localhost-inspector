@@ -6,6 +6,7 @@ import { chromium } from 'playwright'
 import { injectedFiles, project } from '../../scripts/check-modules.mjs'
 
 import { fixture } from './fixture.mjs'
+import { connectPreviewDock, servePreviewDock } from '../../scripts/preview-dock.mjs'
 
 export async function createHarness(options = {}) {
   const server = createServer(async (request, response) => {
@@ -13,7 +14,11 @@ export async function createHarness(options = {}) {
       if (options.fontFailure) { response.writeHead(503); response.end(); return }
       response.setHeader('Content-Type', 'font/woff2')
       response.end(await readFile(join(project, 'extension/assets/inter-latin.woff2')))
-    } else { response.setHeader('Content-Type', 'text/html'); response.end(fixture) }
+    } else {
+      if (options.dock && servePreviewDock(request, response, 'http://127.0.0.1:' + server.address().port)) return
+      response.setHeader('Content-Type', 'text/html')
+      response.end(fixture)
+    }
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   let browser
@@ -23,7 +28,9 @@ export async function createHarness(options = {}) {
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
     await page.goto('http://127.0.0.1:' + server.address().port)
-    await page.evaluate(settings => {
+    const app = options.dock ? page.frames().find(frame => frame.parentFrame() === page.mainFrame()) : page
+    if (options.dock) await app.evaluate(connectPreviewDock)
+    await app.evaluate(settings => {
       window.chrome = { runtime: { getURL: path => location.origin + '/' + path } }
       window.__journal = settings.journal || []
       window.__saveCount = 0
@@ -41,28 +48,34 @@ export async function createHarness(options = {}) {
           if (window.__settings.failSave === window.__saveCount) throw Error('Simulated save failure')
           window.__journal.push(message.record)
         }
-        if (message.type === 'undo') window.__journal.find(edit => edit.id === message.id).undone = true
-        if (message.type === 'reset') window.__journal.forEach(edit => { if (edit.route === message.route) edit.undone = true })
+        if (message.type === 'undo') {
+          if (window.__settings.holdUndo) await new Promise(resolve => { window.__releaseUndo = resolve })
+          window.__journal.find(edit => edit.id === message.id).undone = true
+        }
+        if (message.type === 'reset') {
+          if (window.__settings.holdReset) await new Promise(resolve => { window.__releaseReset = resolve })
+          window.__journal.forEach(edit => { if (edit.route === message.route) edit.undone = true })
+        }
       }
     }, options)
     for (const file of (await injectedFiles()).filter(file => file !== 'bridge.js')) {
-      await page.addScriptTag({ content: await readFile(join(project, 'extension', file), 'utf8') })
+      await app.addScriptTag({ content: await readFile(join(project, 'extension', file), 'utf8') })
     }
-    await page.evaluate(() => window.phaseAInspectorReady)
-    await page.evaluate(() => window.LocalhostInspector.fontReady)
+    await app.evaluate(() => window.phaseAInspectorReady)
+    await app.evaluate(() => window.LocalhostInspector.fontReady)
     const host = page.locator('#localhost-inspector')
     const open = async () => host.locator('#entry').click()
-    const select = async (selector = 'body > #target') => page.locator(selector).click({ modifiers: ['Meta'], position: { x: 5, y: 5 } })
+    const select = async (selector = 'body > #target') => app.locator(selector).click({ modifiers: ['Meta'], position: { x: 5, y: 5 } })
     const field = name => host.getByRole('spinbutton', { name, exact: true })
     const enter = async (name, value) => { await field(name).fill(String(value)); await field(name).press('Enter') }
-    const journal = () => page.evaluate(() => window.__journal)
-    const css = property => page.locator('body > #target').evaluate((node, key) => getComputedStyle(node).getPropertyValue(key), property)
-    const settled = () => page.waitForFunction(() => !document.querySelector('#localhost-inspector').shadowRoot.getElementById('clear').disabled)
+    const journal = () => app.evaluate(() => window.__journal)
+    const css = (property, selector = 'body > #target') => app.locator(selector).evaluate((node, key) => getComputedStyle(node).getPropertyValue(key), property)
+    const settled = () => host.locator('#inspector-panel:not([aria-busy="true"])').waitFor({ state: 'attached' })
     const close = async () => {
       try { await browser.close(); assert.deepEqual(errors, [], 'No uncaught browser errors') }
       finally { await new Promise(resolve => server.close(resolve)) }
     }
-    return { page, host, open, select, field, enter, journal, css, settled, close }
+    return { page, app, host, open, select, field, enter, journal, css, settled, close }
   } catch (error) {
     await browser?.close()
     await new Promise(resolve => server.close(resolve))
