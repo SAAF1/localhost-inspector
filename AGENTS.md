@@ -1,6 +1,6 @@
 # Localhost Inspector contributor rules
 
-This extension edits a running local app and records reversible previews. The helper saves a journal; promoting an edit into application source remains a separate, reviewed coding-agent task. Read README.md for installation and workflow.
+This extension edits a running local app and records reversible previews. The helper saves a journal; promoting an edit into application source remains a separate, reviewed coding-agent task. Read [README.md](README.md) for installation and [the evaluation guide](docs/EVALUATION.md) for supported behavior and verification boundaries.
 
 ## Architecture
 
@@ -31,9 +31,9 @@ The UI uses classic scripts in Chrome's isolated world, ordered by worker.js. Mo
 
 ## Scope and visual verification
 
-- Grid editing is deferred. Do not add Layers, font-family editing, opacity, color pickers, variable libraries, paint stacks, stroke creation/placement, individual corners, clipping, or effects under this UI task.
-- Font-size presets and compact/expanded padding are approved UI additions over existing properties. Keep direct numeric entry and existing validation.
-- Use the current approved scoped inspector, not the historical rejected canvas assemblies. References and decisions live in Second Brain's Localhost Inspector project, Canvas Reconstruction Review.md.
+- Keep editing inside the supported contexts described in the evaluation guide. Grid editing, direct font-family editing, broader paint controls, and component APIs are outside the current scope.
+- Keep direct numeric and literal controls usable where they are supported. Preserve the distinction between an intentional named binding and a coincidentally equal value.
+- Reuse the existing Inspector controls and tokens when introducing a state or interaction.
 - Compare a screenshot of the assembled implementation with each relevant source-photo section. Check field geometry, optical alignment, icons, labels, menus, and states. A component gallery alone is insufficient.
 - Distinguish verified fidelity, intentional scope adaptations, and unresolved differences. Do not claim pixel perfection from a glance or successful server startup.
 
@@ -43,6 +43,6 @@ Use Node 22.13+ and npm ci. Run npm run check, npm run test:browser, and npm run
 
 Test user-visible contracts and credible regressions: save failure, Undo/comparison/restoration, validation boundaries, keyboard menus, and partial paired edits. Prefer a few end-to-end assertions over mocks of implementation details. Do not add tests for every icon, static label, trivial wrapper, or CSS declaration; no coverage quota or snapshot bulk.
 
-Keep new project documents in Second Brain unless the user confirms an exception. This AGENTS.md and the README contribution link are approved repository exceptions.
+Keep public documentation self-contained. Use synthetic examples and omit private project identifiers, machine-specific paths, pairing keys, and real journals.
 
 Keep changes focused and reviewable. State what was checked and what remains unverified. Do not commit, push, open a pull request, or deploy unless requested.
