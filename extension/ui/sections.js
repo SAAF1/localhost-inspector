@@ -1,6 +1,6 @@
 (() => {
   const ui = window.LocalhostInspector
-  ui.typographyControls = controls => {
+  function typographyControls(controls, binding) {
     const weight = controls.select('font-weight', 'Font weight', ui.choices.weights, ui.weightName)
     const metrics = ui.row(
       ui.stack('Line height', controls.numeric('line-height', 'Line height', 'lineHeight')),
@@ -12,8 +12,10 @@
     ], alignment)
     const more = controls.button('More text alignment options', 'layoutSettings', () => {})
     controls.attachMenu(more, 'Text alignment', ui.choices.text.map(value => [value, value]), controls.value('text-align'), value => controls.change('text-align', value))
-    const textColor = ui.stack('Text color', controls.color('color', 'Text color'))
-    textColor.classList.add('li-text-color')
+    const heading = ui.row(ui.caption('Text color'), binding.trigger)
+    heading.classList.add('li-color-label')
+    const textColor = ui.element('div', 'li-stack li-text-color')
+    textColor.append(heading, binding.field)
     const section = ui.section('Typography',
       ui.row(weight, controls.numeric('font-size', 'Font size')), metrics,
       ui.stack(alignment === null ? 'Alignment · Mixed' : 'Alignment', ui.row(segments, more)), textColor,
@@ -25,7 +27,7 @@
     const targets = ui.textTargets(context.node)
     if (!targets.length) return null
     const styles = targets.map(target => getComputedStyle(target))
-    const controls = ui.createControls({
+    const textContext = {
       ...context,
       value: property => {
         const first = ui.textStyleValue(styles[0], property)
@@ -37,8 +39,16 @@
           .map(target => [property, requested, target])
         return ui.commitChanges(context.commit, changes)
       },
-    })
-    return ui.typographyControls(controls)
+    }
+    const controls = ui.createControls(textContext)
+    const binding = ui.colorBinding(context, controls, { property: 'color', label: 'Text color', targets })
+    return typographyControls(controls, binding)
+  }
+  function paintSection(title, binding, ...fields) {
+    const section = ui.section(title, binding.field, ...fields)
+    section.classList.add('li-paint-section')
+    if (binding.trigger) section.firstElementChild.append(binding.trigger)
+    return section
   }
   ui.renderInspector = (container, context) => {
     const controls = ui.createControls(context)
@@ -48,16 +58,17 @@
     }
     const appearance = ui.section('Appearance', ui.stack('Corner radius', controls.numeric('border-radius', 'Corner radius', 'cornerRadius')))
     appearance.classList.add('li-appearance-section')
+    const fillBinding = ui.colorBinding(context, controls, { property: 'background-color', label: 'Fill color', title: 'Fill' })
+    const fill = paintSection('Fill', fillBinding, fillBinding.notice)
     const sections = [
       ui.layoutControls(context, controls, refresh),
       appearance,
       typography(context),
-      ui.section('Fill', controls.color('background-color', 'Fill color')),
+      fill,
     ].filter(Boolean)
     if (ui.supported('border-width', context.node, context.style)) {
-      const stroke = ui.section('Stroke', controls.color('border-color', 'Stroke color'), ui.stack('Weight', controls.numeric('border-width', 'Stroke weight', 'strokeWeight')))
-      stroke.classList.add('li-stroke-section')
-      sections.push(stroke)
+      const binding = ui.colorBinding(context, controls, { property: 'border-color', label: 'Stroke color', title: 'Stroke' })
+      sections.push(paintSection('Stroke', binding, ui.stack('Weight', controls.numeric('border-width', 'Stroke weight', 'strokeWeight'))))
     }
     ui.updateInspectorFields(container, sections)
   }

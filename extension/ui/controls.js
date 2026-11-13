@@ -20,6 +20,14 @@
     }
   }
 
+  ui.selectTrigger = label => {
+    const trigger = ui.element('button', 'li-select')
+    trigger.type = 'button'
+    trigger.setAttribute('aria-label', label)
+    trigger.append(ui.element('span'), ui.icon('chevronDown'))
+    return trigger
+  }
+
   ui.createControls = context => {
     const { node, style, disabled, run, commit } = context
     const value = context.value ?? (property => style.getPropertyValue(property).trim())
@@ -80,10 +88,11 @@
       input.max = '2000'
       input.disabled = disabled
       const current = settings.value ?? value(property)
-      input.defaultValue = /^-?[\d.]+px$/.test(current) ? String(parseFloat(current)) : ''
+      input.defaultValue = settings.displayValue ?? (/^-?[\d.]+px$/.test(current) ? String(parseFloat(current)) : '')
       input.placeholder = settings.placeholder ?? (current ?? 'Mixed')
       input.title = label + (current ? ': ' + current : current === null ? ': Mixed' : '')
-      if (current === null) input.setAttribute('aria-valuetext', 'Mixed')
+      if (settings.placeholder === 'Auto') input.setAttribute('aria-valuetext', 'Auto')
+      else if (current === null) input.setAttribute('aria-valuetext', 'Mixed')
       inputEvents(input, entry => settings.submit
         ? settings.submit(entry.valueAsNumber)
         : commit(property, entry.valueAsNumber + 'px'), property === 'gap' ? 'Enter a valid gap value.' : undefined)
@@ -96,11 +105,11 @@
         field.append(trigger)
       }
       if (settings.menu?.options.length) {
-        const { label: menuLabel, options, choose, current: selected = '' } = settings.menu
+        const { label: menuLabel, options, choose, current: selected = '', radio = false } = settings.menu
         const trigger = button(menuLabel, 'chevronDown', () => {})
         trigger.classList.add('li-field-trigger')
         if (property === 'width' || property === 'height') trigger.classList.add('li-width-mode-trigger')
-        attachMenu(trigger, menuLabel, options, selected, choose, { commands: true })
+        attachMenu(trigger, menuLabel, options, selected, choose, { commands: !radio })
         field.append(trigger)
       }
       return field
@@ -108,29 +117,26 @@
     const color = (property, label) => {
       const field = ui.element('div', 'li-field li-color')
       const current = value(property)
-      const swatch = ui.element('span', 'li-swatch')
-      swatch.style.backgroundColor = current ?? ''
       const input = ui.element('input')
       input.id = 'control-' + property
       input.setAttribute('aria-label', label)
-      input.defaultValue = current === null ? '' : ui.colorText(current)
+      input.defaultValue = current === null ? '' : ui.colorFieldText(current)
+      input.title = current === null ? 'Mixed' : current
       if (current === null) input.placeholder = 'Mixed'
       input.disabled = disabled
       input.spellcheck = false
       inputEvents(input, entry => commit(property, ui.colorValue(entry.value.trim())))
-      field.append(swatch, input)
+      field.append(ui.colorSwatch(current), input)
       return field
     }
     const select = (property, label, choices, format = item => item) => {
       const current = value(property)
-      const trigger = ui.element('button', 'li-select')
-      trigger.type = 'button'
+      const trigger = ui.selectTrigger(label)
       trigger.disabled = disabled
       trigger.id = 'control-' + property
-      trigger.setAttribute('aria-label', label)
       const text = current === null ? 'Mixed' : format(current)
       ui.setTooltip(trigger, label + ': ' + text)
-      trigger.append(ui.element('span', '', text), ui.icon('chevronDown'))
+      trigger.firstElementChild.textContent = text
       const options = [...new Set(current === null ? choices : [current, ...choices])].map(item => [item, format(item)])
       attachMenu(trigger, label, options, current, item => change(property, item))
       return trigger

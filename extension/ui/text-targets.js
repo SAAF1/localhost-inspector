@@ -3,6 +3,8 @@
   const textElement = 'h1,h2,h3,h4,h5,h6,p,span,strong,b,em,i,small,mark,code,s,sub,sup'
   const labelControl = 'button,a[href],label,[role="button"],[role="link"]'
   const nonText = 'table,thead,tbody,tfoot,tr,svg,img,canvas,video,audio,picture,object,embed,iframe,input,select,textarea,progress,meter,hr,[role="checkbox"],[role="switch"],[role="radio"],[role="img"]'
+  // An avatar is a visual component even when its image falls back to initials.
+  const visualComponent = '[data-slot="avatar"],[data-slot="avatar-fallback"]'
   const skipped = 'script,style,template,noscript,br,wbr,[hidden]'
 
   function visuallyHidden(node, style) {
@@ -18,7 +20,7 @@
     function collect(node, style) {
       if (visuallyHidden(node, style)) return []
       if (control && node !== root && node.matches('svg,img[alt=""]')) return []
-      if (node.matches(nonText) || (node !== root && node.matches(labelControl))) return null
+      if (node.matches(nonText) || (node !== root && node.matches(labelControl + ',' + visualComponent))) return null
       const directText = Array.from(node.childNodes).some(child => child.nodeType === Node.TEXT_NODE && child.textContent.trim())
       const targets = []
       let blockChildren = false

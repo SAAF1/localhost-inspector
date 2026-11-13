@@ -14,6 +14,9 @@
   let recoveryScheduled = false
   let recoveryRequested = false
   let activeRouteVersion = 0
+  let journalRevision = null
+  let colorCatalog = null
+  let spacingCatalog = null
 
   function canEdit(node, property) {
     return node.isConnected && !overlayFor(node) && ui.supported(property, node)
@@ -23,20 +26,21 @@
   }
   function renderActions() {
     const pageActionsUnavailable = busy || loadingRoute
+    const writesUnavailable = pageActionsUnavailable || journalRevision === null
     const parent = get('parent')
     parent.hidden = !selection.parent()
     parent.disabled = busy
-    get('undo').disabled = pageActionsUnavailable || comparing || !recovery.hasSaved
+    get('undo').disabled = writesUnavailable || comparing || !recovery.hasSaved
     const compare = get('clear')
     compare.disabled = pageActionsUnavailable || (!comparing && !recovery.hasAttached)
     compare.setAttribute('aria-pressed', String(comparing))
     ui.setTooltip(compare, comparing ? 'Show previews' : 'Show original')
     get('comparison-mode').hidden = !comparing
-    get('reset').disabled = pageActionsUnavailable || !recovery.hasSaved
+    get('reset').disabled = writesUnavailable || !recovery.hasSaved
   }
-  function renderFields() {
+  function renderFields({ keepPopup = false } = {}) {
     ui.dismissTooltip()
-    ui.closeMenu()
+    if (!keepPopup) ui.closeMenu()
     renderActions()
     const node = selection.current
     const hasSelection = Boolean(node?.isConnected)
@@ -53,13 +57,14 @@
     const version = activeRouteVersion
     try {
       ui.renderInspector(fields, {
-        node, style: getComputedStyle(node), disabled: comparing || loadingRoute, run,
-        commit: async (property, requested, target = node) => {
-          if (selection.current !== node || !node.isConnected || !isCurrentRoute(currentRoute, version) || loadingRoute ||
+        node, style: getComputedStyle(node), disabled: comparing || loadingRoute || journalRevision === null, run, colorCatalog, spacingCatalog,
+        pendingColorFor: target => recovery.pendingColorFor(target),
+        commit: async (property, requested, target = node, tokenOptions) => {
+          if (selection.current !== node || !node.isConnected || !isCurrentRoute(currentRoute, version) || loadingRoute || journalRevision === null ||
               (target !== node && (!node.contains(target) || !ui.textTargets(node).includes(target)))) {
             throw Error('Selection changed. Earlier saved changes remain available to Undo.')
           }
-          await commitEdit(target, property, requested)
+          await commitEdit(target, property, requested, tokenOptions)
         },
       })
       ui.setFieldsSaving(fields, busy)
@@ -71,12 +76,26 @@
     }
   }
   function remove(entry) {
-    const { node, property, prior, priorPriority, requested } = entry
-    if (node.style.getPropertyValue(property) !== requested || node.style.getPropertyPriority(property) !== '') return
+    const { node, property, prior, priorPriority } = entry
+    if (!ui.ownsPreviewDeclaration(entry)) return
     if (prior) node.style.setProperty(property, prior, priorPriority)
     else node.style.removeProperty(property)
   }
-  async function apply(node, property, requested, isCurrent) {
+  async function apply(node, property, requested, isCurrent, { colorToken, pendingColor, spacingToken } = {}) {
+    if (colorToken && (
+      !ui.supportsColorVariable(node, property) || requested !== ui.colorVariableValue(colorToken.name) ||
+      colorToken.source !== colorCatalog?.source || !colorCatalog.names.includes(colorToken.name) ||
+      !ui.resolveColorVariable(node, colorToken.name)
+    )) throw Error('This color variable is unavailable for the selected color.')
+    if (pendingColor && (
+      property !== 'background-color' || !ui.supportsColorVariable(node, property) ||
+      pendingColor.source !== colorCatalog?.source || requested !== pendingColor.value
+    )) throw Error('The color source is unavailable.')
+    if (spacingToken && (
+      requested !== ui.spacingVariableValue(spacingToken.name) ||
+      spacingToken.source !== spacingCatalog?.source || !spacingCatalog.names.includes(spacingToken.name) ||
+      !ui.supportsSpacingVariable(node, property) || ui.resolveSpacingLength(node, spacingToken.name) === null
+    )) throw Error('This spacing variable is unavailable for the selected field.')
     if (!CSS.supports(property, requested)) throw Error('That value is not valid for this control')
     const baseline = getComputedStyle(node).getPropertyValue(property)
     const prior = node.style.getPropertyValue(property)
@@ -91,7 +110,7 @@
     const beforeSize = measure()
     node.style.setProperty(property, requested)
     const declared = node.style.getPropertyValue(property)
-    const entry = { node, property, requested: declared, before: baseline, prior, priorPriority }
+    const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, colorToken, pendingColor, spacingToken }
     temporary.add(entry)
     let observed = getComputedStyle(node).getPropertyValue(property)
     const mode = ['100%', 'fit-content'].includes(requested)
@@ -99,7 +118,12 @@
     const changedSize = () => Math.abs(measure() - beforeSize) > 0.5
     const sameValue = () => observed === declared || observed === requested ||
       (['min-width', 'min-height'].includes(property) && requested === 'auto' && observed === '0px')
-    const verified = () => mode ? changedSize() : sameValue() && (!dimensions || changedSize() || baseline === observed)
+    const verified = () => {
+      if (colorToken) return ui.ownsPreviewDeclaration(entry) && observed === ui.resolveColorVariable(node, colorToken.name)
+      if (spacingToken) return ui.ownsPreviewDeclaration(entry) && ui.spacingVariableMatches(node, property, spacingToken.name, observed)
+      if (mode) return changedSize()
+      return sameValue() && (!dimensions || changedSize() || baseline === observed)
+    }
     const deadline = performance.now() + 550
     while (isCurrent() && node.isConnected && !verified() && performance.now() < deadline) {
       await new Promise(requestAnimationFrame)
@@ -115,8 +139,8 @@
   function discardTemporary(entry) {
     if (temporary.delete(entry)) remove(entry)
   }
-  async function applyRestored(node, property, value, isCurrent) {
-    const entry = await apply(node, property, value, isCurrent)
+  async function applyRestored(node, edit, isCurrent) {
+    const entry = await apply(node, edit.property, edit.requested, isCurrent, edit)
     return temporary.delete(entry) ? entry : null
   }
   const route = () => location.pathname + location.search
@@ -127,25 +151,45 @@
     notice.toggleAttribute('data-error', error)
   }
   const send = (message) => window.phaseABridge(message)
-  async function run(action) {
-    if (busy || loadingRoute || currentRoute !== route()) return
+  async function write(message, path, version) {
+    if (journalRevision === null || !isCurrentRoute(path, version)) throw Error('Reload the page and try again.')
+    try {
+      const result = await send({ ...message, expectedRevision: journalRevision })
+      if (!Number.isSafeInteger(result?.revision)) throw Error('Reload the page with the updated local helper.')
+      if (isCurrentRoute(path, version)) journalRevision = result.revision
+    } catch (error) {
+      if (error.code === 'WRITE_REJECTED') throw error
+      // A stale write or a lost acknowledgment requires a fresh snapshot.
+      if (isCurrentRoute(path, version)) journalRevision = null
+      else if (currentRoute === path) window.phaseAInspectorReady = loadRoute()
+      if (error.code === 'STALE_JOURNAL') throw error
+      throw Error('Could not confirm the change. Reload the page before editing again.', { cause: error })
+    }
+  }
+  async function run(action, { background = false, keepPopup = false, rethrow = false } = {}) {
+    if (busy || loadingRoute || currentRoute !== route()) {
+      if (rethrow) throw Error('The inspector is busy.')
+      return
+    }
     const startedRoute = route()
     const version = activeRouteVersion
     const focusedAction = root.activeElement?.closest('.li-panel-actions button')
     busy = true
-    status('')
+    if (!background) status('')
     panel.setAttribute('aria-busy', 'true')
     renderActions()
     ui.setFieldsSaving(fields, true)
     try {
-      await action()
+      return await action()
     } catch (error) {
       if (isCurrentRoute(startedRoute, version)) status(error.message, true)
+      if (rethrow) throw error
     } finally {
       busy = false
       panel.setAttribute('aria-busy', 'false')
-      renderFields()
+      renderFields({ keepPopup })
       selection.syncOutline()
+      recoveryRequested ||= recovery.hasStyleConflict()
       queueRecovery()
       const owner = panel.ownerDocument
       if (focusedAction && !panel.hidden && !root.activeElement && owner.activeElement === owner.body) {
@@ -180,25 +224,28 @@
   }
   ui.bindInspectorShortcuts({ root, panel, selection, undo: get('undo'), parent: get('parent') })
   window.addEventListener('pagehide', () => { ui.dismissTooltip(); ui.closeMenu(); revertDialog.dismiss() })
-  async function commitEdit(node, property, requested) {
-    if (comparing || !canEdit(node, property)) return
+  async function commitEdit(node, property, requested, tokenOptions) {
+    if (comparing || !canEdit(node, property)) {
+      if (tokenOptions) throw Error('The selected property cannot be edited.')
+      return
+    }
     const editRoute = currentRoute
     const version = activeRouteVersion
     const isCurrent = () => isCurrentRoute(editRoute, version)
     const target = ui.describePreviewTarget(node)
-    const entry = await apply(node, property, requested, isCurrent)
+    const entry = await apply(node, property, requested, isCurrent, tokenOptions)
     if (!isCurrent() || !ui.matchesPreviewTarget(node, target)) {
       discardTemporary(entry)
       throw Error('Selection changed. Earlier saved changes remain available to Undo.')
     }
     const edit = {
       id: crypto.randomUUID(), route: editRoute, target, property, before: entry.before,
-      requested, observed: entry.observed,
-      restore: ui.findPreviewTarget(target) === node ? 'unique' : 'ambiguous',
+      requested, observed: entry.observed, ...tokenOptions,
+      restore: ui.findPreviewTarget(target, node) === node ? 'unique' : 'ambiguous',
       viewport: { width: innerWidth, height: innerHeight },
     }
     try {
-      await send({ type: 'save', record: edit })
+      await write({ type: 'save', record: edit }, editRoute, version)
     } catch (error) {
       discardTemporary(entry)
       throw error
@@ -223,7 +270,7 @@
     if (!id || comparing) return
     const requestedRoute = currentRoute
     const version = activeRouteVersion
-    await send({ type: 'undo', id })
+    await write({ type: 'undo', id }, requestedRoute, version)
     if (isCurrentRoute(requestedRoute, version)) {
       recovery.forget(id)
       reportRecovery()
@@ -238,13 +285,16 @@
     } else {
       const requestedRoute = currentRoute
       const version = activeRouteVersion
+      const priorRevision = journalRevision
       try {
-        await loadSavedEdits(requestedRoute, version)
+        const revision = await loadSavedEdits(requestedRoute, version)
+        if (revision === null || !isCurrentRoute(requestedRoute, version)) return
+        await restore(requestedRoute, version, revision === priorRevision)
+        if (isCurrentRoute(requestedRoute, version)) journalRevision = revision
       } catch (error) {
         if (isCurrentRoute(requestedRoute, version)) comparing = true
         throw error
       }
-      await restore(requestedRoute, version, true)
     }
   })
   const reset = get('reset')
@@ -255,23 +305,11 @@
     if (!isCurrentRoute(requestedRoute, version) || reset.disabled) return
     closeInspector.focus({ preventScroll: true })
     await run(async () => {
-      await send({ type: 'reset', route: requestedRoute })
-      if (route() !== requestedRoute) return
-      if (currentRoute !== requestedRoute) {
-        onRouteChange()
-        return
-      }
-      // A return visit can restore previews while the confirmed revert is pending.
-      const revisit = version !== activeRouteVersion
-      if (revisit) {
-        const staleLoad = window.phaseAInspectorReady
-        const epoch = ++activeRouteVersion
-        await staleLoad
-        if (!isCurrentRoute(requestedRoute, epoch)) return
-      }
+      await write({ type: 'reset', route: requestedRoute }, requestedRoute, version)
+      if (currentRoute !== requestedRoute || route() !== requestedRoute) return
       comparing = false
-      recovery.clear()
-      if (revisit) {
+      if (isCurrentRoute(requestedRoute, version)) recovery.clear()
+      else {
         window.phaseAInspectorReady = loadRoute()
         await window.phaseAInspectorReady
       }
@@ -280,29 +318,47 @@
   function reportRecovery() {
     const notice = get('status')
     if (notice.hasAttribute('data-error')) return
-    status(!comparing && recovery.hasUnattached ? 'Some saved previews could not be restored.' : '')
+    const message = comparing ? '' : recovery.hasConflicts
+      ? 'The app changed a previewed style. Your edit is still saved.'
+      : recovery.hasUnattached ? 'Some saved previews could not be restored.' : ''
+    if (notice.textContent !== message) status(message)
   }
   async function restore(requestedRoute, version, fromOriginal = false) {
     await recovery.restore(() => isCurrentRoute(requestedRoute, version) && !comparing, fromOriginal)
     if (isCurrentRoute(requestedRoute, version)) reportRecovery()
   }
   async function loadSavedEdits(requestedRoute, version) {
-    const journal = await send({ type: 'load' })
-    if (isCurrentRoute(requestedRoute, version)) {
-      recovery.load(journal.filter(edit => !edit.undone && edit.route === requestedRoute))
+    const snapshot = await send({ type: 'load' })
+    if (!isCurrentRoute(requestedRoute, version)) return null
+    if (!Number.isSafeInteger(snapshot?.revision) || !Array.isArray(snapshot.edits)) {
+      throw Error('Restart the local helper with the updated Inspector.')
     }
+    recovery.load(snapshot.edits.filter(edit => !edit.undone && edit.route === requestedRoute))
+    return snapshot.revision
   }
   let currentRoute = route()
   async function loadRoute() {
     const requestedRoute = currentRoute
     const version = ++activeRouteVersion
     loadingRoute = true
+    journalRevision = null
+    colorCatalog = null
+    spacingCatalog = null
     status('')
+    for (const entry of temporary) discardTemporary(entry)
     recovery.clear()
     renderActions()
     try {
-      await loadSavedEdits(requestedRoute, version)
-      if (isCurrentRoute(requestedRoute, version)) await restore(requestedRoute, version)
+      const [revision, catalog, spacing] = await Promise.all([
+        loadSavedEdits(requestedRoute, version),
+        send({ type: 'colorCatalog' }).catch(() => null),
+        send({ type: 'spacingCatalog' }).catch(() => null),
+      ])
+      if (revision === null || !isCurrentRoute(requestedRoute, version)) return
+      colorCatalog = catalog
+      spacingCatalog = spacing
+      await restore(requestedRoute, version)
+      if (isCurrentRoute(requestedRoute, version)) journalRevision = revision
     } catch (error) {
       if (isCurrentRoute(requestedRoute, version)) status(error.message, true)
     } finally {
@@ -323,7 +379,7 @@
       if (!recovery.needsRestore) return
       const requestedRoute = currentRoute
       const version = activeRouteVersion
-      void run(() => restore(requestedRoute, version))
+      void run(() => restore(requestedRoute, version), { background: true })
     })
   }
   function onRouteChange() {
@@ -332,19 +388,41 @@
     revertDialog.dismiss()
     comparing = false
     recoveryRequested = false
-    for (const entry of temporary) discardTemporary(entry)
     window.phaseAInspectorReady = loadRoute()
     selection.select(null)
   }
-  new MutationObserver(() => {
+  new MutationObserver(records => {
     onRouteChange()
     selection.refresh()
+    const styleChanges = records.filter(record => ['style', 'class', 'data-theme'].includes(record.attributeName))
+    const node = selection.current
+    if ((colorCatalog || spacingCatalog) && !busy && !loadingRoute && node &&
+      styleChanges.some(record => record.target.contains(node) || node.contains(record.target))) {
+      const targets = [node, ...ui.textTargets(node)]
+      if (fields.querySelector('.li-spacing-variable-pill') || targets.some(target => ['background-color', 'color', 'border-color', 'gap'].some(
+        property => target.style.getPropertyValue(property).startsWith('var('),
+      ))) renderFields({ keepPopup: true })
+    }
     if (!recovery.hasSaved) return
-    recoveryRequested = true
+    recoveryRequested ||= styleChanges.length !== records.length ||
+      (!busy && !loadingRoute && !comparing && recovery.hasStyleConflict(styleChanges))
     queueRecovery()
   }).observe(document.documentElement, {
-    childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['id', 'data-slot'],
+    childList: true, subtree: true, characterData: true, attributes: true,
+    attributeFilter: ['id', 'data-slot', 'data-inspector-target', 'style', 'class', 'data-theme'],
   })
+  function refreshResponsiveSpacing() {
+    const node = selection.current
+    if (!node || busy || loadingRoute) return
+    const pills = fields.querySelectorAll('.li-spacing-variable-pill')
+    if (!pills.length) return
+    const style = getComputedStyle(node)
+    if (Array.from(pills).some(pill => pill.dataset.spacingProperties.split(' ').some(property =>
+      style.getPropertyValue(property) !== pill.textContent + 'px',
+    ))) renderFields({ keepPopup: true })
+  }
+  window.addEventListener('resize', refreshResponsiveSpacing)
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshResponsiveSpacing)
   window.addEventListener('popstate', onRouteChange)
   window.navigation?.addEventListener('currententrychange', onRouteChange)
   window.phaseAInspectorReady = loadRoute()

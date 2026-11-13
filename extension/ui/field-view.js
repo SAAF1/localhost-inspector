@@ -27,6 +27,8 @@
       if (!next.hasAttribute(name) && !(retainError && validationAttributes.includes(name))) current.removeAttribute(name)
     }
     for (const { name, value } of Array.from(next.attributes)) {
+      if (name === 'aria-expanded' && current.getAttribute('aria-haspopup') === 'dialog' &&
+          current.getAttribute(name) === 'true') continue
       if (current.getAttribute(name) !== value) current.setAttribute(name, value)
     }
     if (input && !keepDraft && current.value !== next.value) current.value = next.value

@@ -33,6 +33,7 @@ export async function createHarness(options = {}) {
     await app.evaluate(settings => {
       window.chrome = { runtime: { getURL: path => location.origin + '/' + path } }
       window.__journal = settings.journal || []
+      window.__revision = 0
       window.__saveCount = 0
       window.__settings = settings
       if (settings.restoreFailure) {
@@ -41,23 +42,39 @@ export async function createHarness(options = {}) {
         document.head.append(style)
       }
       window.phaseABridge = async message => {
-        if (message.type === 'load') return window.__journal
-        if (message.type === 'save') {
+        const { type, expectedRevision } = message
+        if (type === 'colorCatalog') return settings.colorCatalog ?? null
+        if (type === 'spacingCatalog') return settings.spacingCatalog ?? null
+        if (type === 'load') return { revision: window.__revision, edits: structuredClone(window.__journal) }
+        if (type === 'save') {
           window.__saveCount++
           if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
-          if (window.__settings.failSave === window.__saveCount) throw Error('Simulated save failure')
-          window.__journal.push(message.record)
+          if (window.__settings.failSave === window.__saveCount) {
+            const error = Error('Simulated save failure')
+            error.code = 'WRITE_REJECTED'
+            throw error
+          }
         }
-        if (message.type === 'undo') {
-          if (window.__settings.holdUndo) await new Promise(resolve => { window.__releaseUndo = resolve })
-          window.__journal.find(edit => edit.id === message.id).undone = true
+        if (type === 'undo' && window.__settings.holdUndo) {
+          await new Promise(resolve => { window.__releaseUndo = resolve })
         }
-        if (message.type === 'reset') {
-          if (window.__settings.holdReset) await new Promise(resolve => { window.__releaseReset = resolve })
+        if (type === 'reset' && window.__settings.holdReset) {
+          await new Promise(resolve => { window.__releaseReset = resolve })
+        }
+        if (expectedRevision !== window.__revision) {
+          const error = Error('Saved previews changed in another tab. Reload the page and try again.')
+          error.code = 'STALE_JOURNAL'
+          throw error
+        }
+        if (type === 'save') window.__journal.push(message.record)
+        if (type === 'undo') window.__journal.find(edit => edit.id === message.id).undone = true
+        if (type === 'reset') {
           window.__journal.forEach(edit => { if (edit.route === message.route) edit.undone = true })
         }
+        return { revision: ++window.__revision }
       }
     }, options)
+    if (options.appStyles) await app.addStyleTag({ content: options.appStyles })
     for (const file of (await injectedFiles()).filter(file => file !== 'bridge.js')) {
       await app.addScriptTag({ content: await readFile(join(project, 'extension', file), 'utf8') })
     }

@@ -110,3 +110,71 @@ test('partial paired writes remain undoable and never spill into a changed selec
     } finally { await h.close() }
   }
 })
+
+test('the physical alignment grid moves an icon to the clicked corner even when the page changes direction', async () => {
+  const h = await createHarness()
+  try {
+    const target = h.app.locator('#other')
+    await target.evaluate(button => {
+      document.documentElement.style.direction = 'rtl'
+      document.documentElement.style.writingMode = 'vertical-rl'
+      Object.assign(button.style, {
+        display: 'inline-flex', direction: 'rtl', writingMode: 'horizontal-tb', width: '48px', height: '48px',
+        padding: '0', border: '0', alignItems: 'center', justifyContent: 'center',
+      })
+      const icon = document.createElement('span')
+      icon.style.cssText = 'width:16px;height:16px;background:currentColor'
+      button.replaceChildren(icon)
+    })
+    await h.open()
+    await h.select('#other')
+    const grid = h.host.getByRole('group', { name: 'Container alignment' })
+    const bounds = await grid.boundingBox()
+    const button = await target.boundingBox()
+    for (const [x, y] of [[0, 0], [1, 1], [0, 1], [1, 0]]) {
+      await h.page.mouse.click(bounds.x + bounds.width * (x ? 5 : 1) / 6, bounds.y + bounds.height * (y ? 5 : 1) / 6)
+      await h.settled()
+      const icon = await target.locator('span').boundingBox()
+      assert.deepEqual([icon.x - button.x, icon.y - button.y], [x * 32, y * 32])
+    }
+  } finally { await h.close() }
+})
+
+test('flex alignment with oversized padding withholds only the overflowing axes', async () => {
+  const h = await createHarness()
+  try {
+    const button = h.app.locator('#other')
+    await button.evaluate(node => {
+      Object.assign(node.style, {
+        display: 'inline-flex', flexDirection: 'column', boxSizing: 'border-box',
+        width: '28px', height: '28px', minHeight: '50px', border: '1px solid',
+        padding: '20px 80px', alignItems: 'center', justifyContent: 'center',
+      })
+      node.innerHTML = '<svg style="width:16px;height:16px;flex:none"></svg><span style="position:absolute;width:999px;height:999px;pointer-events:none">Label</span>'
+    })
+    await h.open()
+    await h.select('#other')
+    const chart = h.host.getByRole('group', { name: 'Container alignment' })
+    assert.equal(await chart.count(), 0)
+    assert.equal(await h.host.getByText('Content exceeds the available width and height.').isVisible(), true)
+    await h.host.getByRole('button', { name: 'Auto layout settings', exact: true }).click()
+    assert.equal(await h.host.getByRole('button', { name: 'CSS cross-axis alignment' }).isDisabled(), true)
+    await h.page.keyboard.press('Escape')
+    await h.enter('Horizontal padding', 0)
+    await h.settled()
+    assert.equal(await h.host.getByText('Content exceeds the available height.').isVisible(), true)
+    const right = chart.getByRole('button', { name: 'Align right' })
+    assert.equal(await chart.getByRole('button').count(), 3)
+    const icon = button.locator('svg')
+    const before = await icon.boundingBox()
+    await right.click()
+    await h.settled()
+    const after = await icon.boundingBox()
+    assert.ok(after.x > before.x, 'The remaining horizontal control moves the icon right')
+    assert.equal(after.y, before.y)
+    await h.enter('Vertical padding', 0)
+    await h.settled()
+    assert.equal(await h.host.locator('.li-alignment-overflow').count(), 0)
+    assert.equal(await chart.getByRole('button').count(), 9)
+  } finally { await h.close() }
+})

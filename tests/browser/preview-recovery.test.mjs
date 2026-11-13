@@ -101,3 +101,84 @@ test('an ID collision suspends a preview until the original is uniquely identifi
     assert.equal(await notice.innerText(), '')
   } finally { await h.close() }
 })
+
+test('reordering children keeps the preview on their mounted container', async () => {
+  const h = await createHarness()
+  try {
+    await h.open(); await h.select()
+    await h.enter('Corner radius', 18); await h.settled()
+    await h.app.locator('body > #target').evaluate(node => node.append(node.firstElementChild))
+    const compare = h.host.locator('#clear')
+    await compare.click(); await h.settled()
+    assert.equal(await h.css('border-radius'), '0px')
+    await compare.click(); await h.settled()
+    assert.equal(await h.css('border-radius'), '18px')
+    assert.equal(await h.host.locator('#status').innerText(), '')
+  } finally { await h.close() }
+})
+
+test('an explicit occurrence key restores the matching part with updated text', async () => {
+  const h = await createHarness()
+  const selector = '[data-inspector-target="record:1/title"]'
+  try {
+    await h.app.locator('#target > span:first-child').evaluate(node => {
+      node.setAttribute('data-inspector-target', 'record:1/title')
+    })
+    await h.open(); await h.select(selector)
+    await h.enter('Font size', 18); await h.settled()
+    assert.equal((await h.journal())[0].target.key, 'record:1/title')
+    await h.app.locator(selector).evaluate(node => {
+      const replacement = node.cloneNode(false)
+      replacement.removeAttribute('style')
+      replacement.textContent = 'Updated title'
+      const other = replacement.cloneNode(true)
+      other.setAttribute('data-inspector-target', 'record:2/title')
+      node.replaceWith(other, replacement)
+    })
+    await h.app.waitForFunction(selector => getComputedStyle(document.querySelector(selector)).fontSize === '18px', selector)
+    assert.equal(await h.css('font-size', '[data-inspector-target="record:2/title"]'), '12px')
+    await h.settled()
+    await h.host.locator('#undo').click(); await h.settled()
+    assert.equal(await h.css('font-size', selector), '12px')
+  } finally { await h.close() }
+})
+
+test('an app style takeover retires the live preview stack but keeps its saved Undo', async () => {
+  const h = await createHarness()
+  try {
+    await h.open(); await h.select()
+    await h.enter('Corner radius', 12); await h.settled()
+    await h.enter('Corner radius', 18); await h.settled()
+    await h.app.locator('body > #target').evaluate(node => { node.style.borderRadius = '12px' })
+    await h.host.locator('#clear:disabled').waitFor({ state: 'attached' })
+    await h.settled()
+    assert.match(await h.host.locator('#status').innerText(), /app|conflict/i)
+    assert.equal(await h.css('border-radius'), '12px')
+    for (let count = 0; count < 2; count++) {
+      await h.host.locator('#undo').click(); await h.settled()
+      assert.equal(await h.css('border-radius'), '12px')
+    }
+    assert.deepEqual((await h.journal()).map(edit => edit.undone), [true, true])
+  } finally { await h.close() }
+})
+
+test('a conflicting cascade change leaves the app value in place', async () => {
+  const h = await createHarness()
+  try {
+    await h.open(); await h.select()
+    await h.enter('Corner radius', 18); await h.settled()
+    await h.app.evaluate(() => {
+      const style = document.createElement('style')
+      style.textContent = '.override #target { border-radius: 27px !important; }'
+      document.head.append(style)
+      document.body.classList.add('override')
+    })
+    await h.host.locator('#clear:disabled').waitFor({ state: 'attached' })
+    await h.settled()
+    assert.match(await h.host.locator('#status').innerText(), /app|conflict/i)
+    assert.equal(await h.css('border-radius'), '27px')
+    assert.equal(await h.app.locator('body > #target').evaluate(node => node.style.borderRadius), '')
+    await h.host.locator('#undo').click(); await h.settled()
+    assert.equal(await h.css('border-radius'), '27px')
+  } finally { await h.close() }
+})

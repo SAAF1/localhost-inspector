@@ -50,7 +50,7 @@
       position: fixed; z-index: 2147483647; pointer-events: none;
       width: max-content; max-width: min(220px, calc(100vw - 16px));
       padding: 4px 8px; border-radius: var(--li-radius);
-      color: var(--li-surface); background: var(--li-dark);
+      color: var(--li-tooltip-text); background: var(--li-tooltip-surface);
       box-shadow: 0 2px 6px var(--li-shadow); overflow-wrap: anywhere;
     }
     .li-revert-dialog {
@@ -68,6 +68,6 @@
       background: var(--li-field);
     }
     .li-dialog-button:hover { box-shadow: inset 0 0 0 1px var(--li-shadow); }
-    .li-dialog-revert { background: var(--li-error); color: var(--li-surface); border-color: var(--li-error); }
+    .li-dialog-revert { background: var(--li-destructive-surface); color: var(--li-destructive-text); border-color: var(--li-destructive-surface); }
   `
 })()

@@ -15,7 +15,7 @@
     })
     const root = host.attachShadow({ mode: 'open' })
     const style = document.createElement('style')
-    style.textContent = ui.tokens + ui.styles + ui.panelStyles
+    style.textContent = ui.tokens + ui.styles + ui.panelStyles + ui.spacingStyles
     root.append(style)
     let outlineRoot = root
     if (dock) {

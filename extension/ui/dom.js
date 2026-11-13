@@ -36,4 +36,28 @@
     if (handler) button.onclick = handler
     return button
   }
+  ui.colorSwatch = value => {
+    const swatch = ui.element('span', 'li-swatch')
+    swatch.style.backgroundColor = value ?? ''
+    swatch.setAttribute('aria-hidden', 'true')
+    return swatch
+  }
+  ui.colorSwatchTrigger = (label, value, onOpen, disabled = false) => {
+    const button = ui.element('button', 'li-color-swatch-trigger')
+    button.type = 'button'
+    button.disabled = disabled
+    button.setAttribute('aria-label', label)
+    button.setAttribute('aria-haspopup', 'dialog')
+    button.setAttribute('aria-expanded', 'false')
+    button.append(ui.colorSwatch(value))
+    button.onclick = onOpen
+    return button
+  }
+  ui.popupHeader = (title, ...actions) => {
+    const header = ui.element('header', 'li-popup-header')
+    const controls = ui.element('div', 'li-popup-actions')
+    controls.append(...actions)
+    header.append(ui.element('span', '', title), controls)
+    return header
+  }
 })()

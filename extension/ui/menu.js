@@ -3,17 +3,71 @@
   let closeActive = () => {}
   ui.closeMenu = () => closeActive()
 
-  ui.openMenu = (anchor, options, current, onChoose, { label = 'Options', size = false, commands = false } = {}) => {
+  function mountPopup(anchor, popup, position, { closeOnPanelScroll = false, parent, onClose, matchAnchorWidth = true, fallbackFocus, trackSize = false } = {}) {
     ui.dismissTooltip()
-    closeActive()
+    if (!parent) closeActive(false)
     const root = anchor.getRootNode()
     const owner = anchor.ownerDocument
     const viewport = owner.defaultView
-    const eventDocuments = owner === document ? [owner] : [owner, document]
+    const targets = new Set([owner, document])
+    if (closeOnPanelScroll) targets.add(root)
+    const outside = event => {
+      if (!event.composedPath().includes(popup) && !event.composedPath().includes(anchor)) close(false)
+    }
+    const onScroll = event => {
+      if (event.composedPath().includes(popup)) return
+      if (trackSize && event.target === anchor.closest('.li-properties')) place()
+      else close(root.activeElement && popup.contains(root.activeElement))
+    }
+    const resize = trackSize ? new ResizeObserver(place) : null
+    function close(focus = true) {
+      if (!popup.isConnected) return
+      resize?.disconnect()
+      onClose?.()
+      popup.remove()
+      anchor.setAttribute('aria-expanded', 'false')
+      for (const target of targets) {
+        target.removeEventListener('pointerdown', outside, true)
+        target.removeEventListener('scroll', onScroll, true)
+      }
+      viewport.removeEventListener('resize', onScroll)
+      if (!parent) closeActive = () => {}
+      if (focus) (anchor.isConnected ? anchor : fallbackFocus?.())?.focus({ preventScroll: true })
+    }
+    const container = parent ?? root
+    container.append(popup)
+    anchor.setAttribute('aria-expanded', 'true')
+    popup.style.maxHeight = Math.max(0, viewport.innerHeight - 16) + 'px'
+    if (parent && matchAnchorWidth) popup.style.width = anchor.offsetWidth + 'px'
+    let rect = anchor.getBoundingClientRect()
+    function place() {
+      if (anchor.isConnected) rect = anchor.getBoundingClientRect()
+      const width = popup.offsetWidth
+      const [left, top] = position(rect, width)
+      popup.style.left = Math.max(8, Math.min(left, viewport.innerWidth - width - 8)) + 'px'
+      const height = Math.min(popup.scrollHeight, viewport.innerHeight - 16)
+      const y = parent && top + height > viewport.innerHeight - 8 ? rect.top - height - 2 : top
+      popup.style.top = Math.max(8, Math.min(y, viewport.innerHeight - height - 8)) + 'px'
+    }
+    place()
+    resize?.observe(popup)
+    for (const target of targets) {
+      target.addEventListener('pointerdown', outside, true)
+      target.addEventListener('scroll', onScroll, true)
+    }
+    viewport.addEventListener('resize', onScroll)
+    if (!parent) closeActive = close
+    return close
+  }
+
+  ui.mountPopup = mountPopup
+
+  ui.openMenu = (anchor, options, current, onChoose, { label = 'Options', size = false, commands = false, parent, onPreview, onClose } = {}) => {
+    const root = anchor.getRootNode()
     const menu = ui.element('div', 'li-menu' + (size ? ' li-size-menu' : ''))
+    if (parent) menu.classList.add('li-settings-menu')
     menu.setAttribute('role', 'menu')
     menu.setAttribute('aria-label', label)
-    anchor.setAttribute('aria-expanded', 'true')
     const list = ui.element('div', 'li-menu-list')
     menu.append(list)
     const buttons = options.map(([value, name, detail = {}]) => {
@@ -24,17 +78,24 @@
       }
       const button = ui.element('button', 'li-menu-option')
       button.type = 'button'
-      button.setAttribute('role', commands ? 'menuitem' : 'menuitemradio')
-      if (!commands) button.setAttribute('aria-checked', String(value === current))
+      button.setAttribute('role', commands || detail.command ? 'menuitem' : 'menuitemradio')
+      if (!commands && !detail.command) button.setAttribute('aria-checked', String(value === current))
       const check = ui.element('span', 'li-menu-check')
       if (!commands && value === current) check.append(ui.icon('menuCheck'))
       button.append(check)
       if (detail.icon) button.append(ui.icon(detail.icon))
       button.append(ui.element('span', '', name))
-      button.onclick = () => { close(); onChoose(value) }
+      if (onPreview) {
+        button.onpointerenter = () => onPreview(value)
+        button.onfocus = () => {
+          if (!list.querySelector('.li-menu-option:hover')) onPreview(value)
+        }
+      }
+      button.onclick = () => { close(); onChoose(value, anchor) }
       list.append(button)
       return button
     })
+    if (onPreview) list.onpointerleave = () => onPreview(current)
     if (size) {
       const footer = ui.element('div', 'li-menu-scroll')
       const up = ui.action('Scroll font sizes up', 'chevronDown', () => list.scrollBy({ top: -72 }))
@@ -43,21 +104,6 @@
       footer.append(up, down)
       menu.append(footer)
     }
-    const close = (focus = true) => {
-      menu.remove()
-      anchor.setAttribute('aria-expanded', 'false')
-      for (const target of eventDocuments) {
-        target.removeEventListener('pointerdown', outside, true)
-        target.removeEventListener('scroll', reposition, true)
-      }
-      viewport.removeEventListener('resize', reposition)
-      closeActive = () => {}
-      if (focus && anchor.isConnected) anchor.focus()
-    }
-    const outside = event => {
-      if (!event.composedPath().includes(menu) && !event.composedPath().includes(anchor)) close(false)
-    }
-    const reposition = event => { if (!event.composedPath().includes(menu)) close(false) }
     menu.onkeydown = event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close() }
       // Restore the trigger before native Tab traversal, so focus advances from
@@ -72,20 +118,12 @@
         buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus()
       }
     }
-    root.append(menu)
-    const rect = anchor.getBoundingClientRect()
     const selected = Math.max(0, options.findIndex(([value]) => value === current))
-    const height = Math.min(menu.scrollHeight, viewport.innerHeight - 16)
-    menu.style.maxHeight = (viewport.innerHeight - 16) + 'px'
-    menu.style.left = Math.max(8, Math.min(rect.right - menu.offsetWidth, viewport.innerWidth - menu.offsetWidth - 8)) + 'px'
-    menu.style.top = Math.max(8, Math.min(rect.top - selected * 24 - 8, viewport.innerHeight - height - 8)) + 'px'
-    for (const target of eventDocuments) {
-      target.addEventListener('pointerdown', outside, true)
-      target.addEventListener('scroll', reposition, true)
-    }
-    viewport.addEventListener('resize', reposition)
-    closeActive = close
+    const close = mountPopup(anchor, menu, (rect, width) => [
+      rect.right - width, parent ? rect.bottom + 3 : rect.top - selected * 24 - 8,
+    ], { parent, onClose })
     buttons[selected]?.focus({ preventScroll: true })
     buttons[selected]?.scrollIntoView({ block: 'nearest' })
+    return close
   }
 })()

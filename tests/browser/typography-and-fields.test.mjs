@@ -14,6 +14,10 @@ async function addTextFixtures(h) {
       <p id="inline-runs" style="font-weight:400">A <strong>bold</strong> word</p>
       <button id="text-button"><svg width="12" height="12" aria-hidden="true"></svg><span id="button-label">Sort title</span></button>
       <table><thead><tr id="mixed-header"><th><button role="checkbox" aria-label="Select all"></button></th><th><button>Title</button></th></tr></thead></table>
+      <div id="mixed-avatar" style="padding:8px">
+        <span data-slot="avatar"><span id="avatar-initials" data-slot="avatar-fallback">OM</span></span>
+        <div><p id="person-name">Olivia Martin</p><p>olivia@example.com</p></div>
+      </div>
       <div id="mixed-box" style="padding:8px"><span>Text</span><svg width="12" height="12"></svg></div>
     `
     document.body.append(host)
@@ -30,6 +34,12 @@ test('Typography shows only for actual text and aggregates a text-only group per
     assert.equal(await typography.count(), 0)
     await h.select('#mixed-box')
     assert.equal(await typography.count(), 0)
+    await h.select('#mixed-avatar')
+    assert.equal(await typography.count(), 0, 'Avatar initials do not make the parent a text-only group')
+    await h.select('#person-name')
+    assert.equal(await typography.isVisible(), true)
+    await h.select('#avatar-initials')
+    assert.equal(await typography.isVisible(), true, 'The directly selected text fallback is editable')
     await h.select('#inline-runs')
     const weight = h.host.getByRole('button', { name: 'Font weight', exact: true })
     assert.equal(await weight.innerText(), 'Regular', 'An inline styled run stays part of one text target')
