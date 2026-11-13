@@ -45,8 +45,12 @@ export async function createHarness(options = {}) {
         const { type, expectedRevision } = message
         if (type === 'colorCatalog') return settings.colorCatalog ?? null
         if (type === 'spacingCatalog') return settings.spacingCatalog ?? null
+        if (type === 'textStyleCatalog') {
+          if (settings.failTextStyleCatalog) throw Error('Source unavailable')
+          return settings.textStyleCatalog ?? null
+        }
         if (type === 'load') return { revision: window.__revision, edits: structuredClone(window.__journal) }
-        if (type === 'save') {
+        if (type === 'save' || type === 'saveTextStyle') {
           window.__saveCount++
           if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
           if (window.__settings.failSave === window.__saveCount) {
@@ -67,7 +71,15 @@ export async function createHarness(options = {}) {
           throw error
         }
         if (type === 'save') window.__journal.push(message.record)
-        if (type === 'undo') window.__journal.find(edit => edit.id === message.id).undone = true
+        if (type === 'saveTextStyle') {
+          window.__journal.push(...message.records.map(record => ({ ...record, group: message.records[0].id })))
+        }
+        if (type === 'undo') {
+          const entry = window.__journal.find(edit => edit.id === message.id)
+          window.__journal.forEach(edit => {
+            if (edit === entry || (entry.group && entry.group === edit.group)) edit.undone = true
+          })
+        }
         if (type === 'reset') {
           window.__journal.forEach(edit => { if (edit.route === message.route) edit.undone = true })
         }

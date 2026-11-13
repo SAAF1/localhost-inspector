@@ -1,27 +1,49 @@
 (() => {
   const ui = window.LocalhostInspector
   let pickerCount = 0
+  const pickerLabels = {
+    color: {
+      title: 'Variables', list: 'Color variables', search: 'Search colors',
+      empty: 'No color variables available', noMatch: 'No matches found for this search',
+      applying: 'Applying color…', failed: 'Could not apply color. Try again.',
+    },
+    spacing: {
+      title: 'Spacing variables', list: 'Spacing variables', search: 'Search spacing variables',
+      empty: 'No spacing variables available', noMatch: 'No matches found for this search',
+      applying: 'Applying spacing…', failed: 'Could not apply spacing. Try again.',
+    },
+    text: {
+      title: 'Text styles', list: 'Text styles', search: 'Search text styles',
+      empty: 'No text styles available.', noMatch: 'No styles match this search.',
+      applying: 'Applying text style…', failed: 'Could not apply text style. Try again.',
+    },
+  }
 
   // The caller supplies resolved swatches and commits the selected ID.
   // A rejected commit must reject the callback rather than report success.
   ui.openColorVariablePicker = (anchor, settings) => openVariablePicker(anchor, settings)
   ui.openSpacingVariablePicker = (anchor, { variables, ...settings }) =>
-    openVariablePicker(anchor, { ...settings, colors: variables, spacing: true })
+    openVariablePicker(anchor, { ...settings, colors: variables, kind: 'spacing' })
+  ui.openTextStylePicker = (anchor, { styles, ...settings }) =>
+    openVariablePicker(anchor, { ...settings, colors: styles, kind: 'text' })
 
   function openVariablePicker(anchor, {
     colors, current, sourceLabel, onChoose, create, custom, initialTab = 'libraries', fallbackFocus,
-    showLibraries = true, spacing = false,
+    showLibraries = true, kind = 'color', emptyMessage,
   }) {
     if (anchor.getAttribute('aria-expanded') === 'true') {
       ui.closeMenu()
       return
     }
 
-    const title = spacing ? 'Spacing variables' : 'Variables'
-    const searchLabel = spacing ? 'Search spacing variables' : 'Search colors'
-    const listId = 'li-color-variables-' + ++pickerCount
+    const spacing = kind === 'spacing'
+    const textStyles = kind === 'text'
+    const labels = pickerLabels[kind]
+    const { title, search: searchLabel } = labels
+    const listId = 'li-picker-list-' + ++pickerCount
     const popup = ui.element('div', 'li-menu li-color-picker li-context-popup')
-    if (spacing) popup.classList.add('li-context-popup', 'li-spacing-picker')
+    if (spacing) popup.classList.add('li-spacing-picker')
+    if (textStyles) popup.classList.add('li-text-style-picker')
     popup.setAttribute('role', 'dialog')
     popup.setAttribute('aria-label', title)
     const dismiss = ui.action('Close ' + title, 'dismiss', () => close())
@@ -56,8 +78,8 @@
       tabs.append(tab)
       return tab
     })
-    const header = ui.popupHeader('', ...[add, dismiss].filter(Boolean))
-    header.firstElementChild.replaceWith(tabs)
+    const header = ui.popupHeader(textStyles ? title : '', ...[add, dismiss].filter(Boolean))
+    if (!textStyles) header.firstElementChild.replaceWith(tabs)
     const search = ui.element('input')
     search.type = 'text'
     search.placeholder = searchLabel
@@ -80,7 +102,7 @@
     const list = ui.element('div', 'li-menu-list li-color-picker-list')
     list.id = listId
     list.setAttribute('role', 'listbox')
-    list.setAttribute('aria-label', spacing ? 'Spacing variables' : 'Color variables')
+    list.setAttribute('aria-label', labels.list)
     const empty = ui.element('p', 'li-color-picker-message')
     empty.setAttribute('role', 'status')
     const feedback = ui.element('p', 'li-color-picker-message')
@@ -88,8 +110,10 @@
     feedback.hidden = true
 
     const libraries = ui.element('div', 'li-color-libraries')
-    libraries.setAttribute('role', 'tabpanel')
-    libraries.setAttribute('aria-label', 'Libraries')
+    if (!textStyles) {
+      libraries.setAttribute('role', 'tabpanel')
+      libraries.setAttribute('aria-label', 'Libraries')
+    }
     libraries.append(searchRow)
     if (sourceLabel) libraries.append(ui.element('div', 'li-color-picker-source', sourceLabel))
     libraries.append(list, empty, feedback)
@@ -106,7 +130,7 @@
     if (solid) popup.append(solid.panel)
 
     function setTab(tab, focus = true) {
-      if (spacing) {
+      if (spacing || textStyles) {
         if (focus) search.focus({ preventScroll: true })
         return
       }
@@ -142,6 +166,11 @@
       if (spacing) {
         option.append(ui.icon('numberVariable'), ui.element('span', '', color.name),
           ui.element('span', 'li-spacing-option-value', color.value))
+      } else if (textStyles) {
+        const glyph = ui.element('span', 'li-text-style-glyph', 'Ag')
+        glyph.setAttribute('aria-hidden', 'true')
+        option.append(glyph, ui.element('span', 'li-text-style-option-name', color.name),
+          ui.element('span', 'li-text-style-metrics', '· ' + color.metrics))
       } else option.append(ui.colorSwatch(color.value), ui.element('span', '', color.name))
       // Keep DOM focus on the search input while choosing an option by mouse.
       option.onmousedown = event => event.preventDefault()
@@ -179,8 +208,7 @@
       const hasResults = rows.some(row => !row.option.hidden)
       list.hidden = !hasResults
       empty.hidden = hasResults
-      empty.textContent = colors.length ? 'No matches found for this search' :
-        spacing ? 'No spacing variables available' : 'No color variables available'
+      empty.textContent = colors.length ? labels.noMatch : emptyMessage ?? labels.empty
       search.setAttribute('aria-expanded', String(hasResults))
     }
 
@@ -188,12 +216,12 @@
       if (pending || color.id === current) return
       pending = true
       list.setAttribute('aria-busy', 'true')
-      feedback.textContent = spacing ? 'Applying spacing…' : 'Applying color…'
+      feedback.textContent = labels.applying
       feedback.hidden = false
       try {
         await onChoose(color.id)
         if (!popup.isConnected) return
-        if (spacing) { close(); return }
+        if (spacing || textStyles) { close(); return }
         current = color.id
         if (color.value) solid?.reset(color.value)
         const superseded = rows.findIndex(row => row.color.pending && row.color.id !== current)
@@ -204,8 +232,7 @@
         updateSelection()
         feedback.hidden = true
       } catch {
-        if (popup.isConnected) feedback.textContent = spacing
-          ? 'Could not apply spacing. Try again.' : 'Could not apply color. Try again.'
+        if (popup.isConnected) feedback.textContent = labels.failed
       } finally {
         pending = false
         list.removeAttribute('aria-busy')
@@ -231,7 +258,8 @@
       if (event.key !== 'Escape' || event.isComposing) return
       event.preventDefault()
       event.stopPropagation()
-      close()
+      if (textStyles && search.value) clear.click()
+      else close()
     }
     popup.onfocusout = event => {
       if (event.relatedTarget && !anchor.contains(event.relatedTarget) && !popup.contains(event.relatedTarget)) close(false)

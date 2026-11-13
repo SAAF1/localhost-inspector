@@ -15,7 +15,7 @@ test('numeric edits, journal, Undo and Before/After preserve the original style'
     await h.host.getByRole('button', { name: 'Show original', exact: true }).click(); await h.settled()
     assert.equal(await h.css('font-size', '#target > span:first-child'), '12px')
     assert.equal(await h.field('Font size').isDisabled(), true)
-    await h.host.getByRole('button', { name: 'Show original', exact: true }).click(); await h.settled()
+    await h.host.getByRole('button', { name: 'Show previews', exact: true }).click(); await h.settled()
     assert.equal(await h.css('font-size', '#target > span:first-child'), '18px')
     await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).click(); await h.settled()
     assert.equal(await h.css('font-size', '#target > span:first-child'), '12px')

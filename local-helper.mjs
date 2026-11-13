@@ -10,7 +10,14 @@ const exec = promisify(execFile)
 const stateArgument = process.argv[2]
 const root = stateArgument && resolve(stateArgument)
 const [mode, ...args] = process.argv.slice(3)
-if (!root || !['bind', 'register-colors', 'register-spacing', 'status', 'serve'].includes(mode)) throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors <port> <relative.css> <name>... | register-spacing <port> <relative.css> <name>... | status | serve')
+const catalogKinds = new Map([
+  ['register-colors', 'colors'],
+  ['register-spacing', 'spacing'],
+  ['register-text-styles', 'text-styles'],
+])
+if (!root || (!['bind', 'status', 'serve'].includes(mode) && !catalogKinds.has(mode))) {
+  throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors/register-spacing/register-text-styles <port> <relative.css> <name>... | status | serve')
+}
 await mkdir(root, { recursive: true, mode: 0o700 })
 const configPath = join(root, 'bindings.json')
 const keyPath = join(root, 'pairing-key')
@@ -56,12 +63,13 @@ if (mode === 'bind') {
 
 const variableName = /^--[a-zA-Z_][a-zA-Z0-9_-]{0,79}$/
 const catalogPath = (binding, kind) => join(root, binding.id + '-' + kind + '.json')
+const textStyleProperties = ['font-family', 'font-weight', 'font-size', 'line-height', 'letter-spacing']
 
 function declaresVariable(css, name) {
   return new RegExp('(?:^|[;{])\\s*' + name + '\\s*:').test(css)
 }
 
-async function verifyCatalog(binding, catalog) {
+async function verifyCatalog(binding, catalog, kind) {
   const { source, names } = catalog
   if (typeof source !== 'string' || !source.endsWith('.css') || source.length > 400 || isAbsolute(source) ||
       !Array.isArray(names) || !names.length || names.length > 100 ||
@@ -76,29 +84,31 @@ async function verifyCatalog(binding, catalog) {
   const info = await stat(file)
   if (!info.isFile() || info.size > 1024 * 1024) throw Error('Expected a CSS file under 1 MB')
   const css = (await readFile(file, 'utf8')).replace(/\/\*[\s\S]*?\*\//g, '')
-  for (const name of names) {
-    if (!declaresVariable(css, name)) {
-      throw Error('Variable source does not declare ' + name)
-    }
+  const declarations = kind === 'text-styles'
+    ? names.flatMap(name => textStyleProperties.map(property => name + '-' + property))
+    : names
+  for (const name of declarations) {
+    if (!declaresVariable(css, name)) throw Error('Variable source does not declare ' + name)
   }
   return { source: child, names: [...new Set(names)], file, css }
 }
 
 async function readCatalog(binding, kind = 'colors') {
   const catalog = await read(catalogPath(binding, kind), null)
-  return catalog && verifyCatalog(binding, catalog)
+  return catalog && verifyCatalog(binding, catalog, kind)
 }
 
-if (mode === 'register-colors' || mode === 'register-spacing') {
+if (catalogKinds.has(mode)) {
   const [port, source, ...names] = args
   const origin = originFor(port)
   const bindings = await read(configPath, {})
   const binding = bindings[origin]
   if (!binding) throw Error('No saved project connection for this origin')
   await verify(binding)
-  const { source: verifiedSource, names: verifiedNames } = await verifyCatalog(binding, { source, names })
+  const kind = catalogKinds.get(mode)
+  const { source: verifiedSource, names: verifiedNames } = await verifyCatalog(binding, { source, names }, kind)
   const catalog = { source: verifiedSource, names: verifiedNames }
-  await atomic(catalogPath(binding, mode === 'register-spacing' ? 'spacing' : 'colors'), catalog)
+  await atomic(catalogPath(binding, kind), catalog)
   console.log(JSON.stringify(catalog))
   process.exit(0)
 }
@@ -118,6 +128,7 @@ try { await writeFile(keyPath, randomBytes(32).toString('hex'), { flag: 'wx', mo
 catch (error) { if (error.code !== 'EEXIST') throw error }
 const key = (await readFile(keyPath, 'utf8')).trim()
 let tail = Promise.resolve()
+const maxRequestLength = 64_000
 const pixelProperties = new Set(['font-size','line-height','letter-spacing','gap','width','height','min-width','max-width',
   'min-height','max-height','padding','padding-top','padding-right','padding-bottom','padding-left','border-radius','border-width'])
 const keywords = {
@@ -144,12 +155,33 @@ function validValue(property, value) {
 function validTargetKey(key) {
   return key == null || (typeof key === 'string' && key.length <= 120 && key.trim().length > 0)
 }
-function editFrom(record, catalog) {
+function validTextStyleValue(property, value) {
+  if (typeof value !== 'string' || !value || value.length > 100) return false
+  if (property === 'font-family') {
+    // CSSOM family lists contain names and quoted names, not CSS functions.
+    const family = /(?:"[^"\r\n\\{};]+"|'[^'\r\n\\{};]+'|[\p{L}\p{N}_-]+(?: +[\p{L}\p{N}_-]+)*)/u
+    return new RegExp('^' + family.source + '(?: *, *' + family.source + ')*$', 'u').test(value)
+  }
+  if (property === 'font-weight') return /^\d+(?:\.\d+)?$/.test(value) && Number(value) >= 1 && Number(value) <= 1000
+  if (property === 'line-height' || property === 'letter-spacing') {
+    if (value === 'normal') return true
+  }
+  return /^-?\d+(?:\.\d+)?px$/.test(value) && (property === 'letter-spacing' || !value.startsWith('-'))
+}
+function editFrom(record, catalog, group) {
+  const textStyle = record?.textStyleToken
   const token = record?.colorToken
   const spacing = record?.spacingToken
   const pending = record?.pendingColor
   const reference = token ?? spacing
-  const validRequest = reference
+  const validTextStyleRequest = group && !reference && !pending &&
+    textStyleProperties.includes(record?.property) && (
+      Object.hasOwn(record, 'textStyleToken')
+        ? textStyle && catalog && textStyle.source === catalog.source && catalog.names.includes(textStyle.name) &&
+          record.requested === 'var(' + textStyle.name + '-' + record.property + ')'
+        : validTextStyleValue(record.property, record.requested)
+    )
+  const validRequest = group ? validTextStyleRequest : reference
     ? !(token && spacing) && catalog && (spacing ? /^(gap|padding-(top|right|bottom|left))$/.test(record.property) : colors.has(record.property)) &&
       reference.source === catalog.source && catalog.names.includes(reference.name) &&
       record.requested === 'var(' + reference.name + ')' &&
@@ -164,7 +196,9 @@ function editFrom(record, catalog) {
   const target = record?.target
   if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || typeof record.route !== 'string' ||
       !record.route.startsWith('/') || record.route.length > 2048 || !validRequest || !validPending ||
-      !validValue(record.property, record.observed) || typeof record.before !== 'string' || record.before.length > 100 ||
+      Object.hasOwn(record, 'group') || (!group && Object.hasOwn(record, 'textStyleToken')) ||
+      !(group ? validTextStyleValue(record.property, record.observed) : validValue(record.property, record.observed)) ||
+      typeof record.before !== 'string' || record.before.length > 100 ||
       !['unique', 'ambiguous'].includes(record.restore) || !target || !/^[a-z][a-z0-9-]*$/.test(target.tag) ||
       !validTargetKey(target.key) || [target.id, target.slot, target.text].some(value => value !== null && (typeof value !== 'string' || value.length > 120))) {
     throw Error('Invalid edit record')
@@ -175,7 +209,21 @@ function editFrom(record, catalog) {
   const colorToken = token ? { source: token.source, name: token.name } : undefined
   const spacingToken = spacing ? { source: spacing.source, name: spacing.name } : undefined
   const pendingColor = pending ? { source: pending.source, name: pending.name, label: pending.label, value: pending.value } : undefined
-  return { id, route, property, requested, observed, before, restore, target, viewport, colorToken, pendingColor, spacingToken, intent: 'selected occurrence only' }
+  const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
+  return { id, route, property, requested, observed, before, restore, target, viewport, colorToken, pendingColor, spacingToken, textStyleToken, group, intent: 'selected occurrence only' }
+}
+function textStyleEdits(records, catalog, journal) {
+  if (!Array.isArray(records) || !records.length || records.length > 50 || !records[0]?.id) {
+    throw Error('Expected 1 to 50 text style edits')
+  }
+  const edits = records.map(record => editFrom(record, catalog, records[0].id))
+  const [first] = edits
+  const ids = new Set(edits.map(edit => edit.id))
+  if (ids.size !== edits.length || journal.edits.some(edit => ids.has(edit.id)) ||
+      edits.some(edit => edit.route !== first.route || edit.textStyleToken?.name !== first.textStyleToken?.name)) {
+    throw Error('Text style edits must use unique IDs, one route and one style')
+  }
+  return edits
 }
 async function handle(message) {
   if (message.type === 'ping') return true
@@ -192,6 +240,10 @@ async function handle(message) {
   }
   if (message.type === 'spacingCatalog') {
     const catalog = await readCatalog(binding, 'spacing')
+    return catalog && { source: catalog.source, names: catalog.names }
+  }
+  if (message.type === 'textStyleCatalog') {
+    const catalog = await readCatalog(binding, 'text-styles')
     return catalog && { source: catalog.source, names: catalog.names }
   }
   if (message.type === 'check') return { id: binding.id }
@@ -218,11 +270,16 @@ async function handle(message) {
       }
     }
     journal.edits.push(edit)
+  } else if (message.type === 'saveTextStyle') {
+    const catalog = message.records?.[0]?.textStyleToken ? await readCatalog(binding, 'text-styles') : null
+    journal.edits.push(...textStyleEdits(message.records, catalog, journal))
   } else if (message.type === 'undo') {
     const edit = journal.edits.find(e => e.id === message.id)
     if (!edit) throw Error('Edit was not found')
     if (edit.undone) return { file, revision: journal.revision }
-    edit.undone = true
+    if (edit.group) {
+      for (const member of journal.edits) if (member.group === edit.group) member.undone = true
+    } else edit.undone = true
   } else if (message.type === 'reset') {
     if (typeof message.route !== 'string' || !message.route.startsWith('/')) throw Error('Expected a route')
     for (const edit of journal.edits) if (edit.route === message.route) edit.undone = true
@@ -244,7 +301,7 @@ createServer(async (req, res) => {
     let body = ''
     for await (const chunk of req) {
       body += chunk
-      if (body.length > 16000) throw Error('Request too large')
+      if (body.length > maxRequestLength) throw Error('Request too large')
     }
     const message = JSON.parse(body)
     const task = tail.then(() => handle(message))

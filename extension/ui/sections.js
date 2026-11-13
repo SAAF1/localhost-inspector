@@ -1,11 +1,16 @@
 (() => {
   const ui = window.LocalhostInspector
-  function typographyControls(controls, binding) {
-    const weight = controls.select('font-weight', 'Font weight', ui.choices.weights, ui.weightName)
-    const metrics = ui.row(
-      ui.stack('Line height', controls.numeric('line-height', 'Line height', 'lineHeight')),
-      ui.stack('Letter spacing', controls.numeric('letter-spacing', 'Letter spacing', 'letterSpacing')),
-    )
+  function manualTypographyFields(controls) {
+    return [
+      ui.row(controls.select('font-weight', 'Font weight', ui.choices.weights, ui.weightName),
+        controls.numeric('font-size', 'Font size')),
+      ui.row(
+        ui.stack('Line height', controls.numeric('line-height', 'Line height', 'lineHeight')),
+        ui.stack('Letter spacing', controls.numeric('letter-spacing', 'Letter spacing', 'letterSpacing')),
+      ),
+    ]
+  }
+  function typographyControls(controls, binding, textStyle) {
     const alignment = controls.value('text-align')
     const segments = controls.segments('text-align', 'Text alignment', [
       ['left', 'Align text left', 'textAlignLeft'], ['center', 'Align text center', 'textAlignCenter'], ['right', 'Align text right', 'textAlignRight'],
@@ -16,11 +21,12 @@
     heading.classList.add('li-color-label')
     const textColor = ui.element('div', 'li-stack li-text-color')
     textColor.append(heading, binding.field)
-    const section = ui.section('Typography',
-      ui.row(weight, controls.numeric('font-size', 'Font size')), metrics,
+    const fontFields = textStyle.field ? [textStyle.field] : manualTypographyFields(controls)
+    const section = ui.section('Typography', ...fontFields,
       ui.stack(alignment === null ? 'Alignment · Mixed' : 'Alignment', ui.row(segments, more)), textColor,
     )
     section.classList.add('li-type-section')
+    if (textStyle.trigger) section.firstElementChild.append(textStyle.trigger)
     return section
   }
   function typography(context) {
@@ -42,7 +48,7 @@
     }
     const controls = ui.createControls(textContext)
     const binding = ui.colorBinding(context, controls, { property: 'color', label: 'Text color', targets })
-    return typographyControls(controls, binding)
+    return typographyControls(controls, binding, ui.textStyleControl?.(context, controls, targets) ?? {})
   }
   function paintSection(title, binding, ...fields) {
     const section = ui.section(title, binding.field, ...fields)

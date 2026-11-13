@@ -75,6 +75,10 @@
       // Responsive width modes can change their computed size with layout.
       if (!entry.node.isConnected || ['100%', 'fit-content'].includes(entry.requested)) return false
       if (entry.spacingToken) return !ui.spacingVariableMatches(entry.node, entry.property, entry.spacingToken.name)
+      if (entry.textStyleToken) return !ui.textStyleMatches(
+        getComputedStyle(entry.node).getPropertyValue(entry.property),
+        ui.textStyleValues(entry.node, entry.textStyleToken.name)?.[entry.property],
+      )
       const expected = entry.colorToken ? ui.resolveColorVariable(entry.node, entry.colorToken.name) : entry.observed
       return getComputedStyle(entry.node).getPropertyValue(entry.property) !== expected
     }
@@ -135,27 +139,48 @@
       const exactNodes = fromOriginal ? original : new Map()
       if (fromOriginal) original = new Map()
       prune()
+      const operations = new Map()
       for (const edit of saved.values()) {
+        const id = edit.group ?? edit.id
+        if (!operations.has(id)) operations.set(id, [])
+        operations.get(id).push(edit)
+      }
+      for (const edits of operations.values()) {
         if (!isCurrent()) return
-        if (attached.has(edit.id) || conflicts.has(edit.id)) continue
-        const exact = exactNodes.get(edit.id)
-        const exactMatch = matchesTarget(exact?.node, edit.target)
-        const node = exactMatch ? exact.node :
-          (edit.restore === 'unique' ? findTarget(edit.target) : null)
-        if (!node || !canEdit(node, edit.property) ||
-            getComputedStyle(node).getPropertyValue(edit.property) !== (exactMatch ? exact.before : edit.before)) continue
-        try {
-          const entry = await apply(node, edit, isCurrent)
-          if (!entry) continue
-          if (!isCurrent() || !isAttached(edit, entry)) {
-            remove(entry)
-            continue
+        const applied = []
+        let complete = true
+        for (const edit of edits) {
+          if (attached.has(edit.id)) continue
+          const exact = exactNodes.get(edit.id)
+          const exactMatch = matchesTarget(exact?.node, edit.target)
+          const node = exactMatch ? exact.node : (edit.restore === 'unique' ? findTarget(edit.target) : null)
+          if (conflicts.has(edit.id) || !node || !canEdit(node, edit.property) ||
+              getComputedStyle(node).getPropertyValue(edit.property) !== (exactMatch ? exact.before : edit.before)) {
+            complete = false
+            break
           }
-          attached.set(edit.id, entry)
-          reconcileConflicts([entry])
-        } catch {
-          // A target that no longer accepts its saved style must not block other previews.
+          try {
+            const entry = await apply(node, edit, isCurrent)
+            if (!entry || !isCurrent() || !isAttached(edit, entry)) {
+              if (entry) remove(entry)
+              complete = false
+              break
+            }
+            applied.push([edit.id, entry])
+          } catch {
+            complete = false
+            break
+          }
         }
+        if (!complete || !isCurrent()) {
+          for (const [, entry] of applied.reverse()) remove(entry)
+          if (edits[0].group && isCurrent()) {
+            for (const edit of [...edits].reverse()) detach(edit.id)
+          }
+          continue
+        }
+        for (const [id, entry] of applied) attached.set(id, entry)
+        reconcileConflicts(applied.map(([, entry]) => entry))
       }
     }
 
@@ -187,9 +212,13 @@
       },
       forget(id) {
         reconcileConflicts()
-        detach(id)
-        saved.delete(id)
-        conflicts.delete(id)
+        const group = saved.get(id)?.group
+        const ids = group ? Array.from(saved.values()).filter(edit => edit.group === group).map(edit => edit.id) : [id]
+        for (const member of ids.reverse()) {
+          detach(member)
+          saved.delete(member)
+          conflicts.delete(member)
+        }
       },
       showOriginal() {
         reconcileConflicts()
@@ -198,7 +227,7 @@
           detach(id)
           // A named edit’s original value may depend on the app’s current styles.
           // Use the baseline we just exposed only for the same mounted node.
-          const before = entry.colorToken || entry.pendingColor || entry.spacingToken
+          const before = entry.colorToken || entry.pendingColor || entry.spacingToken || entry.textStyleToken
             ? getComputedStyle(entry.node).getPropertyValue(entry.property) : entry.before
           original.set(id, { node: entry.node, before })
         }

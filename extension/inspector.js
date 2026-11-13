@@ -17,6 +17,8 @@
   let journalRevision = null
   let colorCatalog = null
   let spacingCatalog = null
+  let textStyleCatalog = null
+  let textStyleUnavailable = false
 
   function canEdit(node, property) {
     return node.isConnected && !overlayFor(node) && ui.supported(property, node)
@@ -34,7 +36,9 @@
     const compare = get('clear')
     compare.disabled = pageActionsUnavailable || (!comparing && !recovery.hasAttached)
     compare.setAttribute('aria-pressed', String(comparing))
-    ui.setTooltip(compare, comparing ? 'Show previews' : 'Show original')
+    const compareLabel = comparing ? 'Show previews' : 'Show original'
+    compare.setAttribute('aria-label', compareLabel)
+    ui.setTooltip(compare, compareLabel)
     get('comparison-mode').hidden = !comparing
     get('reset').disabled = writesUnavailable || !recovery.hasSaved
   }
@@ -59,6 +63,8 @@
       ui.renderInspector(fields, {
         node, style: getComputedStyle(node), disabled: comparing || loadingRoute || journalRevision === null, run, colorCatalog, spacingCatalog,
         pendingColorFor: target => recovery.pendingColorFor(target),
+        textStyleCatalog, textStyleUnavailable,
+        commitTextStyle: (targets, name) => commitTextStyle(node, version, targets, name),
         commit: async (property, requested, target = node, tokenOptions) => {
           if (selection.current !== node || !node.isConnected || !isCurrentRoute(currentRoute, version) || loadingRoute || journalRevision === null ||
               (target !== node && (!node.contains(target) || !ui.textTargets(node).includes(target)))) {
@@ -81,7 +87,7 @@
     if (prior) node.style.setProperty(property, prior, priorPriority)
     else node.style.removeProperty(property)
   }
-  async function apply(node, property, requested, isCurrent, { colorToken, pendingColor, spacingToken } = {}) {
+  async function apply(node, property, requested, isCurrent, { colorToken, pendingColor, spacingToken, textStyleToken } = {}) {
     if (colorToken && (
       !ui.supportsColorVariable(node, property) || requested !== ui.colorVariableValue(colorToken.name) ||
       colorToken.source !== colorCatalog?.source || !colorCatalog.names.includes(colorToken.name) ||
@@ -96,6 +102,11 @@
       spacingToken.source !== spacingCatalog?.source || !spacingCatalog.names.includes(spacingToken.name) ||
       !ui.supportsSpacingVariable(node, property) || ui.resolveSpacingLength(node, spacingToken.name) === null
     )) throw Error('This spacing variable is unavailable for the selected field.')
+    if (textStyleToken && (
+      !ui.textStyleProperties.includes(property) || requested !== ui.textStyleReference(textStyleToken.name, property) ||
+      textStyleToken.source !== textStyleCatalog?.source || !textStyleCatalog.names.includes(textStyleToken.name) ||
+      !ui.supportsTextStyle(node) || !ui.textStyleValues(node, textStyleToken.name)
+    )) throw Error('This text style is unavailable for the selected text.')
     if (!CSS.supports(property, requested)) throw Error('That value is not valid for this control')
     const baseline = getComputedStyle(node).getPropertyValue(property)
     const prior = node.style.getPropertyValue(property)
@@ -110,7 +121,7 @@
     const beforeSize = measure()
     node.style.setProperty(property, requested)
     const declared = node.style.getPropertyValue(property)
-    const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, colorToken, pendingColor, spacingToken }
+    const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, colorToken, pendingColor, spacingToken, textStyleToken }
     temporary.add(entry)
     let observed = getComputedStyle(node).getPropertyValue(property)
     const mode = ['100%', 'fit-content'].includes(requested)
@@ -121,6 +132,9 @@
     const verified = () => {
       if (colorToken) return ui.ownsPreviewDeclaration(entry) && observed === ui.resolveColorVariable(node, colorToken.name)
       if (spacingToken) return ui.ownsPreviewDeclaration(entry) && ui.spacingVariableMatches(node, property, spacingToken.name, observed)
+      if (textStyleToken) return ui.ownsPreviewDeclaration(entry) && ui.textStyleMatches(
+        observed, ui.textStyleValues(node, textStyleToken.name)?.[property],
+      )
       if (mode) return changedSize()
       return sameValue() && (!dimensions || changedSize() || baseline === observed)
     }
@@ -242,12 +256,7 @@
       discardTemporary(entry)
       throw Error('Selection changed. Earlier saved changes remain available to Undo.')
     }
-    const edit = {
-      id: crypto.randomUUID(), route: editRoute, target, property, before: entry.before,
-      requested, observed: entry.observed, ...tokenOptions,
-      restore: ui.findPreviewTarget(target, node) === node ? 'unique' : 'ambiguous',
-      viewport: { width: innerWidth, height: innerHeight },
-    }
+    const edit = editRecord(entry, target, editRoute, tokenOptions)
     try {
       await write({ type: 'save', record: edit }, editRoute, version)
     } catch (error) {
@@ -269,6 +278,72 @@
     }
     reportRecovery()
   }
+  function editRecord(entry, target, editRoute, tokenOptions) {
+    return {
+      id: crypto.randomUUID(), route: editRoute, target, property: entry.property, before: entry.before,
+      requested: entry.requested, observed: entry.observed, ...tokenOptions,
+      restore: ui.findPreviewTarget(target, entry.node) === entry.node ? 'unique' : 'ambiguous',
+      viewport: { width: innerWidth, height: innerHeight },
+    }
+  }
+
+  async function commitTextStyle(selected, version, targets, name) {
+    const editRoute = currentRoute
+    const isCurrent = () => isCurrentRoute(editRoute, version)
+    const currentTargets = ui.textTargets(selected)
+    if (!isCurrent() || comparing || journalRevision === null || selection.current !== selected ||
+        !targets.length || targets.length !== currentTargets.length || targets.some((node, index) => node !== currentTargets[index])) {
+      throw Error('Selection changed. Choose the text style again.')
+    }
+    if (targets.length * ui.textStyleProperties.length > 50) throw Error('Select up to 10 text elements.')
+    if (name !== null && !textStyleCatalog?.names.includes(name)) throw Error('This text style is unavailable.')
+    const tokenOptions = name === null ? undefined : { textStyleToken: { source: textStyleCatalog.source, name } }
+    const updates = targets.flatMap(node => {
+      if (name === null ? !ui.textStyleName(node, textStyleCatalog) : !ui.textStyleValues(node, name)) {
+        throw Error('This text style is unavailable for the selected text.')
+      }
+      const computed = getComputedStyle(node)
+      return ui.textStyleProperties.flatMap(property => {
+        const requested = name === null ? computed.getPropertyValue(property) : ui.textStyleReference(name, property)
+        return node.style.getPropertyValue(property) === requested && node.style.getPropertyPriority(property) === ''
+          ? [] : [{ node, property, requested, target: ui.describePreviewTarget(node) }]
+      })
+    })
+    if (!updates.length) return
+    const entries = []
+    let records
+    try {
+      for (const { node, property, requested } of updates) {
+        if (!isCurrent() || !canEdit(node, property)) throw Error('The selected text cannot be edited.')
+        entries.push(await apply(node, property, requested, isCurrent, tokenOptions))
+      }
+      if (!isCurrent() || updates.some(({ node, target }) => !ui.matchesPreviewTarget(node, target))) {
+        throw Error('Selection changed. Choose the text style again.')
+      }
+      records = entries.map((entry, index) => editRecord(entry, updates[index].target, editRoute, tokenOptions))
+      await write({ type: 'saveTextStyle', records }, editRoute, version)
+    } catch (error) {
+      for (const entry of entries.reverse()) discardTemporary(entry)
+      throw error
+    }
+    const current = isCurrent()
+    const attached = current && updates.every(({ node, target }) => ui.matchesPreviewTarget(node, target))
+    if (!attached) {
+      for (const entry of [...entries].reverse()) discardTemporary(entry)
+    }
+    if (!current) {
+      if (currentRoute === editRoute) window.phaseAInspectorReady = loadRoute()
+      return
+    }
+    records.forEach((record, index) => {
+      const entry = entries[index]
+      if (attached) temporary.delete(entry)
+      recovery.remember({ ...record, group: records[0].id }, attached ? entry : undefined)
+    })
+    recoveryRequested ||= !attached
+    reportRecovery()
+  }
+
   get('undo').onclick = () => run(async () => {
     const id = recovery.lastSavedId
     if (!id || comparing) return
@@ -348,19 +423,24 @@
     journalRevision = null
     colorCatalog = null
     spacingCatalog = null
+    textStyleCatalog = null
+    textStyleUnavailable = false
     status('')
     for (const entry of temporary) discardTemporary(entry)
     recovery.clear()
     renderActions()
     try {
-      const [revision, catalog, spacing] = await Promise.all([
+      const [revision, catalog, spacing, textStyles] = await Promise.all([
         loadSavedEdits(requestedRoute, version),
         send({ type: 'colorCatalog' }).catch(() => null),
         send({ type: 'spacingCatalog' }).catch(() => null),
+        send({ type: 'textStyleCatalog' }).then(catalog => ({ catalog }), () => ({ catalog: null, unavailable: true })),
       ])
       if (revision === null || !isCurrentRoute(requestedRoute, version)) return
       colorCatalog = catalog
       spacingCatalog = spacing
+      textStyleCatalog = textStyles.catalog
+      textStyleUnavailable = Boolean(textStyles.unavailable)
       await restore(requestedRoute, version)
       if (isCurrentRoute(requestedRoute, version)) journalRevision = revision
     } catch (error) {
@@ -400,10 +480,10 @@
     selection.refresh()
     const styleChanges = records.filter(record => ['style', 'class', 'data-theme'].includes(record.attributeName))
     const node = selection.current
-    if ((colorCatalog || spacingCatalog) && !busy && !loadingRoute && node &&
+    if ((colorCatalog || spacingCatalog || textStyleCatalog) && !busy && !loadingRoute && node &&
       styleChanges.some(record => record.target.contains(node) || node.contains(record.target))) {
       const targets = [node, ...ui.textTargets(node)]
-      if (fields.querySelector('.li-spacing-variable-pill') || targets.some(target => ['background-color', 'color', 'border-color', 'gap'].some(
+      if (fields.querySelector('.li-spacing-variable-pill') || targets.some(target => ['background-color', 'color', 'border-color', 'gap', 'font-family'].some(
         property => target.style.getPropertyValue(property).startsWith('var('),
       ))) renderFields({ keepPopup: true })
     }
