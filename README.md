@@ -15,7 +15,7 @@ Read [AGENTS.md](AGENTS.md) before changing the extension. It describes the modu
 3. Adjust supported layout, sizing, spacing, typography, or appearance controls. Use **Undo** to reverse an edit and **Before/After** to compare.
 4. Hand the saved journal to a coding agent. Verify the resulting source change in a fresh view with previews off.
 
-Edits save as you work. A preview can return after navigation or reload when the inspector can confidently identify its target. If a target is ambiguous, the journal preserves the edit for review.
+Edits save as you work. A preview can return after navigation or reload when the inspector can confidently identify its target. An optional development-only `data-inspector-target` attribute permits stable, unique target identity where the app supplies one. Unkeyed or ambiguous elements can still be edited and saved, but cannot be promised automatic recovery after remount. The helper rejects stale Save/Undo/Reset operations so an out-of-date tab cannot overwrite newer decisions.
 
 ## Design standards
 
@@ -24,6 +24,22 @@ Edits save as you work. A preview can return after navigation or reload when the
 - **Keep previews reversible and saves durable.** Undo should remove the inspector’s contribution while preserving unrelated app changes. Report a failed save or an edit that could not be restored.
 - **Verify against source.** A preview is a design decision. The agent resolves the intended scope in source, then checks the running app with previews disabled.
 - **Keep setup small.** Attach to an existing development server. The inspector does not require an app plugin, a build-tool migration, or a hosted service.
+
+## Current development status (November 13, 2026)
+
+This branch includes named color and spacing variable controls and project-backed text styles in addition to the original inspector. These capabilities use **registered, project-owned CSS sources** rather than discovering every possible design-system rule. Source registration is per connected app, for example:
+
+```sh
+node local-helper.mjs "$HOME/.localhost-inspector" register-colors 5173 src/styles/theme.css --primary --secondary
+node local-helper.mjs "$HOME/.localhost-inspector" register-spacing 5173 src/styles/theme.css --space-2 --space-4
+node local-helper.mjs "$HOME/.localhost-inspector" register-text-styles 5173 src/styles/theme.css --text-body --text-page-title
+```
+
+Replace port, path, and variable names with declarations that actually exist in the connected project; these are examples, not a promise that a new app contains them. A text style prefix must define supported font-family, font-weight, font-size, line-height, and letter-spacing variables. The helper validates the source. The coding agent can help identify an authoritative source; the Inspector does not automatically infer CSS authoring from a matching computed value.
+
+The current stable-target repair was tested through installed extension and real helper on deliberately keyed Shadcn and MUI reference elements. Broader setup/wiring cost is not established. The new text-style functionality has browser-test and helper evidence; a full installed-extension end-to-end check for the combined latest build remains pending. Work-computer support and clean independent installation remain unqualified. [Second Brain current assessment](https://drive.google.com/file/d/15u8d2u3FiKvacbsjaFA7WnouljnuUO7s/view).
+
+**Next release gate:** use the newest installed extension and real helper to make a realistic color/spacing/text-style/layout edit batch, browse and undo, implement via existing local agent, verify against source with previews disabled, and assess ordinary target identity burden. Then prototype one legitimate component property, with clear scope and without dumping raw props.
 
 ## Roadmap
 
@@ -37,7 +53,7 @@ Edits save as you work. A preview can return after navigation or reload when the
 
 ## Try the macOS development build
 
-The 0.1.0 candidate was exercised on Shadcn Admin and a separate MUI fixture in a disposable Chromium profile. Independent installation is still pending. To try the build, use macOS, Node.js, desktop Chrome with unpacked extensions enabled, and an app serving HTTP on `127.0.0.1`. The helper currently verifies a direct local server by its listening process and working directory. Port `5188` must be free for the helper.
+The initial 0.1.0 candidate and later development slices were exercised in Shadcn Admin and MUI fixtures. The newest integrated build still needs full installed-extension acceptance and independent installation. To try the build, use macOS, Node.js, desktop Chrome with unpacked extensions enabled, and an app serving HTTP on `127.0.0.1`. The helper currently verifies a direct local server by its listening process and working directory. Port `5188` must be free for the helper.
 
 From the repository root, with the app already running, substitute your app's port and working-copy path:
 
