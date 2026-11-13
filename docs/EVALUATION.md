@@ -4,15 +4,15 @@ Use this guide to decide whether the Inspector fits an existing web project and 
 
 ## Evaluate a specific revision
 
-Record `git rev-parse --short HEAD` before testing. The integrated baseline described here is `f1ba749` on `saaf1/local-host-inspector-overview`. Check the revision you installed before assuming a default-branch checkout or packaged release includes these features.
+Record `git rev-parse --short HEAD` before testing. The tested development baseline described here is `19d0535` on `saaf1/local-host-inspector-overview`. Check the revision you installed before assuming a default-branch checkout or packaged release includes these features.
 
 | Area | Available on the integrated baseline |
 | --- | --- |
 | Selection and editing | Command-click to select, Command-hover to preview the target, and Parent to move up the DOM. The Inspector exposes supported layout, sizing, padding, typography, fill and stroke controls according to the selection. |
 | Reversible previews | Save to a local journal as you work. Undo, compare with the original, and revert the current route. Replay depends on target identity and a compatible CSS baseline. |
-| Design-system values | Register named CSS colors and spacing values. Apply colors to supported Fill, Stroke and Text color targets. Bind spacing in eligible Gap and Padding fields. Apply, replace and detach a named text style as one undoable action. |
+| Design-system values | Register named CSS colors and spacing values. Apply colors to supported Fill, Stroke and Text color targets. Bind spacing in eligible Gap and Padding fields. Apply, replace and detach a named text style as one undoable action. Create a pending style from one eligible text layer and reuse it on the same route. |
 | Source handoff | A coding agent reads the journal and inspects the source, then proposes or makes the requested source change. Source verification happens separately with previews off. |
-| Planned | Editing real component inputs through their public API. Component discovery, Figma synchronization, and automatic source writeback are outside this baseline. |
+| Component experiment | An explicitly registered direct React Button can preview its public Size prop. The preview is session-scoped. General component discovery and automatic source writeback are outside this baseline. |
 
 ## Check whether your project fits
 
@@ -35,6 +35,8 @@ node local-helper.mjs "$state" register-text-styles 5173 src/styles/theme.css --
 ```
 
 A text-style prefix such as `--text-body` needs five declarations ending in `-font-family`, `-font-weight`, `-font-size`, `-line-height`, and `-letter-spacing`. The first implementation supports bounded CSS forms, including px and rem metrics, unitless line height, and normal line height or letter spacing. Use flat text elements or eligible groups of them. Direct type controls remain useful when a target contains separately styled inline text. Refresh after registration and confirm that the picker shows the expected names on a real target.
+
+For creation, register a writable text-style stylesheet. Omit style names to start with an empty catalog. Select one text layer with no applied style and use **Typography → Text styles → +**. The helper records a pending definition and its grouped application for source handoff. The stylesheet changes only during that handoff.
 
 Registration tells the Inspector which choices the project maintains. A matching rendered color or size alone cannot establish which token authored an existing value. Keep the project stylesheet or its maintained upstream source authoritative.
 
@@ -68,10 +70,21 @@ The extension runs on loopback HTTP pages. The helper listens on loopback, check
 
 ## Evidence and next checkpoint
 
-Earlier installed-extension trials on two React reference apps exercised saved edits, navigation, Undo, and scoped source changes with previews off. For the integrated baseline, 66 browser regression tests passed. A separate unpacked-extension trial with the real helper saved a gap edit and named text style in a disposable app with preassigned target keys. Both previews returned after reload and browser Back. A fresh coding agent used the journal to apply both decisions in source. A browser with the Inspector absent verified the named reference, the intended occurrence, and an unchanged neighbor. Independent installation, managed-workstation fit, and the effort of adding stable identities in an ordinary project remain open.
+All 73 browser regression tests passed on the tested development baseline. An installed-extension trial on a disposable copy of a React dashboard created and reapplied a text style. A separate coding agent carried the journal into source. A clean browser with previews off verified the heading and two unaffected comparisons. The unkeyed heading did not replay in a fresh browser session. The agent resolved the source occurrence using the route, the requested scope, and the source. Independent installation and managed-workstation fit remain open.
 
-For the next trial, use the actual unpacked extension and real helper. Make a small batch with a named color, spacing value, text style, and layout change. Navigate away and back, reload, and Undo one choice. Give the remaining journal and repository to a coding agent. The trial passes when the intended source changes reproduce with previews off, named references survive, the neighboring instance is unaffected, and the evaluator can account for setup and recovery effort.
+The installed Button proof verified a real Size change, Undo, neighboring app state, and a manual source handoff. It required an app-side development registration and a helper registration for the one authored occurrence. A full reload clears its runtime preview while preserving the journaled intent. Same-document navigation can require a reload to clear the runtime change. Wrapper, parent-controlled, and repeated cases can have identical markup and different source ownership.
 
-The next component experiment is one real Button Size choice, with a direct use, a wrapper, and a repeated use. The catalog would describe supported choices. Runtime evidence would identify the selected occurrence. Source evidence would establish which public input to change and what else it affects. Any development integration should earn its installation cost by rendering the actual component in context and preserving Undo and source verification.
+For the next trial, use the installed extension on one ordinary screen. Check same-tab reload and navigation with an unkeyed target and a uniquely keyed counterpart. Record attachment, correct replay or explicit abstention, and the amount of wiring needed. Use the result to decide whether to improve recovery or proceed with a second component integration.
+
+## Architecture checkpoints
+
+| Before committing to | Required evidence |
+| --- | --- |
+| A new host or storage model | Prove selection, one CSS edit, and Undo in the proposed host. If it persists edits, prove the journal-to-source round trip and check its security boundary. |
+| Broad component integration | Identify the rendered occurrence, property owner, and source scope for direct, wrapped, controlled, and repeated cases. Verify a supported prop change and Undo. Measure app setup. Leave ambiguous edits unavailable. |
+| A live canvas host or frame lifecycle | Run two views of the same route with distinct state. Reordering must preserve unsaved input, and selection, edits, and Undo must stay scoped to their view. Check reload behavior before building around that lifecycle. |
+| Variation isolation or promotion | Prove pending edits and runtime state remain separate. Check shared data effects with disposable data. Promote one variation, discard the other, and verify the source with previews off. |
+
+Record the assumption, the cost of reversing the choice, and the result before building the dependent feature. A reversible experiment can supply that evidence.
 
 For contributor checks, see [AGENTS.md](../AGENTS.md#checks-and-tests).

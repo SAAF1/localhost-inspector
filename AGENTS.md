@@ -12,6 +12,10 @@ This extension edits a running local app and records reversible previews. The he
 
 The UI uses classic scripts in Chrome's isolated world, ordered by worker.js. Modules share one LocalhostInspector namespace. Keep dependencies explicit in that injection list; do not create a generic plugin/container framework. The shipped extension requires no runtime npm dependencies or compilation.
 
+## Architecture checkpoints
+
+Before committing to a new host or storage model, broad component integration, a live canvas lifecycle, or variation isolation, record the assumption, what reversing it would require, and the result of the smallest representative proof. Use the [stage checkpoints](docs/EVALUATION.md#architecture-checkpoints). Routine fixes and reversible prototypes can proceed directly.
+
 ## Editing safety
 
 - Every property edit goes through the inspector's commit path. UI controls must never write styles directly to the inspected app.
@@ -31,7 +35,7 @@ The UI uses classic scripts in Chrome's isolated world, ordered by worker.js. Mo
 
 ## Scope and visual verification
 
-- Keep editing inside the supported contexts described in the evaluation guide. Grid editing, direct font-family editing, broader paint controls, and component APIs are outside the current scope.
+- Keep editing inside the supported contexts described in the evaluation guide. Grid editing, direct font-family editing, and broader paint controls are outside the current scope. Component editing is limited to the opt-in direct Button Size proof.
 - Keep direct numeric and literal controls usable where they are supported. Preserve the distinction between an intentional named binding and a coincidentally equal value.
 - Reuse the existing Inspector controls and tokens when introducing a state or interaction.
 - Compare a screenshot of the assembled implementation with each relevant source-photo section. Check field geometry, optical alignment, icons, labels, menus, and states. A component gallery alone is insufficient.
