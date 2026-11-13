@@ -15,8 +15,8 @@ const catalogKinds = new Map([
   ['register-spacing', 'spacing'],
   ['register-text-styles', 'text-styles'],
 ])
-if (!root || (!['bind', 'status', 'serve'].includes(mode) && !catalogKinds.has(mode))) {
-  throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors/register-spacing/register-text-styles <port> <relative.css> <name>... | status | serve')
+if (!root || (!['bind', 'status', 'serve', 'register-button-size'].includes(mode) && !catalogKinds.has(mode))) {
+  throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors/register-spacing/register-text-styles <port> <relative.css> <name>... | register-button-size <port> <target-key> <relative-source> | status | serve')
 }
 await mkdir(root, { recursive: true, mode: 0o700 })
 const configPath = join(root, 'bindings.json')
@@ -110,6 +110,39 @@ if (catalogKinds.has(mode)) {
   const catalog = { source: verifiedSource, names: verifiedNames }
   await atomic(catalogPath(binding, kind), catalog)
   console.log(JSON.stringify(catalog))
+  process.exit(0)
+}
+
+const buttonSizes = ['default', 'sm', 'lg', 'icon']
+const buttonSizePath = binding => join(root, binding.id + '-button-size.json')
+
+async function verifiedButtonSize(binding, key, source) {
+  if (typeof key !== 'string' || !/^[a-zA-Z0-9:_-]{1,120}$/.test(key) ||
+      typeof source !== 'string' || source.length > 400 || isAbsolute(source) || !/\.[jt]sx$/.test(source)) {
+    throw Error('Expected a stable Button key and one relative JSX or TSX source')
+  }
+  const file = await realpath(resolve(binding.source, source))
+  const child = relative(binding.source, file)
+  if (!child || child === '..' || child.startsWith('..' + sep) || isAbsolute(child) || !(await stat(file)).isFile()) {
+    throw Error('Button source must be a file inside the connected working copy')
+  }
+  return { key, source: child }
+}
+
+async function readButtonSize(binding) {
+  const registration = await read(buttonSizePath(binding), null)
+  return registration && verifiedButtonSize(binding, registration.key, registration.source)
+}
+
+if (mode === 'register-button-size') {
+  const [port, key, source] = args
+  const bindings = await read(configPath, {})
+  const binding = bindings[originFor(port)]
+  if (!binding) throw Error('No saved project connection for this origin')
+  await verify(binding)
+  const registration = await verifiedButtonSize(binding, key, source)
+  await atomic(buttonSizePath(binding), registration)
+  console.log(JSON.stringify(registration))
   process.exit(0)
 }
 
@@ -254,6 +287,21 @@ function textStyleEdits(records, catalog, journal) {
   }
   return edits
 }
+function buttonSizeEdit(record, registration) {
+  if (!registration || !record || !/^[a-f0-9-]{36}$/.test(record.id) || !validRoute(record.route) ||
+      record.target?.key !== registration.key || !buttonSizes.includes(record.before) ||
+      !buttonSizes.includes(record.requested) || record.requested === record.before) {
+    throw Error('Invalid Button Size edit')
+  }
+  return {
+    id: record.id, route: journalRoute(record.route), property: 'button-size',
+    target: { tag: 'button', id: null, slot: 'button', key: registration.key },
+    before: record.before, requested: record.requested, observed: record.requested,
+    restore: 'session', component: { name: 'Button', prop: 'size', source: registration.source },
+    intent: 'selected occurrence only',
+  }
+}
+
 async function handle(message) {
   if (message.type === 'ping') return true
   const bindings = await read(configPath, {})
@@ -287,7 +335,8 @@ async function handle(message) {
   if (message.type === 'load') {
     if (!validRoute(message.route)) throw Error('Expected a route')
     const route = journalRoute(message.route)
-    return { revision: journal.revision, route, edits: journal.edits.filter(edit => edit.route === route) }
+    const buttonSize = await readButtonSize(binding).catch(() => null)
+    return { revision: journal.revision, route, edits: journal.edits.filter(edit => edit.route === route), buttonSizeKey: buttonSize?.key }
   }
   if (!Number.isSafeInteger(message.expectedRevision) || message.expectedRevision !== journal.revision) {
     const error = Error('Saved previews changed in another tab. Reload the page and try again.')
@@ -307,6 +356,10 @@ async function handle(message) {
         throw Error('That variable name is already in use.')
       }
     }
+    journal.edits.push(edit)
+  } else if (message.type === 'saveButtonSize') {
+    const edit = buttonSizeEdit(message.record, await readButtonSize(binding))
+    if (journal.edits.some(entry => entry.id === edit.id)) return { file, revision: journal.revision }
     journal.edits.push(edit)
   } else if (message.type === 'saveTextStyle') {
     const catalog = message.records?.[0]?.textStyleToken ? await readCatalog(binding, 'text-styles') : null

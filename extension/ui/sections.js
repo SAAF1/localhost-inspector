@@ -67,6 +67,7 @@
     const fillBinding = ui.colorBinding(context, controls, { property: 'background-color', label: 'Fill color', title: 'Fill' })
     const fill = paintSection('Fill', fillBinding, fillBinding.notice)
     const sections = [
+      ui.buttonSizeSection(context),
       ui.layoutControls(context, controls, refresh),
       appearance,
       typography(context),

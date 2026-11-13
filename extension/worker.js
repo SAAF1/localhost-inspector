@@ -34,7 +34,7 @@ async function inject(tabId) {
     'ui/policy.js', 'ui/menu.js', 'ui/controls.js', 'ui/padding.js',
     'ui/resizing.js', 'ui/alignment-settings.js', 'ui/spacing-gap.js', 'ui/alignment.js', 'ui/layout.js', 'ui/text-targets.js', 'ui/text-style-values.js', 'ui/field-view.js',
     'ui/solid-color-picker.js', 'ui/create-color-variable.js', 'ui/color-variable-picker.js', 'ui/color-bindings.js', 'ui/text-style-control.js', 'ui/sections.js', 'ui/panel-styles.js', 'ui/tooltip.js',
-    'ui/panel.js', 'ui/revert-dialog.js', 'selection.js', 'shortcuts.js', 'preview-recovery.js', 'inspector.js',
+    'ui/panel.js', 'ui/revert-dialog.js', 'selection.js', 'shortcuts.js', 'preview-recovery.js', 'button-size.js', 'inspector.js',
   ] })}
 }
 
@@ -70,6 +70,39 @@ chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
 })
 chrome.tabs.onRemoved.addListener(tabId => { void chrome.storage.session.remove('tab:' + tabId) })
 
+async function previewButtonSize(key, before, requested, route, origin) {
+  // Fixed operation in the app world. No source path, extension data or general
+  // command dispatcher is exposed to the app.
+  const getRoute = () => location.pathname + location.search + (/^#!?\//.test(location.hash) ? location.hash : '')
+  if (location.origin !== origin || getRoute() !== route) return false
+  const registration = window.localhostInspectorButtonSize
+  const selector = '[data-inspector-target="' + CSS.escape(key) + '"]'
+  const node = document.querySelector(selector)
+  const ownsNode = () => node?.isConnected && node === registration?.node && node.localName === 'button' &&
+    node.getAttribute('data-slot') === 'button' && node.getAttribute('data-inspector-target') === key &&
+    window.localhostInspectorButtonSize === registration
+  const valid = () => ownsNode() && getRoute() === route
+  const size = () => node.getAttribute('data-inspector-button-size')
+  const unique = () => document.querySelectorAll(selector).length === 1
+  if (!valid() || !unique() || typeof registration.setSize !== 'function' || size() !== before) return false
+  if (before === requested) return true
+  // React must acknowledge through the selected Button's committed DOM.
+  registration.setSize(requested)
+  const waitForSize = async value => {
+    const deadline = performance.now() + 450
+    while (valid() && size() !== value && performance.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 16))
+    }
+    return valid() && size() === value
+  }
+  if (await waitForSize(requested) && unique()) return true
+  if (ownsNode() && (size() === before || size() === requested)) {
+    registration.setSize(before)
+    await waitForSize(before)
+  }
+  return false
+}
+
 async function handle(message, sender) {
   if (message.type === 'pair' && sender.url === chrome.runtime.getURL('settings.html')) {
     await helper(message.key, { type: 'ping' })
@@ -80,6 +113,20 @@ async function handle(message, sender) {
   const key = 'tab:' + sender.tab?.id
   if (!origin || sender.frameId !== 0 || origin !== (await chrome.storage.session.get(key))[key]) {
     throw Error('Tab is not attached')
+  }
+  if (message.type === 'previewButtonSize') {
+    const { key, before, requested, route } = message
+    const choices = ['default', 'sm', 'lg', 'icon']
+    if (!sender.documentId || typeof key !== 'string' || !key.trim() || key.length > 120 ||
+        !choices.includes(before) || !choices.includes(requested) ||
+        typeof route !== 'string' || !route.startsWith('/') || route.length > 2048) return false
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: sender.tab.id, documentIds: [sender.documentId] },
+      world: 'MAIN',
+      func: previewButtonSize,
+      args: [key, before, requested, route, origin],
+    })
+    return result === true
   }
   return call({ ...message, origin })
 }

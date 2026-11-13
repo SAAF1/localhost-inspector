@@ -2,10 +2,28 @@
   if (!window.phaseABridge) return
   const ui = window.LocalhostInspector
   const { host, root, panel, setOpen, get } = ui.createPanel()
-  const selection = ui.createSelection({ host, panel, get, onSelect: renderFields })
+  const selection = ui.createSelection({ host, panel, get, onSelect: renderSelection })
+  function renderSelection() {
+    renderFields()
+    const node = selection.current
+    const key = buttonSizeKey
+    const path = currentRoute
+    const version = activeRouteVersion
+    const size = ui.buttonSize.currentSize(node, key)
+    if (!size || buttonSizeRequiresReload || confirmedButton === node) return
+    void ui.buttonSize.setSize(node, key, size, size, path).then(confirmed => {
+      if (confirmed && !buttonSizeRequiresReload && selection.current === node && isCurrentRoute(path, version)) {
+        confirmedButton = node
+        renderFields({ keepPopup: true })
+      }
+    }).catch(() => {})
+  }
   const revertDialog = ui.createRevertDialog(root)
   const temporary = new Set()
-  const recovery = ui.createPreviewRecovery({ apply: applyRestored, remove, canEdit })
+  const recovery = ui.createPreviewRecovery({
+    apply: applyRestored, remove, canEdit,
+    removeButtonSize: entry => ui.buttonSize.setSize(entry.node, entry.target.key, entry.requested, entry.before, entry.path),
+  })
   const fields = get('fields')
   let renderedSelection
   let busy = false
@@ -19,9 +37,14 @@
   let spacingCatalog = null
   let textStyleCatalog = null
   let textStyleUnavailable = false
+  let buttonSizeKey = null
+  let confirmedButton = null
+  let pendingButtonSize = false
+  let buttonSizeRequiresReload = false
 
   function canEdit(node, property) {
-    return node.isConnected && !overlayFor(node) && ui.supported(property, node)
+    return node.isConnected && !overlayFor(node) && (property === 'button-size'
+      ? Boolean(ui.buttonSize.currentSize(node, buttonSizeKey)) : ui.supported(property, node))
   }
   function overlayFor(node) {
     return node?.closest('[role=menu], [role=dialog], [role=alertdialog], [role=listbox], dialog[open], :popover-open')
@@ -64,6 +87,12 @@
         node, style: getComputedStyle(node), disabled: comparing || loadingRoute || journalRevision === null, run, colorCatalog, spacingCatalog,
         pendingColorFor: target => recovery.pendingColorFor(target),
         textStyleCatalog, textStyleUnavailable,
+        buttonSize: !buttonSizeRequiresReload && confirmedButton === node ? ui.buttonSize.currentSize(node, buttonSizeKey) : null,
+        commitButtonSize: async size => {
+          pendingButtonSize = true
+          try { await commitButtonSize(node, version, size) }
+          finally { pendingButtonSize = false }
+        },
         commitTextStyle: (targets, name) => commitTextStyle(node, version, targets, name),
         commit: async (property, requested, target = node, tokenOptions) => {
           if (selection.current !== node || !node.isConnected || !isCurrentRoute(currentRoute, version) || loadingRoute || journalRevision === null ||
@@ -154,6 +183,15 @@
     if (temporary.delete(entry)) remove(entry)
   }
   async function applyRestored(node, edit, isCurrent) {
+    if (edit.property === 'button-size') {
+      const path = currentRoute
+      if (!isCurrent()) return null
+      pendingButtonSize = true
+      try {
+        if (!await ui.buttonSize.setSize(node, edit.target.key, edit.before, edit.requested, path)) return null
+        return { node, ...edit, liveTarget: ui.describePreviewTarget(node), path }
+      } finally { pendingButtonSize = false }
+    }
     const entry = await apply(node, edit.property, edit.requested, isCurrent, edit)
     entry.liveTarget = ui.describePreviewTarget(node)
     return temporary.delete(entry) ? entry : null
@@ -290,6 +328,62 @@
     }
   }
 
+  async function commitButtonSize(node, version, requested) {
+    const path = currentRoute
+    const key = buttonSizeKey
+    const isCurrent = () => isCurrentRoute(path, version)
+    const before = ui.buttonSize.currentSize(node, key)
+    if (buttonSizeRequiresReload || !before || confirmedButton !== node || !isCurrent() || selection.current !== node || comparing || !canEdit(node, 'button-size')) {
+      throw Error('The registered Button is no longer available.')
+    }
+    if (requested === before) return
+    if (!await ui.buttonSize.setSize(node, key, before, requested, path)) {
+      throw Error('The registered Button did not confirm its new Size.')
+    }
+    const target = { tag: 'button', id: null, slot: 'button', key }
+    const edit = { id: crypto.randomUUID(), route: path, target, property: 'button-size', before, requested, restore: 'session' }
+    try {
+      if (!isCurrent() || selection.current !== node) throw Error('Selection changed. Choose the Button Size again.')
+      await write({ type: 'saveButtonSize', record: edit }, path, version)
+    } catch (error) {
+      if (isCurrent() && !await ui.buttonSize.setSize(node, key, requested, before, path).catch(() => false)) {
+        buttonSizeRequiresReload = true
+        throw Error('The edit could not be saved or restored. Reload the page before editing again.', { cause: error })
+      }
+      throw error
+    }
+    if (isCurrent()) recovery.remember(edit, { ...edit, node, liveTarget: target, path })
+    else if (currentRoute === path) window.phaseAInspectorReady = loadRoute()
+    reportRecovery()
+  }
+
+  // Run only for attached component previews. CSS-only actions stay synchronous.
+  async function rewindButtonSizes(entries, path, version, persist = () => {}) {
+    const restored = []
+    try {
+      for (const entry of entries) {
+        if (!isCurrentRoute(path, version)) throw Error('The page changed. Try again on the current page.')
+        const key = entry.target.key
+        if (ui.buttonSize.currentSize(entry.node, key) !== entry.requested) {
+          buttonSizeRequiresReload = true
+          throw Error('The registered Button changed. Reload the page before editing it again.')
+        }
+        if (!await ui.buttonSize.setSize(entry.node, key, entry.requested, entry.before, path)) {
+          throw Error('The registered Button did not confirm its restored Size.')
+        }
+        restored.push(entry)
+      }
+      await persist()
+    } catch (error) {
+      if (isCurrentRoute(path, version)) {
+        for (const entry of restored.reverse()) {
+          await ui.buttonSize.setSize(entry.node, entry.target.key, entry.before, entry.requested, path).catch(() => false)
+        }
+      }
+      throw error
+    }
+  }
+
   async function commitTextStyle(selected, version, targets, name) {
     const editRoute = currentRoute
     const isCurrent = () => isCurrentRoute(editRoute, version)
@@ -354,7 +448,10 @@
     if (!id || comparing) return
     const requestedRoute = currentRoute
     const version = activeRouteVersion
-    await write({ type: 'undo', id }, requestedRoute, version)
+    const entries = recovery.buttonEntries(id)
+    const persist = () => write({ type: 'undo', id }, requestedRoute, version)
+    if (entries.length) await rewindButtonSizes(entries, requestedRoute, version, persist)
+    else await persist()
     if (isCurrentRoute(requestedRoute, version)) {
       recovery.forget(id)
       reportRecovery()
@@ -363,10 +460,16 @@
     }
   })
   get('clear').onclick = () => run(async () => {
-    comparing = !comparing
-    if (comparing) {
+    if (!comparing) {
+      const path = currentRoute
+      const version = activeRouteVersion
+      const entries = recovery.buttonEntries()
+      if (entries.length) await rewindButtonSizes(entries, path, version)
+      if (!isCurrentRoute(path, version)) return
+      comparing = true
       recovery.showOriginal()
     } else {
+      comparing = false
       const requestedRoute = currentRoute
       const version = activeRouteVersion
       const priorRevision = journalRevision
@@ -389,7 +492,10 @@
     if (!isCurrentRoute(requestedRoute, version) || reset.disabled) return
     closeInspector.focus({ preventScroll: true })
     await run(async () => {
-      await write({ type: 'reset', route: requestedRoute }, requestedRoute, version)
+      const entries = recovery.buttonEntries()
+      const persist = () => write({ type: 'reset', route: requestedRoute }, requestedRoute, version)
+      if (entries.length) await rewindButtonSizes(entries, requestedRoute, version, persist)
+      else await persist()
       if (currentRoute !== requestedRoute || route() !== requestedRoute) return
       comparing = false
       if (isCurrentRoute(requestedRoute, version)) recovery.clear()
@@ -402,7 +508,8 @@
   function reportRecovery() {
     const notice = get('status')
     if (notice.hasAttribute('data-error')) return
-    const message = comparing ? '' : recovery.hasConflicts
+    const message = buttonSizeRequiresReload ? 'Reload the page to clear the previous Button Size preview.' :
+      comparing ? '' : recovery.hasConflicts
       ? 'The app changed a previewed style. Your edit is still saved.'
       : recovery.hasUnattached ? 'Some saved previews could not be restored.' : ''
     if (notice.textContent !== message) status(message)
@@ -417,6 +524,7 @@
     if (!Number.isSafeInteger(snapshot?.revision) || !Array.isArray(snapshot.edits) || typeof snapshot.route !== 'string') {
       throw Error('Restart the local helper with the updated Inspector.')
     }
+    buttonSizeKey = typeof snapshot.buttonSizeKey === 'string' ? snapshot.buttonSizeKey : null
     recovery.load(snapshot.edits.filter(edit => edit.route === snapshot.route))
     return snapshot.revision
   }
@@ -430,6 +538,8 @@
     spacingCatalog = null
     textStyleCatalog = null
     textStyleUnavailable = false
+    buttonSizeKey = null
+    confirmedButton = null
     status('')
     for (const entry of temporary) discardTemporary(entry)
     recovery.clear()
@@ -453,7 +563,7 @@
     } finally {
       if (isCurrentRoute(requestedRoute, version)) {
         loadingRoute = false
-        renderFields()
+        renderSelection()
         queueRecovery()
       }
     }
@@ -473,6 +583,7 @@
   }
   function onRouteChange() {
     if (currentRoute === route()) return
+    buttonSizeRequiresReload ||= pendingButtonSize || recovery.hasAttachedButtonSize
     currentRoute = route()
     revertDialog.dismiss()
     comparing = false

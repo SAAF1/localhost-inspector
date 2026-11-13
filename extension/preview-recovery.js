@@ -57,7 +57,7 @@
   ui.findPreviewTarget = findTarget
   ui.matchesPreviewTarget = matchesTarget
   ui.ownsPreviewDeclaration = ownsDeclaration
-  ui.createPreviewRecovery = ({ apply, remove, canEdit }) => {
+  ui.createPreviewRecovery = ({ apply, remove, canEdit, removeButtonSize }) => {
     const saved = new Map()
     const attached = new Map()
     const conflicts = new Set()
@@ -66,13 +66,14 @@
     function detach(id) {
       const entry = attached.get(id)
       if (!entry) return
-      remove(entry)
+      if (entry.property !== 'button-size') remove(entry)
       attached.delete(id)
     }
 
     function topEntries() {
       const byNode = new Map()
       for (const entry of attached.values()) {
+        if (entry.property === 'button-size') continue
         if (!byNode.has(entry.node)) byNode.set(entry.node, new Map())
         byNode.get(entry.node).set(entry.property, entry)
       }
@@ -99,7 +100,7 @@
 
     function reconcileConflicts(entries = topEntries()) {
       for (const entry of entries) {
-        if (!lostPreview(entry)) continue
+        if (entry.property === 'button-size' || !lostPreview(entry)) continue
         const ownsInline = ownsDeclaration(entry)
         for (const [id, layer] of Array.from(attached).reverse()) {
           if (layer.node !== entry.node || layer.property !== entry.property) continue
@@ -140,6 +141,7 @@
     function prune() {
       reconcileConflicts()
       for (const [id, entry] of Array.from(attached).reverse()) {
+        if (entry.property === 'button-size') continue
         if (!isAttached(saved.get(id), entry)) detach(id)
       }
     }
@@ -161,10 +163,14 @@
         for (const edit of edits) {
           if (attached.has(edit.id)) continue
           const exact = exactNodes.get(edit.id)
+          if (edit.restore === 'session' && (!exact || !matchesTarget(exact.node, exact.target))) {
+            complete = false
+            break
+          }
           const exactMatch = matchesTarget(exact?.node, exact?.target)
           const node = exactMatch ? exact.node : (edit.restore === 'unique' ? findTarget(edit.target) : null)
           if (conflicts.has(edit.id) || !node || !canEdit(node, edit.property) ||
-              getComputedStyle(node).getPropertyValue(edit.property) !== (exactMatch ? exact.before : edit.before)) {
+              (edit.restore === 'session' ? ui.buttonSize.currentSize(node, edit.target.key) : getComputedStyle(node).getPropertyValue(edit.property)) !== (exactMatch ? exact.before : edit.before)) {
             complete = false
             break
           }
@@ -179,7 +185,8 @@
             }
             const entry = await apply(node, edit, isCurrent)
             if (!entry || !isCurrent() || !isAttached(edit, entry)) {
-              if (entry) remove(entry)
+              if (entry?.property === 'button-size') await removeButtonSize(entry).catch(() => false)
+              else if (entry) remove(entry)
               complete = false
               break
             }
@@ -190,7 +197,10 @@
           }
         }
         if (!complete || !isCurrent()) {
-          for (const [, entry] of applied.reverse()) remove(entry)
+          for (const [, entry] of applied.reverse()) {
+            if (entry.property === 'button-size') await removeButtonSize(entry).catch(() => false)
+            else remove(entry)
+          }
           if (edits[0].group && isCurrent()) {
             for (const edit of [...edits].reverse()) detach(edit.id)
           }
@@ -202,6 +212,10 @@
     }
 
     return {
+      buttonEntries(id) {
+        return Array.from(attached).reverse().filter(([key, entry]) => entry.property === 'button-size' && (!id || id === key))
+          .map(([, entry]) => entry)
+      },
       pendingColorFor(node) {
         const entry = Array.from(attached.values()).findLast(
           entry => entry.node === node && entry.property === 'background-color',
@@ -209,6 +223,9 @@
         return entry?.pendingColor && !lostPreview(entry) ? entry.pendingColor : null
       },
       get hasAttached() { return attached.size > 0 },
+      get hasAttachedButtonSize() {
+        return Array.from(attached.values()).some(entry => entry.property === 'button-size')
+      },
       get hasSaved() { return saved.size > 0 },
       get hasUnattached() { return attached.size < saved.size },
       get hasConflicts() { return conflicts.size > 0 },
@@ -216,7 +233,7 @@
       get needsRestore() {
         return hasStyleConflict() || Array.from(saved.values()).some(edit => {
           const entry = attached.get(edit.id)
-          if (entry) return !isAttached(edit, entry)
+          if (entry) return entry.property !== 'button-size' && !isAttached(edit, entry)
           return !conflicts.has(edit.id) && edit.restore === 'unique' && Boolean(findTarget(edit.target))
         })
       },

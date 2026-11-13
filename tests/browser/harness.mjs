@@ -39,6 +39,12 @@ export async function createHarness(options = {}) {
         }
       }
       window.chrome = { runtime: { getURL: path => location.origin + '/' + path } }
+      if (settings.buttonSizeKey) {
+        const button = document.querySelector('#other')
+        button.setAttribute('data-slot', 'button')
+        button.setAttribute('data-inspector-target', settings.buttonSizeKey)
+        button.setAttribute('data-inspector-button-size', 'sm')
+      }
       window.__journal = settings.journal || []
       window.__revision = 0
       window.__saveCount = 0
@@ -56,8 +62,15 @@ export async function createHarness(options = {}) {
           if (settings.failTextStyleCatalog) throw Error('Source unavailable')
           return settings.textStyleCatalog ?? null
         }
-        if (type === 'load') return { revision: window.__revision, route: message.route, edits: structuredClone(window.__journal.filter(edit => !edit.undone && edit.route === message.route)) }
-        if (type === 'save' || type === 'saveTextStyle') {
+        if (type === 'previewButtonSize') {
+          const node = document.querySelector('#other')
+          if (node.getAttribute('data-inspector-target') !== message.key ||
+              node.getAttribute('data-inspector-button-size') !== message.before) return false
+          node.setAttribute('data-inspector-button-size', message.requested)
+          return true
+        }
+        if (type === 'load') return { revision: window.__revision, route: message.route, buttonSizeKey: settings.buttonSizeKey, edits: structuredClone(window.__journal.filter(edit => !edit.undone && edit.route === message.route)) }
+        if (type === 'save' || type === 'saveTextStyle' || type === 'saveButtonSize') {
           window.__saveCount++
           if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
           if (window.__settings.failSave === window.__saveCount) {
@@ -77,7 +90,7 @@ export async function createHarness(options = {}) {
           error.code = 'STALE_JOURNAL'
           throw error
         }
-        if (type === 'save') window.__journal.push(message.record)
+        if (type === 'save' || type === 'saveButtonSize') window.__journal.push(message.record)
         if (type === 'saveTextStyle') {
           window.__journal.push(...message.records.map(record => ({ ...record, group: message.records[0].id })))
         }
