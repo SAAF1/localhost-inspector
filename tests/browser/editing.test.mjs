@@ -19,7 +19,7 @@ test('numeric edits, journal, Undo and Before/After preserve the original style'
     assert.equal(await h.css('font-size', '#target > span:first-child'), '18px')
     await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).click(); await h.settled()
     assert.equal(await h.css('font-size', '#target > span:first-child'), '12px')
-    assert.equal((await h.journal()).at(-1).undone, true)
+    assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })
 
@@ -152,7 +152,7 @@ test('optional bounds add without edits, remove through the journal, and survive
       await remove()
       assert.equal(await field.inputValue(), '40', 'Failed removal keeps the constraint visible')
       assert.equal(await h.css(property), '40px')
-      assert.equal((await h.journal()).length, 2)
+      assert.equal((await h.journal()).length, 1)
       assert.match(await h.host.locator('#status').innerText(), /save failure/)
       await h.page.locator('body > #other').evaluate(node => { node.style.minHeight = '20px'; node.parentElement.style.display = 'flex' })
       await h.select('body > #other')

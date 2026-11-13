@@ -9,13 +9,14 @@
     const root = anchor.getRootNode()
     const owner = anchor.ownerDocument
     const viewport = owner.defaultView
-    const targets = new Set([owner, document])
-    if (closeOnPanelScroll) targets.add(root)
+    const targets = new Set([root, owner, document])
     const outside = event => {
+      if (event.target === root.host) return
       if (!event.composedPath().includes(popup) && !event.composedPath().includes(anchor)) close(false)
     }
     const onScroll = event => {
-      if (event.composedPath().includes(popup)) return
+      if (event.target === root.host || event.composedPath().includes(popup)) return
+      if (event.currentTarget === root && !closeOnPanelScroll && !trackSize) return
       if (trackSize && event.target === anchor.closest('.li-properties')) place()
       else close(root.activeElement && popup.contains(root.activeElement))
     }

@@ -194,7 +194,7 @@ test('Inspector shortcuts reuse Parent and Undo and leave editing and app contro
     await h.app.evaluate(() => { document.body.tabIndex = -1; document.body.focus() })
     await h.page.keyboard.press(undoKeys); await h.settled()
     assert.equal(await h.css('border-radius'), '0px')
-    assert.equal((await h.journal())[0].undone, true)
+    assert.deepEqual(await h.journal(), [])
 
     await h.enter('Corner radius', 18); await h.settled()
     await h.enter('Corner radius', 19); await h.settled()

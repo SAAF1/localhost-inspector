@@ -13,7 +13,7 @@
       host.dataset.fontState = loaded ? 'loaded' : 'fallback'
       host.style.removeProperty('visibility')
     })
-    const root = host.attachShadow({ mode: 'open' })
+    const root = host.attachShadow({ mode: 'closed' })
     const style = document.createElement('style')
     style.textContent = ui.tokens + ui.styles + ui.panelStyles + ui.spacingStyles
     root.append(style)

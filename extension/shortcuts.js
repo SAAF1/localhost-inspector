@@ -8,7 +8,7 @@
     ui.setTooltip(parent, 'Select parent element (Shift+Enter)')
 
     function onShortcut(event) {
-      if (panel.hidden || event.defaultPrevented || event.repeat || event.isComposing || event.altKey) return
+      if (!event.isTrusted || panel.hidden || event.defaultPrevented || event.repeat || event.isComposing || event.altKey) return
       if (root.querySelector('dialog[open]')) return
       const path = event.composedPath()
       if (path.some(node => node.isContentEditable || node.matches?.('input, textarea, select, [role="textbox"]'))) return

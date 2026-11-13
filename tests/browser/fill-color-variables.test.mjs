@@ -62,7 +62,7 @@ test('a real Fill binding retains its named declaration across theme, replacemen
     const fill = h.host.getByRole('textbox', { name: 'Fill color' })
     assert.match(await fill.inputValue(), /^[0-9A-F]{6}99$/)
     assert.equal(await fill.getAttribute('title'), 'oklch(0.3 0.1 240 / 0.6)')
-    assert.equal((await h.journal())[2].colorToken, undefined)
+    assert.equal((await h.journal()).at(-1).colorToken, undefined)
     await undo(h)
     await h.settled()
     assert.equal(await declaration(h), 'var(--secondary)')

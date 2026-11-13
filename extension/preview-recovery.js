@@ -8,6 +8,11 @@
     return key?.trim() && key.length <= 120 ? key : null
   }
 
+  async function fingerprint(text) {
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+    return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('')
+  }
+
   const describe = node => ({
     tag: node.localName,
     id: node.id || null,
@@ -17,7 +22,7 @@
   })
 
   function matchesTarget(node, target, rebind = false) {
-    if (!node?.isConnected || node.localName !== target.tag ||
+    if (!node?.isConnected || !target || node.localName !== target.tag ||
         node.getAttribute('data-slot') !== target.slot) return false
     const key = targetKey(node)
     if (target.key || key) return key === target.key
@@ -45,6 +50,10 @@
   }
 
   ui.describePreviewTarget = describe
+  ui.previewTargetForJournal = async ({ text, ...target }) => ({
+    ...target,
+    ...(!target.key && target.id && text ? { textFingerprint: await fingerprint(text) } : {}),
+  })
   ui.findPreviewTarget = findTarget
   ui.matchesPreviewTarget = matchesTarget
   ui.ownsPreviewDeclaration = ownsDeclaration
@@ -124,7 +133,7 @@
     }
 
     function isAttached(edit, entry) {
-      return Boolean(edit && matchesTarget(entry.node, edit.target) &&
+      return Boolean(edit && matchesTarget(entry.node, entry.liveTarget) &&
         (edit.restore !== 'unique' || findTarget(edit.target, entry.node) === entry.node))
     }
 
@@ -152,7 +161,7 @@
         for (const edit of edits) {
           if (attached.has(edit.id)) continue
           const exact = exactNodes.get(edit.id)
-          const exactMatch = matchesTarget(exact?.node, edit.target)
+          const exactMatch = matchesTarget(exact?.node, exact?.target)
           const node = exactMatch ? exact.node : (edit.restore === 'unique' ? findTarget(edit.target) : null)
           if (conflicts.has(edit.id) || !node || !canEdit(node, edit.property) ||
               getComputedStyle(node).getPropertyValue(edit.property) !== (exactMatch ? exact.before : edit.before)) {
@@ -160,6 +169,14 @@
             break
           }
           try {
+            if (!exactMatch && !edit.target.key && edit.target.textFingerprint) {
+              const text = normalize(node.innerText).slice(0, 100)
+              if (await fingerprint(text) !== edit.target.textFingerprint || !isCurrent() ||
+                  findTarget(edit.target) !== node || normalize(node.innerText).slice(0, 100) !== text) {
+                complete = false
+                break
+              }
+            }
             const entry = await apply(node, edit, isCurrent)
             if (!entry || !isCurrent() || !isAttached(edit, entry)) {
               if (entry) remove(entry)
@@ -229,7 +246,7 @@
           // Use the baseline we just exposed only for the same mounted node.
           const before = entry.colorToken || entry.pendingColor || entry.spacingToken || entry.textStyleToken
             ? getComputedStyle(entry.node).getPropertyValue(entry.property) : entry.before
-          original.set(id, { node: entry.node, before })
+          original.set(id, { node: entry.node, before, target: entry.liveTarget })
         }
       },
       clear,

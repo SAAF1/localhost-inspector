@@ -37,7 +37,7 @@ test('same-page remount restores ordered previews and Undo still works offscreen
     await remount()
     await waitForRadius('12px')
     await h.settled()
-    assert.deepEqual((await h.journal()).map(edit => !!edit.undone), [false, true])
+    assert.deepEqual((await h.journal()).map(edit => edit.requested), ['12px'])
     assert.equal(await notice.innerText(), '')
   } finally { await h.close() }
 })
@@ -56,7 +56,7 @@ test('an old text-only record cannot style a lookalike on load or same-page remo
     assert.match(await h.host.locator('#status').innerText(), /could not be restored/)
     await h.host.getByRole('button', { name: 'Undo last preview' }).click()
     await h.settled()
-    assert.equal((await h.journal())[0].undone, true)
+    assert.deepEqual(await h.journal(), [])
     assert.equal(await h.css('font-size', selector), '12px')
   } finally { await h.close() }
 })
@@ -158,7 +158,7 @@ test('an app style takeover retires the live preview stack but keeps its saved U
       await h.host.locator('#undo').click(); await h.settled()
       assert.equal(await h.css('border-radius'), '12px')
     }
-    assert.deepEqual((await h.journal()).map(edit => edit.undone), [true, true])
+    assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })
 
@@ -180,5 +180,29 @@ test('a conflicting cascade change leaves the app value in place', async () => {
     assert.equal(await h.app.locator('body > #target').evaluate(node => node.style.borderRadius), '')
     await h.host.locator('#undo').click(); await h.settled()
     assert.equal(await h.css('border-radius'), '27px')
+  } finally { await h.close() }
+})
+
+test('an ID-based preview omits selected text and refuses an ID reused for different content', async () => {
+  const h = await createHarness()
+  try {
+    await h.open()
+    await h.select()
+    await h.enter('Corner radius', 18)
+    await h.settled()
+    const [{ target }] = await h.journal()
+    assert.equal(target.text, undefined)
+    assert.match(target.textFingerprint, /^[a-f0-9]{64}$/)
+    await h.app.locator('body > #target').evaluate(node => {
+      const replacement = node.cloneNode(false)
+      replacement.removeAttribute('style')
+      replacement.textContent = 'A different item'
+      node.replaceWith(replacement)
+    })
+    await h.host.getByText('Some saved previews could not be restored.').waitFor()
+    assert.equal(await h.css('border-radius'), '0px')
+    await h.host.locator('#undo').click()
+    await h.settled()
+    assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })

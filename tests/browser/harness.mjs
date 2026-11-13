@@ -31,6 +31,13 @@ export async function createHarness(options = {}) {
     const app = options.dock ? page.frames().find(frame => frame.parentFrame() === page.mainFrame()) : page
     if (options.dock) await app.evaluate(connectPreviewDock)
     await app.evaluate(settings => {
+      // Existing tests use Playwright locators for the Inspector's internal controls.
+      if (!settings.closedPanel) {
+        const attachShadow = Element.prototype.attachShadow
+        Element.prototype.attachShadow = function (options) {
+          return attachShadow.call(this, this.id === 'localhost-inspector' ? { ...options, mode: 'open' } : options)
+        }
+      }
       window.chrome = { runtime: { getURL: path => location.origin + '/' + path } }
       window.__journal = settings.journal || []
       window.__revision = 0
@@ -49,7 +56,7 @@ export async function createHarness(options = {}) {
           if (settings.failTextStyleCatalog) throw Error('Source unavailable')
           return settings.textStyleCatalog ?? null
         }
-        if (type === 'load') return { revision: window.__revision, edits: structuredClone(window.__journal) }
+        if (type === 'load') return { revision: window.__revision, route: message.route, edits: structuredClone(window.__journal.filter(edit => !edit.undone && edit.route === message.route)) }
         if (type === 'save' || type === 'saveTextStyle') {
           window.__saveCount++
           if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
@@ -76,12 +83,10 @@ export async function createHarness(options = {}) {
         }
         if (type === 'undo') {
           const entry = window.__journal.find(edit => edit.id === message.id)
-          window.__journal.forEach(edit => {
-            if (edit === entry || (entry.group && entry.group === edit.group)) edit.undone = true
-          })
+          window.__journal = window.__journal.filter(edit => edit !== entry && !(entry.group && edit.group === entry.group))
         }
         if (type === 'reset') {
-          window.__journal.forEach(edit => { if (edit.route === message.route) edit.undone = true })
+          window.__journal = window.__journal.filter(edit => edit.route !== message.route)
         }
         return { revision: ++window.__revision }
       }

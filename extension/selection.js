@@ -91,7 +91,7 @@
       })
     }
     function isSelectionGesture(event) {
-      return !panel.hidden && event.metaKey && event.button === 0 && !event.composedPath().includes(host)
+      return event.isTrusted && !panel.hidden && event.metaKey && event.button === 0 && !event.composedPath().includes(host)
     }
     function preventPress(event) {
       if (!isSelectionGesture(event)) return
@@ -101,7 +101,7 @@
     document.addEventListener('pointerdown', preventPress, true)
     document.addEventListener('mousedown', preventPress, true)
     document.addEventListener('click', event => {
-      if (event.composedPath().includes(host) || panel.hidden) return
+      if (!event.isTrusted || event.composedPath().includes(host) || panel.hidden) return
       if (!event.metaKey) { select(null); return }
       if (!isSelectionGesture(event)) return
       const node = event.composedPath().find(target => target instanceof HTMLElement)

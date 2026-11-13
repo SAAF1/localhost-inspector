@@ -173,7 +173,7 @@ test('a failed replay after remount rolls back the style on every text target', 
     assert.equal(await h.app.locator('#first-copy').evaluate(node => node.style.cssText), '')
     assert.equal(await h.css('font-size', '#second-copy'), '12px')
     await undo(h)
-    assert.equal((await h.journal()).every(edit => edit.undone), true)
+    assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })
 

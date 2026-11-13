@@ -80,7 +80,7 @@ test('Revert all asks first and clears the current page including unrestored pre
     await h.settled()
     assert.equal(await h.css('font-size'), '12px')
     assert.equal(await h.host.locator('#status').innerText(), '')
-    assert.deepEqual((await h.journal()).filter(edit => edit.undone).map(edit => edit.id), ['a', 'unrestored'])
+    assert.deepEqual((await h.journal()).map(edit => edit.id), ['b'])
     assert.equal(await trigger.isDisabled(), true)
   } finally { await h.close() }
 })
@@ -119,7 +119,22 @@ test('stale and pending Revert all stay bound to the page where they started', a
       await h.app.evaluate(() => window.__releaseReset())
       await h.settled()
       assert.equal(await h.css('font-size'), returnToStart ? '12px' : '20px')
-      assert.deepEqual((await h.journal()).filter(edit => edit.undone).map(edit => edit.id), ['a'])
+      assert.deepEqual((await h.journal()).map(edit => edit.id), ['b'])
     } finally { await h.close() }
   }
+})
+
+test('page scripts cannot reach Inspector controls or send its selection and Undo gestures', async () => {
+  const h = await createHarness({ closedPanel: true })
+  try {
+    await h.app.evaluate(() => {
+      const host = document.getElementById('localhost-inspector')
+      if (host.shadowRoot !== null) throw Error('Inspector controls are exposed to the page')
+      const target = document.getElementById('target')
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }))
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'z', metaKey: true, ctrlKey: true }))
+    })
+    assert.deepEqual(await h.journal(), [])
+    assert.equal(await h.css('border-radius'), '0px')
+  } finally { await h.close() }
 })

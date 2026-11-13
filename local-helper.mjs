@@ -1,7 +1,7 @@
 import { constants } from 'node:fs'
 import { createServer } from 'node:http'
 import { execFile } from 'node:child_process'
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { access, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
@@ -168,6 +168,35 @@ function validTextStyleValue(property, value) {
   }
   return /^-?\d+(?:\.\d+)?px$/.test(value) && (property === 'letter-spacing' || !value.startsWith('-'))
 }
+function journalRoute(route) {
+  // Keep routes with different query values isolated without saving the values.
+  // A hash router can have its own query as well as the document query.
+  const hashIndex = route.indexOf('#')
+  const parts = hashIndex < 0 ? [route] : [route.slice(0, hashIndex), route.slice(hashIndex + 1)]
+  return parts.map(part => {
+    const index = part.indexOf('?')
+    if (index < 0) return part
+    const digest = createHmac('sha256', key).update(part.slice(index + 1)).digest('hex')
+    return part.slice(0, index) + '?~' + digest
+  }).join('#')
+}
+function validRoute(route) {
+  return typeof route === 'string' && route.startsWith('/') && route.length <= 2048
+}
+function journalTarget({ tag, id, slot, key, textFingerprint }) {
+  return { tag, id, slot, key, textFingerprint }
+}
+function migrateJournal(journal) {
+  journal.edits = journal.edits.filter(edit => !edit.undone).map(edit => {
+    const target = journalTarget(edit.target)
+    if (!target.key && target.id && edit.target.text) {
+      target.textFingerprint = createHash('sha256').update(edit.target.text).digest('hex')
+    }
+    return { ...edit, route: journalRoute(edit.route), target }
+  })
+  journal.version = 2
+  journal.revision++
+}
 function editFrom(record, catalog, group) {
   const textStyle = record?.textStyleToken
   const token = record?.colorToken
@@ -194,13 +223,13 @@ function editFrom(record, catalog, group) {
     pending.source === catalog.source && pending.value === record.requested && pending.value === record.observed &&
     /^(?:rgba?\(|(?:oklch|oklab|lch|lab|color)\()/i.test(pending.value))
   const target = record?.target
-  if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || typeof record.route !== 'string' ||
-      !record.route.startsWith('/') || record.route.length > 2048 || !validRequest || !validPending ||
+  if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || !validRoute(record.route) || !validRequest || !validPending ||
       Object.hasOwn(record, 'group') || (!group && Object.hasOwn(record, 'textStyleToken')) ||
       !(group ? validTextStyleValue(record.property, record.observed) : validValue(record.property, record.observed)) ||
       typeof record.before !== 'string' || record.before.length > 100 ||
       !['unique', 'ambiguous'].includes(record.restore) || !target || !/^[a-z][a-z0-9-]*$/.test(target.tag) ||
-      !validTargetKey(target.key) || [target.id, target.slot, target.text].some(value => value !== null && (typeof value !== 'string' || value.length > 120))) {
+      !validTargetKey(target.key) || [target.id, target.slot].some(value => value !== null && (typeof value !== 'string' || value.length > 120)) ||
+      (target.textFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(target.textFingerprint))) {
     throw Error('Invalid edit record')
   }
   const { id, route, property, requested, observed, before, restore } = record
@@ -210,7 +239,7 @@ function editFrom(record, catalog, group) {
   const spacingToken = spacing ? { source: spacing.source, name: spacing.name } : undefined
   const pendingColor = pending ? { source: pending.source, name: pending.name, label: pending.label, value: pending.value } : undefined
   const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
-  return { id, route, property, requested, observed, before, restore, target, viewport, colorToken, pendingColor, spacingToken, textStyleToken, group, intent: 'selected occurrence only' }
+  return { id, route: journalRoute(route), property, requested, observed, before, restore, target: journalTarget(target), viewport, colorToken, pendingColor, spacingToken, textStyleToken, group, intent: 'selected occurrence only' }
 }
 function textStyleEdits(records, catalog, journal) {
   if (!Array.isArray(records) || !records.length || records.length > 50 || !records[0]?.id) {
@@ -248,9 +277,18 @@ async function handle(message) {
   }
   if (message.type === 'check') return { id: binding.id }
   const file = join(root, binding.id + '-changes.json')
-  const journal = await read(file, { version: 1, revision: 0, binding, edits: [] })
+  const journal = await read(file, { version: 2, revision: 0, binding, edits: [] })
   if (journal.binding.id !== binding.id || journal.binding.source !== binding.source) throw Error('Journal binding mismatch')
-  if (message.type === 'load') return { revision: journal.revision, edits: journal.edits }
+  if (journal.version === 1) {
+    migrateJournal(journal)
+    await atomic(file, journal)
+  }
+  if (journal.version !== 2) throw Error('Unknown journal version')
+  if (message.type === 'load') {
+    if (!validRoute(message.route)) throw Error('Expected a route')
+    const route = journalRoute(message.route)
+    return { revision: journal.revision, route, edits: journal.edits.filter(edit => edit.route === route) }
+  }
   if (!Number.isSafeInteger(message.expectedRevision) || message.expectedRevision !== journal.revision) {
     const error = Error('Saved previews changed in another tab. Reload the page and try again.')
     error.code = 'STALE_JOURNAL'
@@ -265,7 +303,7 @@ async function handle(message) {
       const { name } = edit.pendingColor
       await access(catalog.file, constants.W_OK).catch(() => { throw Error('The color source is read-only.') })
       if (declaresVariable(catalog.css, name) ||
-        journal.edits.some(entry => !entry.undone && entry.pendingColor?.name === name)) {
+        journal.edits.some(entry => entry.pendingColor?.name === name)) {
         throw Error('That variable name is already in use.')
       }
     }
@@ -276,13 +314,11 @@ async function handle(message) {
   } else if (message.type === 'undo') {
     const edit = journal.edits.find(e => e.id === message.id)
     if (!edit) throw Error('Edit was not found')
-    if (edit.undone) return { file, revision: journal.revision }
-    if (edit.group) {
-      for (const member of journal.edits) if (member.group === edit.group) member.undone = true
-    } else edit.undone = true
+    journal.edits = journal.edits.filter(member => member !== edit && !(edit.group && member.group === edit.group))
   } else if (message.type === 'reset') {
-    if (typeof message.route !== 'string' || !message.route.startsWith('/')) throw Error('Expected a route')
-    for (const edit of journal.edits) if (edit.route === message.route) edit.undone = true
+    if (!validRoute(message.route)) throw Error('Expected a route')
+    const route = journalRoute(message.route)
+    journal.edits = journal.edits.filter(edit => edit.route !== route)
   } else throw Error('Unknown operation')
   journal.revision++
   await atomic(file, journal)

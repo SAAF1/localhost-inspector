@@ -45,7 +45,7 @@ The extension selects a live element and writes a reversible preview. The helper
 ```json
 {
   "route": "/example",
-  "target": { "tag": "div", "id": null, "slot": null, "text": "Example item", "key": "example-item:summary" },
+  "target": { "tag": "div", "id": null, "slot": null, "key": "example-item:summary" },
   "property": "gap",
   "before": "8px",
   "requested": "var(--space-4)",
@@ -56,7 +56,7 @@ The extension selects a live element and writes a reversible preview. The helper
 }
 ```
 
-Use the journal as evidence of intent. Skip undone records and account for later edits that supersede earlier ones. Keep grouped text-style operations together. Verify the authored use, ownership, and scope in the repository before patching. Preserve the named reference in the project's usual source representation. If one source expression renders many rows, editing it can affect every row even when the journal uniquely identifies one rendered item. Surface that scope before making a shared change.
+Use the journal as evidence of intent. Account for later edits that supersede earlier ones. Undo and Revert all remove the affected records from the active journal. Keep grouped text-style operations together. Verify the authored use, ownership, and scope in the repository before patching. Preserve the named reference in the project's usual source representation. If one source expression renders many rows, editing it can affect every row even when the journal uniquely identifies one rendered item. Surface that scope before making a shared change.
 
 Run the app with the Inspector detached or in a fresh uninstrumented browser view. Verify the source-produced result, the neighboring instance, and any relevant theme. Treat an edit as promoted only after that check. Keep unresolved decisions available for review.
 
@@ -64,7 +64,7 @@ For preview replay, a stable, unique `data-inspector-target` on the actual edita
 
 ## Local data boundary
 
-The extension runs on loopback HTTP pages. The helper listens on loopback, checks a pairing key, and writes into the state directory you choose. No hosted service is required. The journal can contain local working-copy paths, route details including query strings, selected text, and identifiers. Keep the journal and pairing key in the approved environment. Check separately what the coding agent can read or transmit before giving it the journal or repository.
+The extension runs on loopback HTTP pages. The helper listens on loopback, checks a pairing key, and writes into the state directory you choose. No hosted service is required. The journal can contain local working-copy paths, route paths, and element identifiers. Query values are replaced by a keyed digest so routes remain distinct. Selected text is omitted. An ID-based preview can retain a text fingerprint to reject a different element that reuses the ID. The helper rewrites an older journal when it first opens it. Existing copies and backups can still contain the original data. Keep the journal and pairing key in the approved environment. Check separately what the coding agent can read or transmit before giving it the journal or repository.
 
 ## Evidence and next checkpoint
 

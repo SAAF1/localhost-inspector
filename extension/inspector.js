@@ -155,6 +155,7 @@
   }
   async function applyRestored(node, edit, isCurrent) {
     const entry = await apply(node, edit.property, edit.requested, isCurrent, edit)
+    entry.liveTarget = ui.describePreviewTarget(node)
     return temporary.delete(entry) ? entry : null
   }
   const route = () => {
@@ -252,12 +253,14 @@
     const isCurrent = () => isCurrentRoute(editRoute, version)
     const target = ui.describePreviewTarget(node)
     const entry = await apply(node, property, requested, isCurrent, tokenOptions)
+    entry.liveTarget = target
     if (!isCurrent() || !ui.matchesPreviewTarget(node, target)) {
       discardTemporary(entry)
       throw Error('Selection changed. Earlier saved changes remain available to Undo.')
     }
-    const edit = editRecord(entry, target, editRoute, tokenOptions)
+    let edit
     try {
+      edit = await editRecord(entry, target, editRoute, tokenOptions)
       await write({ type: 'save', record: edit }, editRoute, version)
     } catch (error) {
       discardTemporary(entry)
@@ -278,9 +281,9 @@
     }
     reportRecovery()
   }
-  function editRecord(entry, target, editRoute, tokenOptions) {
+  async function editRecord(entry, target, editRoute, tokenOptions) {
     return {
-      id: crypto.randomUUID(), route: editRoute, target, property: entry.property, before: entry.before,
+      id: crypto.randomUUID(), route: editRoute, target: await ui.previewTargetForJournal(target), property: entry.property, before: entry.before,
       requested: entry.requested, observed: entry.observed, ...tokenOptions,
       restore: ui.findPreviewTarget(target, entry.node) === entry.node ? 'unique' : 'ambiguous',
       viewport: { width: innerWidth, height: innerHeight },
@@ -313,14 +316,16 @@
     const entries = []
     let records
     try {
-      for (const { node, property, requested } of updates) {
+      for (const { node, property, requested, target } of updates) {
         if (!isCurrent() || !canEdit(node, property)) throw Error('The selected text cannot be edited.')
-        entries.push(await apply(node, property, requested, isCurrent, tokenOptions))
+        const entry = await apply(node, property, requested, isCurrent, tokenOptions)
+        entry.liveTarget = target
+        entries.push(entry)
       }
       if (!isCurrent() || updates.some(({ node, target }) => !ui.matchesPreviewTarget(node, target))) {
         throw Error('Selection changed. Choose the text style again.')
       }
-      records = entries.map((entry, index) => editRecord(entry, updates[index].target, editRoute, tokenOptions))
+      records = await Promise.all(entries.map((entry, index) => editRecord(entry, updates[index].target, editRoute, tokenOptions)))
       await write({ type: 'saveTextStyle', records }, editRoute, version)
     } catch (error) {
       for (const entry of entries.reverse()) discardTemporary(entry)
@@ -407,12 +412,12 @@
     if (isCurrentRoute(requestedRoute, version)) reportRecovery()
   }
   async function loadSavedEdits(requestedRoute, version) {
-    const snapshot = await send({ type: 'load' })
+    const snapshot = await send({ type: 'load', route: requestedRoute })
     if (!isCurrentRoute(requestedRoute, version)) return null
-    if (!Number.isSafeInteger(snapshot?.revision) || !Array.isArray(snapshot.edits)) {
+    if (!Number.isSafeInteger(snapshot?.revision) || !Array.isArray(snapshot.edits) || typeof snapshot.route !== 'string') {
       throw Error('Restart the local helper with the updated Inspector.')
     }
-    recovery.load(snapshot.edits.filter(edit => !edit.undone && edit.route === requestedRoute))
+    recovery.load(snapshot.edits.filter(edit => edit.route === snapshot.route))
     return snapshot.revision
   }
   let currentRoute = route()

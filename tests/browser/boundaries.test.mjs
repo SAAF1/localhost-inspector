@@ -81,10 +81,10 @@ test('partial restoration leaves successfully restored edits available to Undo',
     assert.equal(await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).isEnabled(), true)
     await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).click(); await h.settled()
     assert.equal(await h.css('font-size'), '18px', 'Undo first retires the newer saved edit that could not attach')
-    assert.equal((await h.journal())[1].undone, true)
+    assert.deepEqual((await h.journal()).map(edit => edit.id), ['restored-font'])
     await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).click(); await h.settled()
     assert.equal(await h.css('font-size'), '12px')
-    assert.equal((await h.journal())[0].undone, true)
+    assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })
 
