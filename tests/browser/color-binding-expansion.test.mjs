@@ -198,3 +198,25 @@ test('a long Libraries list scrolls and Create stays available after choosing a 
     assert.equal(await add.isVisible(), true)
   } finally { await h.close() }
 })
+
+test('pressing Enter and then opening Create saves a custom Fill only once', async () => {
+  const h = await createHarness(options)
+  try {
+    await h.open()
+    await h.select()
+    await h.host.getByRole('button', { name: 'Open fill color picker' }).click()
+    const value = h.host.getByRole('textbox', { name: 'Custom color value' })
+    await value.fill('123456')
+    await value.press('Enter')
+    await h.settled()
+    await h.host.getByRole('button', { name: 'Create color variable' }).click()
+    await h.host.getByRole('dialog', { name: 'Variable', exact: true }).waitFor()
+    await h.settled()
+    assert.equal((await h.journal()).length, 1)
+    await h.host.getByRole('button', { name: 'Close variable form' }).click()
+    await h.host.getByRole('button', { name: 'Close Variables' }).click()
+    await h.host.getByRole('button', { name: 'Undo last preview' }).click()
+    await h.settled()
+    assert.equal(await h.css('background-color'), 'rgb(255, 255, 255)')
+  } finally { await h.close() }
+})

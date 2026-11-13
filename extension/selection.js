@@ -6,11 +6,15 @@
     let pointer
     let commandHeld = false
     let selectionObserver
+    let outlineFrame = null
     function positionOutline(outline, node) {
       outline.hidden = panel.hidden || !node?.isConnected
       if (outline.hidden) return
       const box = node.getBoundingClientRect()
-      Object.assign(outline.style, { left: box.left + 'px', top: box.top + 'px', width: box.width + 'px', height: box.height + 'px' })
+      for (const property of ['left', 'top', 'width', 'height']) {
+        const value = box[property] + 'px'
+        if (outline.style[property] !== value) outline.style[property] = value
+      }
     }
     function syncOutline() {
       positionOutline(get('outline'), selected)
@@ -108,12 +112,19 @@
       panel.focus({ preventScroll: true })
     }, true)
     function parent() {
-      const node = selected?.isConnected ? selected.parentElement : null
-      return node?.isConnected ? node : null
+      if (!selected?.isConnected) return null
+      const node = selected.parentElement ?? selected.getRootNode().host
+      return node instanceof HTMLElement ? node : null
     }
     function refresh() {
       if (selected && !selected.isConnected) select(null)
       if (hovered && !hovered.isConnected) syncHoverOutline()
+      if (panel.hidden || !(selected || (commandHeld && pointer)) || outlineFrame !== null) return
+      // A sibling can move the target without resizing it.
+      outlineFrame = requestAnimationFrame(() => {
+        outlineFrame = null
+        syncOutlines()
+      })
     }
     return {
       get current() { return selected },

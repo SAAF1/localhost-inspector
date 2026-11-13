@@ -143,7 +143,11 @@
     const entry = await apply(node, edit.property, edit.requested, isCurrent, edit)
     return temporary.delete(entry) ? entry : null
   }
-  const route = () => location.pathname + location.search
+  const route = () => {
+    const { pathname, search, hash } = location
+    const routeFragment = /^#!?\//.test(hash) ? hash : ''
+    return pathname + search + routeFragment
+  }
   const isCurrentRoute = (path, version) => path === route() && version === activeRouteVersion
   function status(message, error = false) {
     const notice = get('status')
@@ -424,6 +428,7 @@
   window.addEventListener('resize', refreshResponsiveSpacing)
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshResponsiveSpacing)
   window.addEventListener('popstate', onRouteChange)
+  window.addEventListener('hashchange', onRouteChange)
   window.navigation?.addEventListener('currententrychange', onRouteChange)
   window.phaseAInspectorReady = loadRoute()
 })()

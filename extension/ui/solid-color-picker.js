@@ -121,8 +121,12 @@
       if (pending) return
       const next = ui.normalizeSolidColor(ui.colorValue(value.trim()))
       if (!next) { showError('Enter a solid color.'); return }
-      pending = true
       showError('')
+      if (next === ui.normalizeSolidColor(acceptedValue)) {
+        reset(acceptedValue)
+        return
+      }
+      pending = true
       panel.setAttribute('aria-busy', 'true')
       try {
         await onChange(next)

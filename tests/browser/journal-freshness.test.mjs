@@ -47,3 +47,34 @@ test('a pending preview leaves with its route and reconciles when that route ret
     assert.equal(await h.css('border-radius'), '0px')
   } finally { await h.close() }
 })
+
+test('hash routes isolate previews and ordinary page anchors preserve them', async () => {
+  const h = await createHarness()
+  try {
+    await h.open()
+    const go = async hash => {
+      await h.app.evaluate(hash => { location.hash = hash }, hash)
+      await h.app.evaluate(() => window.phaseAInspectorReady)
+    }
+    await h.select()
+    await h.enter('Corner radius', 18)
+    await h.settled()
+    await go('#details')
+    assert.equal(await h.css('border-radius'), '18px')
+
+    await go('#/first')
+    assert.equal(await h.css('border-radius'), '0px')
+    await h.select()
+    await h.enter('Corner radius', 12)
+    await h.settled()
+    await go('#/second')
+    assert.equal(await h.css('border-radius'), '0px')
+    assert.equal(await h.host.locator('#undo').isDisabled(), true)
+
+    await go('#/first')
+    assert.equal(await h.css('border-radius'), '12px')
+    await go('#details')
+    assert.equal(await h.css('border-radius'), '18px')
+    assert.deepEqual((await h.journal()).map(edit => edit.route), ['/', '/#/first'])
+  } finally { await h.close() }
+})

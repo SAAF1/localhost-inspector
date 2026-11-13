@@ -178,3 +178,47 @@ test('flex alignment with oversized padding withholds only the overflowing axes'
     assert.equal(await chart.getByRole('button').count(), 9)
   } finally { await h.close() }
 })
+
+test('a selected outline tracks a layout shift without a target resize', async () => {
+  const h = await createHarness()
+  try {
+    await h.open()
+    await h.select('#other')
+    const target = h.page.locator('#other')
+    const before = await target.boundingBox()
+    await target.evaluate(node => {
+      const spacer = document.createElement('div')
+      spacer.style.height = '100px'
+      node.before(spacer)
+    })
+    const after = await target.boundingBox()
+    assert.equal(after.y - before.y, 100)
+    assert.equal(after.height, before.height)
+    const outline = h.host.locator('#outline')
+    await outline.waitFor({ state: 'visible' })
+    await h.app.waitForFunction(() => {
+      const box = document.querySelector('#other').getBoundingClientRect()
+      const outline = document.querySelector('#localhost-inspector').shadowRoot.querySelector('#outline')
+      return outline.style.top === box.top + 'px'
+    })
+    assert.deepEqual(await outline.boundingBox(), after)
+  } finally { await h.close() }
+})
+
+test('Parent selects the host of an open shadow root', async () => {
+  const h = await createHarness()
+  try {
+    await h.app.evaluate(() => {
+      const host = document.createElement('div')
+      host.id = 'shadow-host'
+      host.style.cssText = 'padding:10px;width:200px'
+      host.attachShadow({ mode: 'open' }).innerHTML = '<div style="width:75px">Shadow child</div>'
+      document.body.prepend(host)
+    })
+    await h.open()
+    await h.select('#shadow-host div')
+    assert.equal(await h.field('Width').inputValue(), '75')
+    await h.host.getByRole('button', { name: 'Select parent element' }).click()
+    assert.equal(await h.field('Width').inputValue(), '200')
+  } finally { await h.close() }
+})
