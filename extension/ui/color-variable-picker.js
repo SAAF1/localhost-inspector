@@ -48,9 +48,10 @@
     popup.setAttribute('aria-label', title)
     const dismiss = ui.action('Close ' + title, 'dismiss', () => close())
     let closeCreate
-    const add = create ? ui.action('Create color variable', 'add', () => {
+    const add = create ? ui.action(textStyles ? 'Create style' : 'Create color variable', 'add', () => {
       if (pending) return
       if (add.getAttribute('aria-expanded') === 'true') closeCreate?.()
+      else if (textStyles) closeCreate = ui.openCreateTextStyle(add, popup, create, () => close())
       else closeCreate = ui.openCreateColorVariable(add, popup, create, created => {
         current = created.id
         solid?.reset(created.value)

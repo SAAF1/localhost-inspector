@@ -12,7 +12,25 @@
     !child.textContent.trim() || child.matches('svg,script,style,template,[hidden]') ||
     getComputedStyle(child).display === 'none',
   )
-  ui.textStyleReference = (name, property) => 'var(' + name + '-' + property + ')'
+  ui.textStyleReference = (name, property, fallback) =>
+    'var(' + name + '-' + property + (fallback === undefined ? '' : ', ' + fallback) + ')'
+
+  ui.captureTextStyle = node => {
+    if (!node?.isConnected || !ui.supportsTextStyle(node)) return null
+    const computed = getComputedStyle(node)
+    const values = Object.fromEntries(properties.map(property => [property, computed.getPropertyValue(property).trim()]))
+    if (Object.values(values).some(value => !value || value.length > 100) ||
+        !family.test(values['font-family']) || !number.test(values['font-weight']) ||
+        Number(values['font-weight']) < 1 || Number(values['font-weight']) > 1000) return null
+    for (const property of properties.slice(2)) {
+      const value = values[property]
+      if (value === 'normal' && property !== 'font-size') continue
+      const pixels = parseFloat(value)
+      if (length.exec(value)?.[1] !== 'px' || Math.abs(pixels) > 2000 ||
+          (pixels < 0 && property !== 'letter-spacing')) return null
+    }
+    return values
+  }
 
   ui.textStyleValues = (node, name) => {
     if (!namePattern.test(name)) return null

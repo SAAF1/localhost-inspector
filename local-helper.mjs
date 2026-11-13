@@ -72,7 +72,7 @@ function declaresVariable(css, name) {
 async function verifyCatalog(binding, catalog, kind) {
   const { source, names } = catalog
   if (typeof source !== 'string' || !source.endsWith('.css') || source.length > 400 || isAbsolute(source) ||
-      !Array.isArray(names) || !names.length || names.length > 100 ||
+      !Array.isArray(names) || (kind !== 'text-styles' && !names.length) || names.length > 100 ||
       names.some(name => typeof name !== 'string' || !variableName.test(name))) {
     throw Error('Expected one relative CSS source and a list of CSS variable names')
   }
@@ -230,7 +230,7 @@ function migrateJournal(journal) {
   journal.version = 2
   journal.revision++
 }
-function editFrom(record, catalog, group) {
+function editFrom(record, catalog, group, pendingTextStyle) {
   const textStyle = record?.textStyleToken
   const token = record?.colorToken
   const spacing = record?.spacingToken
@@ -238,10 +238,14 @@ function editFrom(record, catalog, group) {
   const reference = token ?? spacing
   const validTextStyleRequest = group && !reference && !pending &&
     textStyleProperties.includes(record?.property) && (
-      Object.hasOwn(record, 'textStyleToken')
-        ? textStyle && catalog && textStyle.source === catalog.source && catalog.names.includes(textStyle.name) &&
-          record.requested === 'var(' + textStyle.name + '-' + record.property + ')'
-        : validTextStyleValue(record.property, record.requested)
+      pendingTextStyle
+        ? !Object.hasOwn(record, 'textStyleToken') &&
+          record.requested === 'var(' + pendingTextStyle.name + '-' + record.property + ', ' + pendingTextStyle.values[record.property] + ')' &&
+          record.observed === pendingTextStyle.values[record.property]
+        : Object.hasOwn(record, 'textStyleToken')
+          ? textStyle && catalog && textStyle.source === catalog.source && catalog.names.includes(textStyle.name) &&
+            record.requested === 'var(' + textStyle.name + '-' + record.property + ')'
+          : validTextStyleValue(record.property, record.requested)
     )
   const validRequest = group ? validTextStyleRequest : reference
     ? !(token && spacing) && catalog && (spacing ? /^(gap|padding-(top|right|bottom|left))$/.test(record.property) : colors.has(record.property)) &&
@@ -258,6 +262,7 @@ function editFrom(record, catalog, group) {
   const target = record?.target
   if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || !validRoute(record.route) || !validRequest || !validPending ||
       Object.hasOwn(record, 'group') || (!group && Object.hasOwn(record, 'textStyleToken')) ||
+      ((Object.hasOwn(record, 'pendingTextStyle') || Object.hasOwn(record, 'pendingTextStyleName')) && !pendingTextStyle) ||
       !(group ? validTextStyleValue(record.property, record.observed) : validValue(record.property, record.observed)) ||
       typeof record.before !== 'string' || record.before.length > 100 ||
       !['unique', 'ambiguous'].includes(record.restore) || !target || !/^[a-z][a-z0-9-]*$/.test(target.tag) ||
@@ -274,16 +279,58 @@ function editFrom(record, catalog, group) {
   const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
   return { id, route: journalRoute(route), property, requested, observed, before, restore, target: journalTarget(target), viewport, colorToken, pendingColor, spacingToken, textStyleToken, group, intent: 'selected occurrence only' }
 }
-function textStyleEdits(records, catalog, journal) {
+async function pendingTextStyleFrom(records, catalog, journal) {
+  const pending = records[0]?.pendingTextStyle
+  if (!pending) return null
+  const { name, label, description, source, values } = pending
+  if (!catalog || source !== catalog.source ||
+      typeof label !== 'string' || !/^[a-z][a-z0-9 -]{0,69}$/i.test(label) || label !== label.trim() ||
+      name !== '--text-' + label.toLowerCase().replace(/ +/g, '-') ||
+      typeof description !== 'string' || description.length > 240 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(description) ||
+      !values || textStyleProperties.some(property => !validTextStyleValue(property, values[property]) ||
+        (values[property].endsWith('px') && Math.abs(parseFloat(values[property])) > 2000))) {
+    throw Error('Invalid new text style')
+  }
+  await access(catalog.file, constants.W_OK).catch(() => { throw Error('The text style source is read-only.') })
+  if (catalog.names.includes(name) || declaresVariable(catalog.css, name) ||
+      textStyleProperties.some(property => declaresVariable(catalog.css, name + '-' + property)) ||
+      journal.edits.some(edit => edit.pendingTextStyle?.name === name)) {
+    throw Error('That style name is already in use.')
+  }
+  return { name, label, description, source, values: Object.fromEntries(textStyleProperties.map(property => [property, values[property]])) }
+}
+async function textStyleEdits(records, catalog, journal) {
   if (!Array.isArray(records) || !records.length || records.length > 50 || !records[0]?.id) {
     throw Error('Expected 1 to 50 text style edits')
   }
-  const edits = records.map(record => editFrom(record, catalog, records[0].id))
+  if (records.slice(1).some(record => record && (Object.hasOwn(record, 'pendingTextStyle') || Object.hasOwn(record, 'pendingTextStyleName')))) {
+    throw Error('Expected one text style definition per edit group')
+  }
+  const [record] = records
+  const reference = record.pendingTextStyleName
+  if (reference !== undefined && (typeof reference !== 'string' || !validRoute(record.route) || record.pendingTextStyle)) {
+    throw Error('Invalid pending text style reference')
+  }
+  const pending = reference === undefined ? await pendingTextStyleFrom(records, catalog, journal)
+    : journal.edits.find(edit => edit.route === journalRoute(record.route) && edit.pendingTextStyle?.name === reference)?.pendingTextStyle
+  if (reference !== undefined && (!pending || pending.source !== catalog?.source || catalog.names.includes(reference))) {
+    throw Error('This pending text style is unavailable.')
+  }
+  const edits = records.map(record => editFrom(record, catalog, records[0].id, pending))
   const [first] = edits
   const ids = new Set(edits.map(edit => edit.id))
   if (ids.size !== edits.length || journal.edits.some(edit => ids.has(edit.id)) ||
       edits.some(edit => edit.route !== first.route || edit.textStyleToken?.name !== first.textStyleToken?.name)) {
     throw Error('Text style edits must use unique IDs, one route and one style')
+  }
+  if (pending) {
+    if ((reference === undefined && (edits.length !== textStyleProperties.length || edits.some(edit => edit.before !== edit.observed))) ||
+        new Set(edits.map(edit => edit.property)).size !== edits.length ||
+        edits.some(edit => JSON.stringify(edit.target) !== JSON.stringify(first.target) || edit.restore !== first.restore)) {
+      throw Error('Expected one complete new style on one text layer')
+    }
+    if (reference === undefined) first.pendingTextStyle = pending
+    else first.pendingTextStyleName = reference
   }
   return edits
 }
@@ -321,7 +368,9 @@ async function handle(message) {
   }
   if (message.type === 'textStyleCatalog') {
     const catalog = await readCatalog(binding, 'text-styles')
-    return catalog && { source: catalog.source, names: catalog.names }
+    if (!catalog) return null
+    const canCreate = await access(catalog.file, constants.W_OK).then(() => true, () => false)
+    return { source: catalog.source, names: catalog.names, canCreate }
   }
   if (message.type === 'check') return { id: binding.id }
   const file = join(root, binding.id + '-changes.json')
@@ -362,8 +411,9 @@ async function handle(message) {
     if (journal.edits.some(entry => entry.id === edit.id)) return { file, revision: journal.revision }
     journal.edits.push(edit)
   } else if (message.type === 'saveTextStyle') {
-    const catalog = message.records?.[0]?.textStyleToken ? await readCatalog(binding, 'text-styles') : null
-    journal.edits.push(...textStyleEdits(message.records, catalog, journal))
+    const first = message.records?.[0]
+    const catalog = first?.textStyleToken || first?.pendingTextStyle || first?.pendingTextStyleName ? await readCatalog(binding, 'text-styles') : null
+    journal.edits.push(...await textStyleEdits(message.records, catalog, journal))
   } else if (message.type === 'undo') {
     const edit = journal.edits.find(e => e.id === message.id)
     if (!edit) throw Error('Edit was not found')

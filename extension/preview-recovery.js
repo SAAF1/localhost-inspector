@@ -85,9 +85,9 @@
       // Responsive width modes can change their computed size with layout.
       if (!entry.node.isConnected || ['100%', 'fit-content'].includes(entry.requested)) return false
       if (entry.spacingToken) return !ui.spacingVariableMatches(entry.node, entry.property, entry.spacingToken.name)
-      if (entry.textStyleToken) return !ui.textStyleMatches(
+      if (entry.textStyleToken || entry.pendingTextStyle) return !ui.textStyleMatches(
         getComputedStyle(entry.node).getPropertyValue(entry.property),
-        ui.textStyleValues(entry.node, entry.textStyleToken.name)?.[entry.property],
+        entry.pendingTextStyle?.values[entry.property] ?? ui.textStyleValues(entry.node, entry.textStyleToken.name)?.[entry.property],
       )
       const expected = entry.colorToken ? ui.resolveColorVariable(entry.node, entry.colorToken.name) : entry.observed
       return getComputedStyle(entry.node).getPropertyValue(entry.property) !== expected
@@ -146,6 +146,10 @@
       }
     }
 
+    function pendingTextStyles() {
+      return Array.from(saved.values()).flatMap(edit => edit.pendingTextStyle ? [edit.pendingTextStyle] : [])
+    }
+
     async function restore(isCurrent, fromOriginal = false) {
       const exactNodes = fromOriginal ? original : new Map()
       if (fromOriginal) original = new Map()
@@ -156,8 +160,10 @@
         if (!operations.has(id)) operations.set(id, [])
         operations.get(id).push(edit)
       }
+      const definitions = new Map(pendingTextStyles().map(style => [style.name, style]))
       for (const edits of operations.values()) {
         if (!isCurrent()) return
+        const pendingTextStyle = edits[0].pendingTextStyle ?? definitions.get(edits[0].pendingTextStyleName)
         const applied = []
         let complete = true
         for (const edit of edits) {
@@ -183,7 +189,7 @@
                 break
               }
             }
-            const entry = await apply(node, edit, isCurrent)
+            const entry = await apply(node, pendingTextStyle ? { ...edit, pendingTextStyle } : edit, isCurrent)
             if (!entry || !isCurrent() || !isAttached(edit, entry)) {
               if (entry?.property === 'button-size') await removeButtonSize(entry).catch(() => false)
               else if (entry) remove(entry)
@@ -221,6 +227,13 @@
           entry => entry.node === node && entry.property === 'background-color',
         )
         return entry?.pendingColor && !lostPreview(entry) ? entry.pendingColor : null
+      },
+      pendingTextStyles,
+      pendingTextStyleFor(node) {
+        const entries = topEntries().filter(entry => entry.node === node && ui.textStyleProperties.includes(entry.property))
+        const pending = entries[0]?.pendingTextStyle
+        return pending && entries.length === ui.textStyleProperties.length &&
+          entries.every(entry => entry.pendingTextStyle?.name === pending.name && !lostPreview(entry)) ? pending : null
       },
       get hasAttached() { return attached.size > 0 },
       get hasAttachedButtonSize() {
@@ -261,7 +274,7 @@
           detach(id)
           // A named edit’s original value may depend on the app’s current styles.
           // Use the baseline we just exposed only for the same mounted node.
-          const before = entry.colorToken || entry.pendingColor || entry.spacingToken || entry.textStyleToken
+          const before = entry.colorToken || entry.pendingColor || entry.spacingToken || entry.textStyleToken || entry.pendingTextStyle
             ? getComputedStyle(entry.node).getPropertyValue(entry.property) : entry.before
           original.set(id, { node: entry.node, before, target: entry.liveTarget })
         }

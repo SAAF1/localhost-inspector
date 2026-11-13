@@ -2,29 +2,14 @@
   const ui = window.LocalhostInspector
 
   ui.openCreateColorVariable = (anchor, picker, { value, submit }, onCreated) => {
-    const popup = ui.element('div', 'li-menu li-context-popup li-color-create')
+    const popup = ui.element('div', 'li-menu li-context-popup li-create-definition')
     popup.setAttribute('role', 'dialog')
     popup.setAttribute('aria-label', 'Variable')
     const dismiss = ui.action('Close variable form', 'dismiss', () => close())
-    const form = ui.element('form', 'li-color-create-form')
-    const inputRow = (label, initial = '') => {
-      const row = ui.element('div', 'li-color-create-field')
-      const field = ui.element('span', 'li-field')
-      const input = ui.element('input')
-      input.autocomplete = 'off'
-      input.spellcheck = false
-      input.value = initial
-      input.id = 'li-create-color-' + label.toLowerCase()
-      const caption = ui.element('label', '', label)
-      caption.htmlFor = input.id
-      field.append(input)
-      row.append(caption, field)
-      form.append(row)
-      return { field, input }
-    }
-    const name = inputRow('Name').input
+    const form = ui.element('form', 'li-create-definition-form')
+    const name = ui.createDefinitionField(form, 'li-create-color', 'Name').input
     name.maxLength = 80
-    const color = inputRow('Value', value)
+    const color = ui.createDefinitionField(form, 'li-create-color', 'Value', value)
     color.input.maxLength = 100
     let colorControls
     const choose = ui.colorSwatchTrigger('Open variable color picker', ui.colorValue(value), openPicker)
@@ -38,7 +23,7 @@
         color.input.value = ui.colorText(next)
         updateDraft()
       })
-      const editor = ui.element('div', 'li-menu li-context-popup li-color-create li-color-draft-picker')
+      const editor = ui.element('div', 'li-menu li-context-popup li-create-definition li-color-draft-picker')
       editor.setAttribute('role', 'dialog')
       editor.setAttribute('aria-label', 'Color picker')
       editor.append(ui.popupHeader('Custom', ui.action('Close color picker', 'dismiss', () => colorControls?.())), solid.panel)
@@ -54,10 +39,10 @@
       }, { parent: popup, matchAnchorWidth: false, onClose: solid.stopSampling })
       solid.panel.querySelector('button').focus({ preventScroll: true })
     }
-    const submitButton = ui.element('button', 'li-color-create-submit', 'Create variable')
+    const submitButton = ui.element('button', 'li-create-definition-submit', 'Create variable')
     submitButton.type = 'submit'
-    const error = ui.element('p', 'li-color-create-error')
-    error.id = 'li-color-create-error'
+    const error = ui.element('p', 'li-create-definition-error')
+    error.id = 'li-create-definition-error'
     error.setAttribute('role', 'alert')
     error.hidden = true
     form.append(error, submitButton)
@@ -111,10 +96,7 @@
       event.stopPropagation()
       close()
     }
-    const close = ui.mountPopup(anchor, popup, (_, width) => {
-      const rect = picker.getBoundingClientRect()
-      return [rect.left >= width + 8 ? rect.left - width : rect.left, rect.top]
-    }, { parent: picker, matchAnchorWidth: false, onClose: () => colorControls?.(false) })
+    const close = ui.mountDefinitionForm(anchor, picker, popup, { onClose: () => colorControls?.(false) })
     name.focus({ preventScroll: true })
     return close
   }

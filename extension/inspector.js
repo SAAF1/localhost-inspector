@@ -87,6 +87,9 @@
         node, style: getComputedStyle(node), disabled: comparing || loadingRoute || journalRevision === null, run, colorCatalog, spacingCatalog,
         pendingColorFor: target => recovery.pendingColorFor(target),
         textStyleCatalog, textStyleUnavailable,
+        pendingTextStyles: recovery.pendingTextStyles(),
+        pendingTextStyleFor: target => recovery.pendingTextStyleFor(target),
+        createTextStyle: (targets, draft) => commitTextStyle(node, version, targets, null, draft),
         buttonSize: !buttonSizeRequiresReload && confirmedButton === node ? ui.buttonSize.currentSize(node, buttonSizeKey) : null,
         commitButtonSize: async size => {
           pendingButtonSize = true
@@ -116,7 +119,7 @@
     if (prior) node.style.setProperty(property, prior, priorPriority)
     else node.style.removeProperty(property)
   }
-  async function apply(node, property, requested, isCurrent, { colorToken, pendingColor, spacingToken, textStyleToken } = {}) {
+  async function apply(node, property, requested, isCurrent, { colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle } = {}) {
     if (colorToken && (
       !ui.supportsColorVariable(node, property) || requested !== ui.colorVariableValue(colorToken.name) ||
       colorToken.source !== colorCatalog?.source || !colorCatalog.names.includes(colorToken.name) ||
@@ -136,6 +139,11 @@
       textStyleToken.source !== textStyleCatalog?.source || !textStyleCatalog.names.includes(textStyleToken.name) ||
       !ui.supportsTextStyle(node) || !ui.textStyleValues(node, textStyleToken.name)
     )) throw Error('This text style is unavailable for the selected text.')
+    if (pendingTextStyle && (
+      !ui.textStyleProperties.includes(property) ||
+      requested !== ui.textStyleReference(pendingTextStyle.name, property, pendingTextStyle.values[property]) ||
+      pendingTextStyle.source !== textStyleCatalog?.source || !ui.supportsTextStyle(node)
+    )) throw Error('This text style preview is unavailable for the selected text.')
     if (!CSS.supports(property, requested)) throw Error('That value is not valid for this control')
     const baseline = getComputedStyle(node).getPropertyValue(property)
     const prior = node.style.getPropertyValue(property)
@@ -150,7 +158,7 @@
     const beforeSize = measure()
     node.style.setProperty(property, requested)
     const declared = node.style.getPropertyValue(property)
-    const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, colorToken, pendingColor, spacingToken, textStyleToken }
+    const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle }
     temporary.add(entry)
     let observed = getComputedStyle(node).getPropertyValue(property)
     const mode = ['100%', 'fit-content'].includes(requested)
@@ -161,8 +169,8 @@
     const verified = () => {
       if (colorToken) return ui.ownsPreviewDeclaration(entry) && observed === ui.resolveColorVariable(node, colorToken.name)
       if (spacingToken) return ui.ownsPreviewDeclaration(entry) && ui.spacingVariableMatches(node, property, spacingToken.name, observed)
-      if (textStyleToken) return ui.ownsPreviewDeclaration(entry) && ui.textStyleMatches(
-        observed, ui.textStyleValues(node, textStyleToken.name)?.[property],
+      if (textStyleToken || pendingTextStyle) return ui.ownsPreviewDeclaration(entry) && ui.textStyleMatches(
+        observed, pendingTextStyle?.values[property] ?? ui.textStyleValues(node, textStyleToken.name)?.[property],
       )
       if (mode) return changedSize()
       return sameValue() && (!dimensions || changedSize() || baseline === observed)
@@ -384,7 +392,31 @@
     }
   }
 
-  async function commitTextStyle(selected, version, targets, name) {
+  function pendingTextStyleForDraft(selected, targets, { label, description = '', values }) {
+    if (!textStyleCatalog?.canCreate) throw Error('The text style source is unavailable for creation.')
+    if (targets.length !== 1 || selected !== targets[0] ||
+        ui.textStyleName(selected, textStyleCatalog) || recovery.pendingTextStyleFor(selected)) {
+      throw Error('Select one text layer with no applied style.')
+    }
+    if (typeof label !== 'string' || !/^[a-z][a-z0-9 -]{0,69}$/i.test(label) || label !== label.trim()) {
+      throw Object.assign(Error('Use a name starting with a letter. Use letters, numbers, spaces or hyphens.'), { field: 'name' })
+    }
+    if (typeof description !== 'string' || description.length > 240 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(description)) {
+      throw Object.assign(Error('Keep the description to 240 characters.'), { field: 'description' })
+    }
+    const current = ui.captureTextStyle(selected)
+    if (!current || ui.textStyleProperties.some(property => current[property] !== values?.[property])) {
+      throw Error('The selected typography changed. Reopen Create style to capture it again.')
+    }
+    const name = '--text-' + label.toLowerCase().replace(/ +/g, '-')
+    const computed = getComputedStyle(selected)
+    if (textStyleCatalog.names.includes(name) || ui.textStyleProperties.some(property =>
+      computed.getPropertyValue(name + '-' + property).trim(),
+    )) throw Object.assign(Error('That style name is already in use.'), { field: 'name' })
+    return { name, label, description, values: current, source: textStyleCatalog.source }
+  }
+
+  async function commitTextStyle(selected, version, targets, name, draft) {
     const editRoute = currentRoute
     const isCurrent = () => isCurrentRoute(editRoute, version)
     const currentTargets = ui.textTargets(selected)
@@ -393,15 +425,22 @@
       throw Error('Selection changed. Choose the text style again.')
     }
     if (targets.length * ui.textStyleProperties.length > 50) throw Error('Select up to 10 text elements.')
-    if (name !== null && !textStyleCatalog?.names.includes(name)) throw Error('This text style is unavailable.')
-    const tokenOptions = name === null ? undefined : { textStyleToken: { source: textStyleCatalog.source, name } }
+    const registered = textStyleCatalog?.names.includes(name)
+    const pendingTextStyle = draft ? pendingTextStyleForDraft(selected, targets, draft)
+      : name !== null && !registered && targets.length === 1 && targets[0] === selected
+        ? recovery.pendingTextStyles().find(style => style.name === name && style.source === textStyleCatalog?.source)
+        : null
+    if (name !== null && !registered && !pendingTextStyle) throw Error('This text style is unavailable.')
+    const tokenOptions = registered ? { textStyleToken: { source: textStyleCatalog.source, name } } : undefined
     const updates = targets.flatMap(node => {
-      if (name === null ? !ui.textStyleName(node, textStyleCatalog) : !ui.textStyleValues(node, name)) {
+      if (!pendingTextStyle && (name === null ? !ui.textStyleName(node, textStyleCatalog) &&
+          !recovery.pendingTextStyleFor(node) : !ui.textStyleValues(node, name))) {
         throw Error('This text style is unavailable for the selected text.')
       }
       const computed = getComputedStyle(node)
       return ui.textStyleProperties.flatMap(property => {
-        const requested = name === null ? computed.getPropertyValue(property) : ui.textStyleReference(name, property)
+        const requested = pendingTextStyle ? ui.textStyleReference(pendingTextStyle.name, property, pendingTextStyle.values[property])
+          : name === null ? computed.getPropertyValue(property) : ui.textStyleReference(name, property)
         return node.style.getPropertyValue(property) === requested && node.style.getPropertyPriority(property) === ''
           ? [] : [{ node, property, requested, target: ui.describePreviewTarget(node) }]
       })
@@ -412,21 +451,29 @@
     try {
       for (const { node, property, requested, target } of updates) {
         if (!isCurrent() || !canEdit(node, property)) throw Error('The selected text cannot be edited.')
-        const entry = await apply(node, property, requested, isCurrent, tokenOptions)
+        const entry = await apply(node, property, requested, isCurrent, pendingTextStyle ? { pendingTextStyle } : tokenOptions)
         entry.liveTarget = target
         entries.push(entry)
       }
       if (!isCurrent() || updates.some(({ node, target }) => !ui.matchesPreviewTarget(node, target))) {
         throw Error('Selection changed. Choose the text style again.')
       }
-      records = await Promise.all(entries.map((entry, index) => editRecord(entry, updates[index].target, editRoute, tokenOptions)))
+      records = await Promise.all(entries.map((entry, index) => editRecord(entry, updates[index].target, editRoute,
+        pendingTextStyle && index === 0 ? (draft ? { pendingTextStyle } : { pendingTextStyleName: pendingTextStyle.name }) : tokenOptions)))
+      if (pendingTextStyle && (!isCurrent() || selection.current !== selected ||
+          entries.some(entry => !ui.ownsPreviewDeclaration(entry)))) {
+        throw Error('Selection changed. Choose the text style again.')
+      }
       await write({ type: 'saveTextStyle', records }, editRoute, version)
     } catch (error) {
       for (const entry of entries.reverse()) discardTemporary(entry)
+      if (pendingTextStyle && error.message === 'That style name is already in use.') error.field = 'name'
       throw error
     }
     const current = isCurrent()
-    const attached = current && updates.every(({ node, target }) => ui.matchesPreviewTarget(node, target))
+    const attached = current && updates.every(({ node, target }) => ui.matchesPreviewTarget(node, target)) &&
+      (!pendingTextStyle || entries.every(entry => ui.ownsPreviewDeclaration(entry) &&
+        ui.textStyleMatches(getComputedStyle(entry.node).getPropertyValue(entry.property), pendingTextStyle.values[entry.property])))
     if (!attached) {
       for (const entry of [...entries].reverse()) discardTemporary(entry)
     }
@@ -441,6 +488,7 @@
     })
     recoveryRequested ||= !attached
     reportRecovery()
+    return pendingTextStyle
   }
 
   get('undo').onclick = () => run(async () => {
