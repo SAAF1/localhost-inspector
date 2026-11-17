@@ -163,7 +163,6 @@ try {
     return card
   }
   const frame = await showCard('Create')
-  await create.evaluate(() => { document.documentElement.dataset.sameDocument = 'yes' })
   const began = performance.now()
   const createPhoto = frame.locator('..').locator('img')
   await createPhoto.hover()
@@ -172,7 +171,7 @@ try {
   await createPhoto.click()
   await iframe.getByRole('dialog', { name: /Create Task/ }).waitFor({ timeout: 6500 })
   await attached()
-  assert.equal(await iframe.locator('html').getAttribute('data-same-document'), 'yes')
+  await page.locator('#localhost-inspector-dock:not([inert])').waitFor()
   const text = iframe.getByRole('textbox', { name: 'Title' })
   await text.click({ modifiers: ['Meta'] })
   await outlines.locator('#outline').waitFor({ state: 'visible', timeout: 5000 })

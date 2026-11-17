@@ -22,13 +22,15 @@ export async function createHarness(options = {}) {
         if (request.url === '/__inspector-flow/map.json') {
           response.writeHead(200, { 'content-type': 'application/json' })
           response.end(JSON.stringify({ origin, viewport: { width: 1100, height: 1356 },
-            frames: [{ id: 'first', route: '/', label: 'Fixture', steps: [], checkpoint: [], image: 'frame-1.png' }],
+            frames: options.flowFrames ?? [{ id: 'first', route: '/', label: 'Fixture', steps: [], checkpoint: [], image: 'frame-1.png' }],
             connections: [] }))
           return
         }
       } else if (options.dock && servePreviewDock(request, response, origin)) return
       response.setHeader('Content-Type', 'text/html')
-      response.end(fixture)
+      const flowPage = options.flowPages?.[request.url]
+      if (flowPage) response.statusCode = flowPage.status ?? 200
+      response.end(flowPage ? fixture + flowPage.body : fixture)
     }
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))

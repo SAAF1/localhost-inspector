@@ -1,21 +1,43 @@
 export const flowPath = '/__inspector-flow/'
 
 export function watchFlowFrame() {
-  const frame = document.querySelector('#app-preview')
-  if (!frame || frame.dataset.inspectorWatching) return
-  frame.dataset.inspectorWatching = 'true'
+  if (window.localhostInspectorWatchFrame) {
+    window.localhostInspectorWatchFrame()
+    return
+  }
+  document.body.dataset.inspectorWatching = 'true'
+  let frame
   let sequence = 0
-  const attach = () => {
+
+  function attach() {
+    const selected = frame
+    if (!selected) return
+    delete selected.dataset.inspectorDocument
     const current = ++sequence
     chrome.runtime.sendMessage({ type: 'attachFlowFrame' }).then(result => {
-      if (sequence === current && result?.ok && result.value) frame.dataset.inspectorDocument = result.value
+      if (current === sequence && selected === frame && result?.ok && result.value) {
+        selected.dataset.inspectorDocument = result.value
+      }
     }).catch(() => {})
   }
-  frame.addEventListener('load', () => {
-    delete frame.dataset.inspectorDocument
+
+  function connect() {
+    const next = document.querySelector('#app-preview')
+    if (frame === next) return
+    frame?.removeEventListener('load', attach)
+    frame = next
+    frame?.addEventListener('load', attach)
     attach()
+  }
+
+  new MutationObserver(connect).observe(document.querySelector('#viewport'), {
+    childList: true, subtree: true, attributes: true, attributeFilter: ['id'],
   })
-  attach()
+  window.localhostInspectorWatchFrame = () => {
+    if (frame === document.querySelector('#app-preview')) attach()
+    else connect()
+  }
+  connect()
 }
 
 export function isFlowChild(path) {

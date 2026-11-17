@@ -5,6 +5,8 @@ const assets = new Map([
   ['', ['workspace.html', 'text/html']],
   ['workspace.css', ['workspace.css', 'text/css']],
   ['workspace.mjs', ['workspace.mjs', 'text/javascript']],
+  ['render-frames.mjs', ['render-frames.mjs', 'text/javascript']],
+  ['replay.mjs', ['replay.mjs', 'text/javascript']],
   ['page-state.mjs', ['page-state.mjs', 'text/javascript']],
 ])
 

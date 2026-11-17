@@ -1,7 +1,9 @@
-import { observePage } from './page-state.mjs'
+import { renderFrames } from './render-frames.mjs'
+import { flowRoute, observeSurfaces } from './page-state.mjs'
+import { findControl, matchesCheckpoint, openControl, waitFor } from './replay.mjs'
 
 const map = document.querySelector('#map')
-const preview = document.querySelector('#app-preview')
+let preview = document.querySelector('#app-preview')
 const viewport = document.querySelector('#viewport')
 const toggle = document.querySelector('#flow-toggle')
 const zoom = document.querySelector('#zoom')
@@ -10,21 +12,21 @@ const dock = document.querySelector('#localhost-inspector-dock')
 const data = await fetch('./map.json').then(response => response.json())
 if (data.origin !== location.origin) throw Error('This flow map belongs to a different app origin')
 const { width, height } = data.viewport
-const cards = new Map()
-const routePath = path => path.replace(/\/$/, '') || '/'
-const currentRoute = () => {
+const cards = renderFrames(map, data, activate)
+const routeOf = frame => {
   try {
-    return preview.contentWindow.location.origin === location.origin
-      ? routePath(preview.contentWindow.location.pathname) : null
+    const address = frame.contentWindow.location
+    return address.origin === location.origin ? flowRoute(address) : null
   } catch { return null }
 }
 const labelHeight = 45
 const camera = { x: 34, y: 28, scale: .36 }
 let active
-let activeFrame
 let request = 0
 let pendingCard
+let candidate
 let expanded = false
+let unmapped = false
 
 function message(text) {
   notice.value = text
@@ -41,64 +43,12 @@ function position() {
   preview.style.transform = 'scale(' + camera.scale + ')'
 }
 
-function render() {
-  const rows = new Map()
-  for (const frame of data.frames) {
-    if (!rows.has(frame.route)) rows.set(frame.route, [])
-    rows.get(frame.route).push(frame)
-  }
-  let row = 0
-  for (const frames of rows.values()) {
-    for (const [column, frame] of frames.entries()) {
-      const x = column * (width + 210)
-      const y = row * (height + 174)
-      const button = document.createElement('button')
-      button.className = 'flow-frame'
-      button.type = 'button'
-      button.dataset.frame = frame.id
-      button.setAttribute('aria-pressed', 'false')
-      Object.assign(button.style, { left: x + 'px', top: y + 'px', width: width + 'px' })
-      const text = document.createElement('span')
-      text.textContent = frame.label
-      const image = new Image(width, height)
-      image.alt = ''
-      image.loading = 'lazy'
-      image.src = './' + frame.image
-      button.append(text, image)
-      button.addEventListener('click', () => void activate(frame))
-      cards.set(frame.id, { x, y, button })
-      map.append(button)
-    }
-    row++
-  }
-  for (const edge of data.connections.filter(edge => edge.observed)) {
-    const from = cards.get(edge.from)
-    const to = cards.get(edge.to)
-    if (!from || !to) continue
-    const wire = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    wire.classList.add('connections')
-    // Alternatives branch from the base page. Route the connector above the
-    // cards so it cannot read as a transition from an adjacent alternative.
-    wire.style.left = from.x + width / 2 + 'px'
-    wire.style.top = from.y - 52 + 'px'
-    const distance = to.x - from.x
-    const path = document.createElementNS(wire.namespaceURI, 'path')
-    path.setAttribute('fill', 'none')
-    path.setAttribute('stroke', '#88928c')
-    path.setAttribute('stroke-width', '4')
-    path.setAttribute('d', 'M 0 48 V 0 H ' + distance + ' V 46 m -13 -13 13 13 13 -13')
-    wire.append(path)
-    map.prepend(wire)
-  }
-}
-
-function setActive(id, frame) {
+function setActive(id) {
   if (active) {
     cards.get(active).button.classList.remove('active')
     cards.get(active).button.setAttribute('aria-pressed', 'false')
   }
   active = id
-  activeFrame = frame
   if (id) {
     cards.get(id).button.classList.add('active')
     cards.get(id).button.setAttribute('aria-pressed', 'true')
@@ -111,91 +61,121 @@ function center(id) {
   camera.y = Math.round((viewport.clientHeight - height * camera.scale) / 2 - card.y * camera.scale)
 }
 
-function waitFor(read, signal) {
-  return new Promise((resolve, reject) => {
-    const end = performance.now() + 4500
-    function check() {
-      if (signal !== request || performance.now() >= end) return reject(Error('State unavailable'))
-      try {
-        const result = read()
-        if (result) return resolve(result)
-      } catch (error) { return reject(error) }
-      setTimeout(check, 25)
-    }
-    check()
-  })
-}
-
-function findControl(doc, step) {
-  const root = step.inMain ? doc.querySelector('main, [role="main"]') : doc
-  const controls = root?.querySelectorAll(step.role === 'tab' ? '[role="tab"]' : 'button') ?? []
-  const candidates = [...controls].filter(node => !node.disabled && !node.closest('th, [hidden], [inert]') &&
-    node.getClientRects().length && (!step.popup || node.hasAttribute('aria-haspopup')) &&
-    (node.getAttribute('role') || 'button') === step.role &&
-    (node.getAttribute('aria-label') || node.innerText || node.title || '').trim().replace(/\s+/g, ' ') === step.label)
-  return candidates.length === 1 ? candidates[0] : null
-}
-
-function openControl(control) {
-  const view = control.ownerDocument.defaultView
-  const events = { bubbles: true, cancelable: true, composed: true, button: 0, view }
-  // Some tabs and popovers open on press rather than click.
-  control.dispatchEvent(new view.PointerEvent('pointerdown', { ...events, pointerType: 'mouse', isPrimary: true, buttons: 1 }))
-  control.dispatchEvent(new view.MouseEvent('mousedown', { ...events, buttons: 1 }))
-  control.click()
-}
-
 function setPending(card) {
   pendingCard?.removeAttribute('aria-busy')
   pendingCard = card
   pendingCard?.setAttribute('aria-busy', 'true')
 }
 
-function matchesCheckpoint(doc, frame) {
-  const { surfaces } = observePage(doc)
-  return frame.checkpoint.every(check => surfaces.some(item => item.role === check.role && item.label === check.label))
+function currentFrame() {
+  const route = routeOf(preview)
+  const doc = preview.contentDocument
+  if (!route || !doc?.body?.innerText.trim()) return
+  const onRoute = data.frames.filter(frame => frame.route === route)
+  const surfaces = observeSurfaces(doc)
+  const exact = onRoute.filter(frame => frame.steps.length && matchesCheckpoint(doc, frame, surfaces))
+  if (exact.length === 1) return exact[0]
+  if (exact.length > 1) return exact.find(frame => frame.id === active) ?? onRoute.find(frame => !frame.steps.length)
+  return onRoute.find(frame => !frame.steps.length)
+}
+
+function syncLiveFrame(recenter = false) {
+  if (!expanded || candidate) return
+  const frame = currentFrame()
+  if (!frame) {
+    if (preview.contentDocument?.readyState !== 'complete') return
+    setActive(null)
+    preview.style.visibility = 'hidden'
+    dock.inert = true
+    unmapped = true
+    message('The current page is outside this map')
+    return
+  }
+  if (frame.id !== active || recenter) {
+    const previous = data.frames.find(item => item.id === active)
+    setActive(frame.id)
+    if (recenter || previous?.route !== frame.route) center(frame.id)
+    position()
+  }
+  if (unmapped) { unmapped = false; message('') }
+  preview.style.visibility = ''
+  if (!dock.style.visibility) dock.inert = false
+}
+
+function cancelCandidate() {
+  request++
+  candidate?.remove()
+  candidate = null
+  setPending(null)
 }
 
 async function activate(frame) {
-  if (frame.id === active && !preview.style.visibility && frame.route === currentRoute() &&
-      matchesCheckpoint(preview.contentDocument, frame)) return
-  const signal = ++request
+  if (frame.id === active && !preview.style.visibility && routeOf(preview) === frame.route &&
+      matchesCheckpoint(preview.contentDocument, frame) &&
+      (frame.steps.length || (currentFrame()?.id === frame.id && observeSurfaces(preview.contentDocument).every(surface =>
+        surface.role === 'tabpanel' || frame.checkpoint.some(item => item.role === surface.role && item.label === surface.label))))) return
+
+  cancelCandidate()
+  const signal = request
+  const current = () => signal === request
   setPending(cards.get(frame.id).button)
   message('')
-  const previous = preview.contentDocument
-  // A single forward step from an already open base page can keep its document.
-  const reuse = previous && activeFrame && !activeFrame.steps.length && frame.steps.length === 1 &&
-    currentRoute() === frame.route && findControl(previous, frame.steps[0]) &&
-    !observePage(previous).surfaces.some(item => item.role !== 'tabpanel')
-  setActive(null)
-  // Keep layout active so viewport sizes and checkpoints remain observable.
-  preview.style.visibility = 'hidden'
-  dock.inert = true
-  if (!reuse) preview.src = frame.route
+  const next = document.createElement('iframe')
+  candidate = next
+  next.className = 'flow-candidate'
+  next.title = 'Preparing selected app frame'
+  next.inert = true
+  next.style.width = width + 'px'
+  next.style.height = height + 'px'
+  next.src = frame.route
+  preview.after(next)
   try {
-    const doc = reuse ? previous : await waitFor(() => {
-      const next = preview.contentDocument
-      return next && next !== previous && currentRoute() === frame.route &&
-        next.readyState !== 'loading' && next.body?.innerText.trim() && next
-    }, signal)
+    const doc = await waitFor(() => {
+      const loaded = next.contentDocument
+      return routeOf(next) === frame.route && loaded?.readyState === 'complete' &&
+        loaded?.body?.innerText.trim() && loaded
+    }, current)
     for (const step of frame.steps) {
-      const control = await waitFor(() => doc === preview.contentDocument && findControl(doc, step), signal)
+      const control = await waitFor(() => doc === next.contentDocument && findControl(doc, step), current)
       openControl(control)
     }
-    await waitFor(() => {
-      if (doc !== preview.contentDocument ||
-          (preview.dataset.inspectorWatching && !preview.dataset.inspectorDocument)) return false
-      return matchesCheckpoint(doc, frame)
-    }, signal)
-    setActive(frame.id, frame)
+    await waitFor(() => doc === next.contentDocument && matchesCheckpoint(doc, frame), current)
+    if (!current()) return
+
+    const attached = document.body.hasAttribute('data-inspector-watching')
+    preview.remove()
+    if (attached) {
+      dock.inert = true
+      dock.style.visibility = 'hidden'
+    }
+    next.id = 'app-preview'
+    next.className = ''
+    next.title = 'Active app frame'
+    next.inert = false
+    preview = next
+    candidate = null
+    setActive(frame.id)
     position()
-    preview.style.visibility = ''
-    dock.inert = false
-    message('')
+    watchLiveFrame(preview)
+    if (attached) {
+      try { await waitFor(() => next.dataset.inspectorDocument, current) }
+      catch {
+        if (current()) message('Opened ' + frame.label + '. Inspector could not attach.')
+      } finally {
+        if (next === preview && next.dataset.inspectorDocument) {
+          dock.style.visibility = ''
+          dock.inert = false
+        }
+      }
+    }
   } catch {
-    if (signal === request) message('Could not reopen ' + frame.label)
+    if (current()) message('Could not reopen ' + frame.label)
   } finally {
-    if (signal === request) setPending(null)
+    if (current()) {
+      candidate?.remove()
+      candidate = null
+      setPending(null)
+    }
   }
 }
 
@@ -207,22 +187,11 @@ toggle.addEventListener('click', () => {
   toggle.setAttribute('aria-label', toggle.title)
   map.hidden = zoom.hidden = !expanded
   if (expanded) {
-    const frame = data.frames.find(item => item.id === active && item.route === currentRoute()) ??
-      data.frames.find(item => item.route === currentRoute() && !item.steps.length)
-    if (frame) {
-      setActive(frame.id, frame)
-      center(frame.id)
-    } else {
-      setActive(null)
-      preview.style.visibility = 'hidden'
-      message('The current page is outside this map')
-    }
     preview.style.width = width + 'px'
     preview.style.height = height + 'px'
-    position()
+    syncLiveFrame(true)
   } else {
-    request++
-    setPending(null)
+    cancelCandidate()
     message('')
     preview.removeAttribute('style')
     dock.inert = false
@@ -251,18 +220,44 @@ viewport.addEventListener('wheel', event => {
   }
 }, { passive: false })
 
-preview.addEventListener('load', () => {
-  if (!preview.contentDocument) return
-  preview.contentDocument.addEventListener('wheel', event => {
-    if (!expanded || (!event.ctrlKey && !event.metaKey)) return
-    const view = viewport.getBoundingClientRect()
-    const app = preview.getBoundingClientRect()
-    zoomAt(event, app.x - view.x + event.clientX * camera.scale,
-      app.y - view.y + event.clientY * camera.scale)
-  }, { passive: false })
-})
+function watchLiveFrame(frame) {
+  let connected
+  function connect() {
+    const doc = frame.contentDocument
+    if (frame !== preview || !doc || doc === connected) return
+    connected = doc
+    const update = () => frame.contentWindow.requestAnimationFrame(() => {
+      if (frame === preview && doc === frame.contentDocument) syncLiveFrame()
+    })
+    const keepWorking = event => {
+      if (event.isTrusted && frame === preview && candidate) cancelCandidate()
+    }
+    frame.contentWindow.addEventListener('pointerdown', keepWorking, true)
+    frame.contentWindow.addEventListener('keydown', keepWorking, true)
+    doc.addEventListener('click', update)
+    doc.addEventListener('keyup', update)
+    frame.contentWindow.navigation?.addEventListener('currententrychange', update)
+    doc.addEventListener('wheel', event => {
+      if (!expanded || (!event.ctrlKey && !event.metaKey)) return
+      const view = viewport.getBoundingClientRect()
+      const app = preview.getBoundingClientRect()
+      zoomAt(event, app.x - view.x + event.clientX * camera.scale,
+        app.y - view.y + event.clientY * camera.scale)
+    }, { passive: false })
+    update()
+  }
+  new MutationObserver(() => {
+    if (frame !== preview || !frame.dataset.inspectorDocument || !dock.style.visibility) return
+    dock.style.visibility = ''
+    dock.inert = false
+    message('')
+  }).observe(frame, { attributes: true, attributeFilter: ['data-inspector-document'] })
+  frame.addEventListener('load', connect)
+  if (frame.contentDocument?.readyState === 'complete') connect()
+}
 
-render()
+watchLiveFrame(preview)
+
 const entry = new URLSearchParams(location.search).get('page')
 preview.src = data.frames.some(frame => frame.route === entry) ? entry : '/'
 toggle.disabled = false

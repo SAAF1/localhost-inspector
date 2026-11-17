@@ -2,6 +2,7 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { chromium } from 'playwright'
 import { locateTrigger, observePage, repoRoutes } from './discover.mjs'
+import { flowRoute } from './page-state.mjs'
 
 const [repo, url, destination] = process.argv.slice(2)
 if (!repo || !url || !destination) throw Error('Usage: node scripts/flow/map.mjs REPO DISPOSABLE_LOCALHOST_URL OUTPUT_DIRECTORY')
@@ -23,9 +24,10 @@ const routeLimit = 24
 function schedule(url) {
   const address = new URL(url, start)
   if (address.origin !== start.origin || address.username || address.password ||
-      /\/(?:api|logout|sign-out)(?:\/|$)/i.test(address.pathname) ||
+      /\/(?:api|logout|sign-out|delete|remove|approve|reject|submit|purchase|checkout|confirm)(?:[\/_-]|$)/i.test(address.pathname) ||
       /\.[a-z\d]{2,6}$/i.test(address.pathname)) return null
-  const route = address.pathname.replace(/\/$/, '') || '/'
+  const route = flowRoute(address)
+  if (address.hash && !route.endsWith(address.hash)) return null
   if (!scheduled.has(route)) {
     scheduled.add(route)
     queue.push(route)
@@ -33,18 +35,30 @@ function schedule(url) {
   return route
 }
 
-async function capture(page, route, label, steps = [], checkpoint = []) {
+async function capture(page, route, label, steps = [], checkpoint = [], heading) {
   const id = 'frame-' + (frames.length + 1)
   await page.screenshot({ path: join(output, id + '.png'), animations: 'disabled', timeout: 5000 })
-  frames.push({ id, route, label, steps, checkpoint, image: id + '.png' })
+  frames.push({ id, route, label, steps, checkpoint, heading, image: id + '.png' })
   return id
 }
 
 async function open(page, route) {
-  const response = await page.goto(new URL(route, start).href, { timeout: 8000, waitUntil: 'domcontentloaded' })
+  const target = new URL(route, start)
+  const current = new URL(page.url())
+  if (current.origin === target.origin && current.pathname === target.pathname &&
+      current.search === target.search && current.hash !== target.hash) {
+    await page.goto('about:blank')
+  }
+  const response = await page.goto(target.href, { timeout: 8000, waitUntil: 'domcontentloaded' })
   if (response && !response.ok()) throw Error('HTTP ' + response.status())
   if (new URL(page.url()).origin !== start.origin) throw Error('Left the mapped app')
   await page.waitForFunction(() => Boolean(document.body.innerText.trim()), { timeout: 3000 })
+  const initial = await page.evaluate(observePage)
+  if (!/^loading[. …]*$/i.test(initial.heading.trim())) return initial
+  await page.waitForFunction(() => {
+    const heading = document.querySelector('main h1, main h2, h1')?.innerText.trim() || document.title
+    return heading && !/^loading[. …]*$/i.test(heading)
+  }, undefined, { timeout: 1500 })
   return page.evaluate(observePage)
 }
 
@@ -56,10 +70,26 @@ async function observeInteraction(page, route, trigger, baseId) {
     return
   }
   await control.click({ timeout: 1500 })
-  const after = await page.evaluate(observePage)
-  const additions = after.surfaces.filter(surface => !before.surfaces.some(old =>
-    old.role === surface.role && old.label === surface.label))
-  if (!additions.length || new URL(page.url()).pathname !== new URL(route, start).pathname) return
+  const deadline = Date.now() + 850
+  let additions = []
+  do {
+    const actual = new URL(page.url())
+    if (actual.origin !== start.origin) return
+    if (flowRoute(actual) !== route) {
+      const path = schedule(actual.href)
+      if (path) pendingLinks.push({ from: baseId, route: path, action: trigger.label })
+      return
+    }
+    const after = await page.evaluate(observePage)
+    additions = after.surfaces.filter(surface => !before.surfaces.some(old =>
+      old.role === surface.role && old.label === surface.label))
+    if (additions.length) break
+    await new Promise(resolve => setTimeout(resolve, 50))
+  } while (Date.now() < deadline)
+  if (!additions.length) {
+    gaps.push({ route, action: trigger.label, reason: 'No distinct state appeared after activation' })
+    return
+  }
   const id = await capture(page, route, trigger.label, [trigger], additions)
   connections.push({ from: baseId, to: id, action: trigger.label, observed: true })
 }
@@ -82,18 +112,19 @@ try {
     const route = queue.shift()
     try {
       const observed = await open(page, route)
-      const actual = new URL(page.url()).pathname.replace(/\/$/, '') || '/'
+      const actual = flowRoute(new URL(page.url()))
       if (actual !== route) {
         schedule(page.url())
         gaps.push({ route, reason: 'Redirected to ' + actual })
       } else {
-        const base = await capture(page, route, observed.heading)
+        const base = await capture(page, route, observed.heading, [], observed.surfaces, observed.heading)
         frameForRoute.set(route, base)
         for (const link of observed.links) {
           const path = schedule(link.href)
           if (path && path !== route && link.label) pendingLinks.push({ from: base, route: path, action: link.label })
         }
         const distinct = new Map(observed.triggers.map(trigger => [trigger.role + ':' + trigger.label, trigger]))
+        if (distinct.size > 8) gaps.push({ route, reason: 'Control budget reached', skipped: distinct.size - 8 })
         for (const trigger of [...distinct.values()].slice(0, 8)) {
           try { await observeInteraction(page, route, trigger, base) }
           catch { gaps.push({ route, action: trigger.label, reason: 'Could not reopen the control' }) }
