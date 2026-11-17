@@ -41,3 +41,24 @@ test('a mixed invalid completion request leaves every edit and prior result inta
     assert.deepEqual(journal, original)
   }
 })
+
+test('completion preserves a text-style definition until its pending applications are complete', () => {
+  const name = '--text-heading'
+  const definition = edit('create', {
+    group: 'create', property: 'font-weight', requested: 'var(--text-heading-font-weight, 600)',
+    pendingTextStyle: { name, values: { 'font-weight': '600' } },
+  })
+  const application = edit('apply', {
+    group: 'apply', property: 'font-weight', requested: definition.requested, pendingTextStyleName: name,
+  })
+  const unrelated = edit('unrelated')
+  const journal = { edits: [definition, application, unrelated] }
+  const original = structuredClone(journal)
+
+  assert.throws(() => completeHandoff(binding, journal, report('create'), completedAt), /--text-heading/)
+  assert.deepEqual(journal, original)
+
+  completeHandoff(binding, journal, report('create', 'apply'), completedAt)
+  assert.deepEqual(journal.edits, [unrelated])
+  assert.deepEqual(journal.completed.map(edit => edit.id), ['create', 'apply'])
+})
