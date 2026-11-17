@@ -3,8 +3,9 @@ export function renderFrames(map, data, activate) {
   const cards = new Map()
   const rows = new Map()
   for (const frame of data.frames) {
-    if (!rows.has(frame.route)) rows.set(frame.route, [])
-    rows.get(frame.route).push(frame)
+    const page = frame.route.split('?')[0]
+    if (!rows.has(page)) rows.set(page, [])
+    rows.get(page).push(frame)
   }
   let row = 0
   for (const frames of rows.values()) {

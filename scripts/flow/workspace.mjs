@@ -25,6 +25,8 @@ let active
 let request = 0
 let pendingCard
 let candidate
+let preparation
+let hoverTimer
 let expanded = false
 let unmapped = false
 
@@ -72,6 +74,9 @@ function currentFrame() {
   const doc = preview.contentDocument
   if (!route || !doc?.body?.innerText.trim()) return
   const onRoute = data.frames.filter(frame => frame.route === route)
+  if (!onRoute.length && route.includes('?')) {
+    return data.frames.find(frame => frame.route === route.split('?')[0] && !frame.steps.length)
+  }
   const surfaces = observeSurfaces(doc)
   const exact = onRoute.filter(frame => frame.steps.length && matchesCheckpoint(doc, frame, surfaces))
   if (exact.length === 1) return exact[0]
@@ -79,7 +84,7 @@ function currentFrame() {
   return onRoute.find(frame => !frame.steps.length)
 }
 
-function syncLiveFrame(recenter = false) {
+function syncLiveFrame() {
   if (!expanded || candidate) return
   const frame = currentFrame()
   if (!frame) {
@@ -91,12 +96,9 @@ function syncLiveFrame(recenter = false) {
     message('The current page is outside this map')
     return
   }
-  if (frame.id !== active || recenter) {
-    const previous = data.frames.find(item => item.id === active)
-    setActive(frame.id)
-    if (recenter || previous?.route !== frame.route) center(frame.id)
-    position()
-  }
+  setActive(frame.id)
+  center(frame.id)
+  position()
   if (unmapped) { unmapped = false; message('') }
   preview.style.visibility = ''
   if (!dock.style.visibility) dock.inert = false
@@ -106,20 +108,15 @@ function cancelCandidate() {
   request++
   candidate?.remove()
   candidate = null
+  preparation = null
   setPending(null)
 }
 
-async function activate(frame) {
-  if (frame.id === active && !preview.style.visibility && routeOf(preview) === frame.route &&
-      matchesCheckpoint(preview.contentDocument, frame) &&
-      (frame.steps.length || (currentFrame()?.id === frame.id && observeSurfaces(preview.contentDocument).every(surface =>
-        surface.role === 'tabpanel' || frame.checkpoint.some(item => item.role === surface.role && item.label === surface.label))))) return
-
+function prepare(frame) {
+  if (preparation?.frame.id === frame.id) return preparation
   cancelCandidate()
   const signal = request
   const current = () => signal === request
-  setPending(cards.get(frame.id).button)
-  message('')
   const next = document.createElement('iframe')
   candidate = next
   next.className = 'flow-candidate'
@@ -129,7 +126,7 @@ async function activate(frame) {
   next.style.height = height + 'px'
   next.src = frame.route
   preview.after(next)
-  try {
+  const ready = (async () => {
     const doc = await waitFor(() => {
       const loaded = next.contentDocument
       return routeOf(next) === frame.route && loaded?.readyState === 'complete' &&
@@ -140,6 +137,28 @@ async function activate(frame) {
       openControl(control)
     }
     await waitFor(() => doc === next.contentDocument && matchesCheckpoint(doc, frame), current)
+  })()
+  preparation = { frame, next, current, ready }
+  return preparation
+}
+
+function clearHover() {
+  clearTimeout(hoverTimer)
+  if (candidate && !pendingCard) cancelCandidate()
+}
+
+async function activate(frame) {
+  clearTimeout(hoverTimer)
+  if (frame.id === active && !preview.style.visibility && routeOf(preview) === frame.route &&
+      matchesCheckpoint(preview.contentDocument, frame) &&
+      (frame.steps.length || (currentFrame()?.id === frame.id && observeSurfaces(preview.contentDocument).every(surface =>
+        surface.role === 'tabpanel' || frame.checkpoint.some(item => item.role === surface.role && item.label === surface.label))))) return
+  if (pendingCard === cards.get(frame.id).button) return
+  const { next, current, ready } = prepare(frame)
+  setPending(cards.get(frame.id).button)
+  message('')
+  try {
+    await ready
     if (!current()) return
 
     const attached = document.body.hasAttribute('data-inspector-watching')
@@ -154,6 +173,7 @@ async function activate(frame) {
     next.inert = false
     preview = next
     candidate = null
+    preparation = null
     setActive(frame.id)
     position()
     watchLiveFrame(preview)
@@ -174,6 +194,7 @@ async function activate(frame) {
     if (current()) {
       candidate?.remove()
       candidate = null
+      preparation = null
       setPending(null)
     }
   }
@@ -189,8 +210,9 @@ toggle.addEventListener('click', () => {
   if (expanded) {
     preview.style.width = width + 'px'
     preview.style.height = height + 'px'
-    syncLiveFrame(true)
+    syncLiveFrame()
   } else {
+    clearHover()
     cancelCandidate()
     message('')
     preview.removeAttribute('style')
@@ -199,6 +221,7 @@ toggle.addEventListener('click', () => {
 })
 
 function zoomAt(event, x, y) {
+  clearHover()
   event.preventDefault()
   const next = Math.min(1, Math.max(.12, camera.scale * Math.exp(-event.deltaY * .006)))
   camera.x = x - (x - camera.x) * next / camera.scale
@@ -207,18 +230,48 @@ function zoomAt(event, x, y) {
   position()
 }
 
+function panByWheel(event) {
+  clearHover()
+  event.preventDefault()
+  camera.x -= event.deltaX
+  camera.y -= event.deltaY
+  position()
+}
+
+function overHorizontalScroller(event, view) {
+  return event.composedPath().some(node => node.nodeType === 1 && node.scrollWidth > node.clientWidth &&
+    ['auto', 'scroll', 'overlay'].includes(view.getComputedStyle(node).overflowX))
+}
+
 viewport.addEventListener('wheel', event => {
   if (!expanded) return
   const rect = viewport.getBoundingClientRect()
   if (event.ctrlKey || event.metaKey) {
     zoomAt(event, event.clientX - rect.x, event.clientY - rect.y)
   } else {
-    event.preventDefault()
-    camera.x -= event.deltaX
-    camera.y -= event.deltaY
-    position()
+    panByWheel(event)
   }
 }, { passive: false })
+
+map.addEventListener('pointerover', event => {
+  const card = event.target.closest('.flow-frame')
+  if (!card || card.contains(event.relatedTarget) || event.pointerType !== 'mouse' ||
+      camera.scale < .65 || pendingCard || card.dataset.frame === active) return
+  clearHover()
+  hoverTimer = setTimeout(() => {
+    if (!expanded || camera.scale < .65 || pendingCard || !card.matches(':hover')) return
+    const frame = data.frames.find(item => item.id === card.dataset.frame)
+    if (!frame) return
+    const warm = prepare(frame)
+    void warm.ready.catch(() => {
+      if (preparation === warm && !pendingCard) cancelCandidate()
+    })
+  }, 180)
+})
+map.addEventListener('pointerout', event => {
+  const card = event.target.closest('.flow-frame')
+  if (card && !card.contains(event.relatedTarget)) clearHover()
+})
 
 function watchLiveFrame(frame) {
   let connected
@@ -226,25 +279,41 @@ function watchLiveFrame(frame) {
     const doc = frame.contentDocument
     if (frame !== preview || !doc || doc === connected) return
     connected = doc
-    const update = () => frame.contentWindow.requestAnimationFrame(() => {
-      if (frame === preview && doc === frame.contentDocument) syncLiveFrame()
-    })
-    const keepWorking = event => {
-      if (event.isTrusted && frame === preview && candidate) cancelCandidate()
+    const appWindow = frame.contentWindow
+    function lockAppClick(event) {
+      if (!event.isTrusted || frame !== preview) return
+      if (event.type === 'pointerdown' && candidate) cancelCandidate()
+      if (!expanded || (event.metaKey && event.button === 0)) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
     }
-    frame.contentWindow.addEventListener('pointerdown', keepWorking, true)
-    frame.contentWindow.addEventListener('keydown', keepWorking, true)
-    doc.addEventListener('click', update)
-    doc.addEventListener('keyup', update)
-    frame.contentWindow.navigation?.addEventListener('currententrychange', update)
+    for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'auxclick', 'dblclick', 'contextmenu']) {
+      appWindow.addEventListener(type, lockAppClick, true)
+    }
+    function lockAppKey(event) {
+      if (!event.isTrusted || frame !== preview) return
+      if (event.type === 'keydown' && candidate) cancelCandidate()
+      if (!expanded || event.key === 'Tab') return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }
+    appWindow.addEventListener('keydown', lockAppKey, true)
+    appWindow.addEventListener('keyup', lockAppKey, true)
+    appWindow.addEventListener('beforeinput', lockAppKey, true)
     doc.addEventListener('wheel', event => {
-      if (!expanded || (!event.ctrlKey && !event.metaKey)) return
+      if (!expanded) return
+      if (!event.ctrlKey && !event.metaKey) {
+        if (Math.abs(event.deltaX) > Math.abs(event.deltaY) && !overHorizontalScroller(event, doc.defaultView)) {
+          panByWheel(event)
+        }
+        return
+      }
       const view = viewport.getBoundingClientRect()
       const app = preview.getBoundingClientRect()
       zoomAt(event, app.x - view.x + event.clientX * camera.scale,
         app.y - view.y + event.clientY * camera.scale)
     }, { passive: false })
-    update()
+    if (expanded && !active) syncLiveFrame()
   }
   new MutationObserver(() => {
     if (frame !== preview || !frame.dataset.inspectorDocument || !dock.style.visibility) return

@@ -138,3 +138,24 @@ test('page scripts cannot reach Inspector controls or send its selection and Und
     assert.equal(await h.css('border-radius'), '0px')
   } finally { await h.close() }
 })
+
+for (const [label, options] of [['localhost', {}], ['collapsed canvas workspace', { dock: true, canvas: true }]]) {
+  test('Command-click opens Inspector and selects in ' + label, async () => {
+    const h = await createHarness(options)
+    try {
+      const button = h.app.locator('#other')
+      const panel = h.host.getByRole('region', { name: 'Design inspector' })
+      await button.evaluate(node => {
+        node.addEventListener('click', () => { node.dataset.activated = 'yes' })
+      })
+      assert.equal(await panel.isVisible(), false)
+      await button.click({ modifiers: ['Meta'], position: { x: 5, y: 5 } })
+      await panel.waitFor({ state: 'visible' })
+      const outlineHost = options.dock ? h.app.locator('#localhost-inspector-outlines') : h.host
+      assert.deepEqual(await outlineHost.locator('#outline').boundingBox(), await button.boundingBox())
+      assert.equal(await button.getAttribute('data-activated'), null)
+      await button.click()
+      assert.equal(await button.getAttribute('data-activated'), 'yes')
+    } finally { await h.close() }
+  })
+}

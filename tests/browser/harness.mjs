@@ -44,6 +44,9 @@ export async function createHarness(options = {}) {
     if (options.canvas) await page.frameLocator('#app-preview').locator('#target').waitFor()
     const app = options.dock ? page.frames().find(frame => frame.parentFrame() === page.mainFrame()) : page
     if (options.dock) await app.evaluate(connectPreviewDock)
+    if (options.canvas) await app.evaluate(() => {
+      window.localhostInspectorIsCanvasExpanded = () => window.parent.document.body.hasAttribute('data-expanded')
+    })
     await app.evaluate(settings => {
       // Existing tests use Playwright locators for the Inspector's internal controls.
       if (!settings.closedPanel) {

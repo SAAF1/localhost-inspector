@@ -4,7 +4,7 @@
   const { host, root, panel, setOpen, get } = ui.createPanel()
   const selection = ui.createSelection({
     host, panel, get, onSelect: renderSelection,
-    canOpenOnSelect: window.localhostInspectorCanOpenOnSelect,
+    isCanvasExpanded: window.localhostInspectorIsCanvasExpanded,
     openPanel: () => setOpen(true),
   })
   function renderSelection() {
@@ -54,7 +54,7 @@
   function overlayFor(node) {
     const overlay = node?.closest('[role=menu], [role=dialog], [role=alertdialog], [role=listbox], dialog[open], :popover-open')
     // The canvas panel sits outside the app document and its dialog focus trap.
-    return window.localhostInspectorCanOpenOnSelect?.() && overlay?.matches('[role=dialog]')
+    return window.localhostInspectorIsCanvasExpanded?.() && overlay?.matches('[role=dialog]')
       ? null : overlay
   }
   function renderActions() {

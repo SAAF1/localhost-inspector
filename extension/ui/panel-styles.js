@@ -44,7 +44,13 @@
       background: var(--li-surface); border-color: var(--li-border);
       box-shadow: 0 2px 6px var(--li-shadow);
     }
-    :host([data-docked]) .li-entry { bottom: 54px; }
+    :host([data-docked]) .li-entry {
+      top: var(--li-dock-entry-top, auto); bottom: var(--li-dock-entry-bottom, 54px);
+      right: var(--li-dock-entry-right, var(--li-inset));
+      width: var(--li-dock-entry-size, 36px); height: var(--li-dock-entry-size, 36px);
+      border-radius: var(--li-dock-entry-radius, 50%);
+      box-shadow: var(--li-dock-entry-shadow, var(--li-shadow));
+    }
     .li-entry:active { background: var(--li-field); box-shadow: 0 1px 2px var(--li-shadow); }
     .li-tooltip {
       position: fixed; z-index: 2147483647; pointer-events: none;

@@ -1,6 +1,6 @@
 (() => {
   const ui = window.LocalhostInspector
-  ui.createSelection = ({ host, panel, get, onSelect, canOpenOnSelect, openPanel }) => {
+  ui.createSelection = ({ host, panel, get, onSelect, isCanvasExpanded, openPanel }) => {
     let selected
     let hovered
     let pointer
@@ -81,6 +81,15 @@
         panelWindow.addEventListener('keydown', updateCommand, options)
         panelWindow.addEventListener('keyup', updateCommand, options)
         panelWindow.addEventListener('blur', clearPointer, options)
+        if (isCanvasExpanded) {
+          const scope = { signal: listeners.signal }
+          panelWindow.addEventListener('click', event => {
+            if (event.isTrusted && isCanvasExpanded() && selected && ['viewport', 'map'].includes(event.target?.id)) select(null)
+          }, scope)
+          panelWindow.addEventListener('keydown', event => {
+            if (event.isTrusted && !event.defaultPrevented && event.key === 'Escape' && isCanvasExpanded() && selected) select(null)
+          }, scope)
+        }
         window.addEventListener('pagehide', () => listeners.abort(), { once: true })
       }
       watchPanelWindow()
@@ -91,7 +100,7 @@
       })
     }
     function isSelectionGesture(event) {
-      return event.isTrusted && (!panel.hidden || canOpenOnSelect?.()) && event.metaKey && event.button === 0 && !event.composedPath().includes(host)
+      return event.isTrusted && event.metaKey && event.button === 0 && !event.composedPath().includes(host)
     }
     function preventPress(event) {
       if (!isSelectionGesture(event)) return

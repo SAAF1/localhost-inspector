@@ -14,7 +14,7 @@ test('Inspector selects, edits, and undoes on the real page at canvas scale', as
       assert.equal(dockBox.x + dockBox.width, size.width)
       assert.equal(dockBox.y, 0)
       assert.equal(dockBox.height, size.height)
-      assert.equal(dockBox.x - toggleBox.x - toggleBox.width, 12)
+      assert.equal(dockBox.x - toggleBox.x - toggleBox.width, dockBox.width ? 12 : 50)
       assert.equal(toggleBox.y, 12)
       return dockBox.width
     }
@@ -34,6 +34,13 @@ test('Inspector selects, edits, and undoes on the real page at canvas scale', as
     await h.page.setViewportSize({ width: 1723, height: 996 })
     assert.ok(await layout() > 0)
     await h.page.setViewportSize({ width: 1100, height: 1400 })
+    await h.select()
+    await h.page.keyboard.press('Escape')
+    const outlineElement = h.app.locator('#localhost-inspector-outlines #outline')
+    assert.equal(await outlineElement.isVisible(), false)
+    await h.select()
+    await h.page.mouse.click(80, 60)
+    assert.equal(await outlineElement.isVisible(), false)
     await h.select()
     const target = h.app.locator('body > #target')
     const outline = h.app.locator('#localhost-inspector-outlines #outline')
@@ -67,6 +74,9 @@ const lifecycleFrames = [
   { id: 'home', route: '/', label: 'Home', heading: 'Home', steps: [], checkpoint: [] },
   { id: 'other', route: '/other?view=details', label: 'Details', heading: 'Details', steps: [], checkpoint: [] },
   { id: 'missing', route: '/missing', label: 'Missing', heading: 'A saved page', steps: [], checkpoint: [] },
+  { id: 'visible', route: '/', label: 'View',
+    steps: [{ role: 'button', label: 'Open View' }],
+    checkpoint: [{ role: 'menu', label: 'View' }] },
   { id: 'hidden', route: '/', label: 'Hidden dialog',
     steps: [{ role: 'button', label: 'Show hidden dialog' }],
     checkpoint: [{ role: 'dialog', label: 'Hidden dialog' }] },
@@ -75,6 +85,8 @@ const lifecycleFrames = [
 const flowPages = {
   '/': { body: [
     '<h1>Home</h1><input aria-label="Draft">',
+    '<button onclick="document.getElementById(\'view-options\').hidden=false">Open View</button>',
+    '<div role="menu" id="view-options" aria-label="View" hidden><button role="menuitem" onclick="const options=this.parentNode; setTimeout(() => options.hidden=true, 100)">Close View</button></div>',
     '<button onclick="history.pushState({},\'\',\'/other?view=details\'); document.querySelector(\'h1\').textContent=\'Details\'">Go to Details</button>',
     '<button onclick="document.getElementById(\'hidden-dialog\').hidden=false">Show hidden dialog</button>',
     '<div id="hidden-dialog" role="dialog" hidden style="visibility:hidden">Hidden dialog</div>',
@@ -93,15 +105,22 @@ async function chooseCard(page, id) {
   await card.locator('span').click()
 }
 
-test('canvas follows in-app navigation and keeps the last working document during cancelled activation', async () => {
+test('canvas blocks in-app navigation and keeps the last working document during cancelled activation', async () => {
   const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
   try {
     const toggle = h.page.locator('#flow-toggle')
     const app = h.page.frameLocator('#app-preview')
+    const navigate = app.getByRole('button', { name: 'Go to Details' })
     await toggle.click()
-    await app.getByRole('button', { name: 'Go to Details' }).click()
-    await h.page.locator('[data-frame="other"][aria-pressed="true"]').waitFor()
+    await navigate.click()
+    assert.equal(await app.locator('h1').innerText(), 'Home')
+    assert.equal(await h.page.locator('[data-frame="home"]').getAttribute('aria-pressed'), 'true')
+    await toggle.click()
+    await navigate.click()
+    assert.equal(await app.locator('h1').innerText(), 'Details')
     await app.getByRole('textbox', { name: 'Draft' }).fill('keep this draft')
+    await toggle.click()
+    await h.page.locator('[data-frame="other"][aria-pressed="true"]').waitFor()
 
     await h.page.route('**/missing', async route => {
       await new Promise(resolve => setTimeout(resolve, 180))
@@ -127,5 +146,86 @@ test('a failed or visually hidden replay retains the current app and reports the
     assert.equal(await app.getByRole('textbox', { name: 'Draft' }).inputValue(), 'work in progress')
     assert.equal(await h.page.locator('.flow-candidate').count(), 0)
     assert.equal(await h.page.locator('[data-frame="home"]').getAttribute('aria-pressed'), 'true')
+  } finally { await h.close() }
+})
+
+test('horizontal wheel pans over the live frame and still scrolls an app table', async () => {
+  const h = await createHarness({ canvas: true, dock: true })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    const map = h.page.locator('#map')
+    const scene = () => map.evaluate(node => getComputedStyle(node).transform)
+    const initial = await scene()
+    await h.app.locator('#target').hover()
+    await h.page.mouse.wheel(90, 5)
+    await h.page.waitForFunction(previous =>
+      getComputedStyle(document.querySelector('#map')).transform !== previous, initial)
+    const shifted = await scene()
+    assert.ok(await h.page.locator('[aria-pressed="true"].flow-frame').count())
+
+    await h.app.evaluate(() => {
+      const scroll = document.createElement('div')
+      scroll.id = 'scrolling-table'
+      scroll.style.cssText = 'width:220px;height:90px;overflow:auto'
+      const cell = document.createElement('div')
+      cell.style.cssText = 'width:900px;height:200px'
+      cell.textContent = 'Table content'
+      scroll.append(cell)
+      document.body.prepend(scroll)
+    })
+    const table = h.app.locator('#scrolling-table')
+    await table.hover()
+    await h.page.mouse.wheel(90, 0)
+    await h.app.waitForFunction(() => document.querySelector('#scrolling-table').scrollLeft > 0)
+    assert.equal(await scene(), shifted)
+    await h.page.mouse.wheel(0, 45)
+    await h.app.waitForFunction(() => document.querySelector('#scrolling-table').scrollTop > 0)
+    assert.equal(await scene(), shifted)
+  } finally { await h.close() }
+})
+
+
+test('inspect mode blocks menu activation and saved states still replay', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
+  try {
+    const toggle = h.page.locator('#flow-toggle')
+    await toggle.click()
+    const button = h.app.getByRole('button', { name: 'Open View' })
+    await button.click()
+    await button.press('Enter')
+    assert.equal(await h.app.getByRole('menu').count(), 0)
+    await chooseCard(h.page, 'visible')
+    await h.page.locator('[data-frame="visible"][aria-pressed="true"]').waitFor()
+    const app = h.page.frameLocator('#app-preview')
+    const menu = app.getByRole('menu', { name: 'View' })
+    await menu.waitFor()
+    await menu.getByRole('menuitem', { name: 'Close View' }).click()
+    assert.ok(await menu.isVisible())
+    await toggle.click()
+    await menu.getByRole('menuitem', { name: 'Close View' }).click()
+    await menu.waitFor({ state: 'hidden' })
+  } finally { await h.close() }
+})
+
+test('close-zoom hover prepares one frame and click reuses it', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    const viewport = h.page.locator('#viewport')
+    const card = h.page.locator('[data-frame="other"] span')
+    await viewport.dispatchEvent('wheel', { deltaY: -130, ctrlKey: true, clientX: 200, clientY: 150, cancelable: true })
+    const rect = await card.boundingBox()
+    await viewport.dispatchEvent('wheel', { deltaX: rect.x - 90, deltaY: rect.y - 110, cancelable: true })
+    await card.hover()
+    const staged = h.page.locator('.flow-candidate')
+    await staged.waitFor({ state: 'attached' })
+    assert.equal(await staged.count(), 1)
+    assert.equal(await h.page.locator('[data-frame="home"]').getAttribute('aria-pressed'), 'true')
+    await staged.evaluate(node => { node.dataset.prepared = 'yes' })
+    await card.click()
+    const live = h.page.locator('#app-preview')
+    assert.equal(await live.getAttribute('data-prepared'), 'yes')
+    assert.equal(await h.page.locator('[data-frame="other"]').getAttribute('aria-pressed'), 'true')
+    assert.equal(await staged.count(), 0)
   } finally { await h.close() }
 })

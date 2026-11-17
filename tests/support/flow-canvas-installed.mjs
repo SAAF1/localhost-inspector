@@ -201,8 +201,8 @@ try {
       }
     }, 40)
   }), inputRadius)
-  await text.fill('unfinished task')
   await toggle.click()
+  await text.fill('unfinished task')
   assert.equal(await text.inputValue(), 'unfinished task')
   await toggle.click()
   assert.equal(await text.inputValue(), 'unfinished task')

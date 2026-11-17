@@ -4,8 +4,10 @@ import { chromium } from 'playwright'
 import { locateTrigger, observePage, repoRoutes } from './discover.mjs'
 import { flowRoute } from './page-state.mjs'
 
-const [repo, url, destination] = process.argv.slice(2)
-if (!repo || !url || !destination) throw Error('Usage: node scripts/flow/map.mjs REPO DISPOSABLE_LOCALHOST_URL OUTPUT_DIRECTORY')
+const [repo, url, destination, stateRoute, stateLabel] = process.argv.slice(2)
+if (!repo || !url || !destination || Boolean(stateRoute) !== Boolean(stateLabel)) {
+  throw Error('Usage: node scripts/flow/map.mjs REPO DISPOSABLE_LOCALHOST_URL OUTPUT_DIRECTORY [STATE_ROUTE STATE_LABEL]')
+}
 const start = new URL(url)
 if (start.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(start.hostname) ||
     start.username || start.password) throw Error('Use a disposable localhost app over HTTP')
@@ -134,6 +136,19 @@ try {
       gaps.push({ route, reason: error.message.split('\n')[0] })
     }
     if (!queue.length) for (const path of candidates.filter(path => !path.includes('$'))) schedule(path)
+  }
+  if (stateRoute) {
+    const address = new URL(stateRoute, start)
+    const route = flowRoute(address)
+    const base = frameForRoute.get(address.pathname.replace(/\/$/, '') || '/')
+    if (address.origin !== start.origin || !base || !address.search || frameForRoute.has(route)) {
+      throw Error('Expected a new query state for a mapped page')
+    }
+    const observed = await open(page, route)
+    if (flowRoute(new URL(page.url())) !== route) throw Error('The requested state did not reopen')
+    const id = await capture(page, route, stateLabel, [], observed.surfaces, observed.heading)
+    connections.push({ from: base, to: id, action: stateLabel, observed: true })
+    frameForRoute.set(route, id)
   }
   for (const link of pendingLinks) {
     const to = frameForRoute.get(link.route)

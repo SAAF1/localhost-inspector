@@ -51,5 +51,5 @@ export function isFlowChild(path) {
 export function dockFlowInspector() {
   const shell = window.parent.document
   window.localhostInspectorDock = shell.querySelector('#localhost-inspector-dock')
-  window.localhostInspectorCanOpenOnSelect = () => shell.body.hasAttribute('data-expanded')
+  window.localhostInspectorIsCanvasExpanded = () => shell.body.hasAttribute('data-expanded')
 }
