@@ -32,6 +32,7 @@
   let recoveryScheduled = false
   let recoveryRequested = false
   let activeRouteVersion = 0
+  let evidenceVersion = 0
   let journalRevision = null
   let colorCatalog = null
   let spacingCatalog = null
@@ -222,6 +223,7 @@
       const result = await send({ ...message, expectedRevision: journalRevision })
       if (!Number.isSafeInteger(result?.revision)) throw Error('Reload the page with the updated local helper.')
       if (isCurrentRoute(path, version)) journalRevision = result.revision
+      return result
     } catch (error) {
       if (error.code === 'WRITE_REJECTED') throw error
       // A stale write or a lost acknowledgment requires a fresh snapshot.
@@ -239,6 +241,7 @@
     const startedRoute = route()
     const version = activeRouteVersion
     const focusedAction = root.activeElement?.closest('.li-panel-actions button')
+    evidenceVersion++
     busy = true
     if (!background) status('')
     panel.setAttribute('aria-busy', 'true')
@@ -298,16 +301,20 @@
     const version = activeRouteVersion
     const isCurrent = () => isCurrentRoute(editRoute, version)
     const target = ui.describePreviewTarget(node)
+    const sourceContext = ui.describeSourceContext(node)
+    const selected = selection.current
+    const evidence = ++evidenceVersion
     const entry = await apply(node, property, requested, isCurrent, tokenOptions)
     entry.liveTarget = target
     if (!isCurrent() || !ui.matchesPreviewTarget(node, target)) {
       discardTemporary(entry)
       throw Error('Selection changed. Earlier saved changes remain available to Undo.')
     }
-    let edit
+    let edit, captureEnabled
     try {
-      edit = await editRecord(entry, target, editRoute, tokenOptions)
-      await write({ type: 'save', record: edit }, editRoute, version)
+      edit = await editRecord(entry, target, { editRoute, sourceContext, tokenOptions })
+      const result = await write({ type: 'save', record: edit }, editRoute, version)
+      captureEnabled = result.visualEvidence === true
     } catch (error) {
       discardTemporary(entry)
       throw error
@@ -320,6 +327,10 @@
     if (ui.matchesPreviewTarget(node, target)) {
       temporary.delete(entry)
       recovery.remember(edit, entry)
+      if (captureEnabled) {
+        ui.captureEditEvidence?.(node, panel, edit, () => evidence === evidenceVersion && isCurrent() &&
+          selection.current === selected && ui.matchesPreviewTarget(node, target) && ui.ownsPreviewDeclaration(entry))
+      }
     } else {
       discardTemporary(entry)
       recovery.remember(edit)
@@ -327,12 +338,13 @@
     }
     reportRecovery()
   }
-  async function editRecord(entry, target, editRoute, tokenOptions) {
+  async function editRecord(entry, target, { editRoute, sourceContext, tokenOptions }) {
     return {
       id: crypto.randomUUID(), route: editRoute, target: await ui.previewTargetForJournal(target), property: entry.property, before: entry.before,
       requested: entry.requested, observed: entry.observed, ...tokenOptions,
       restore: ui.findPreviewTarget(target, entry.node) === entry.node ? 'unique' : 'ambiguous',
       viewport: { width: innerWidth, height: innerHeight },
+      intent: 'feature-template', sourceContext,
     }
   }
 
@@ -438,11 +450,13 @@
         throw Error('This text style is unavailable for the selected text.')
       }
       const computed = getComputedStyle(node)
+      const target = ui.describePreviewTarget(node)
+      const sourceContext = ui.describeSourceContext(node)
       return ui.textStyleProperties.flatMap(property => {
         const requested = pendingTextStyle ? ui.textStyleReference(pendingTextStyle.name, property, pendingTextStyle.values[property])
           : name === null ? computed.getPropertyValue(property) : ui.textStyleReference(name, property)
         return node.style.getPropertyValue(property) === requested && node.style.getPropertyPriority(property) === ''
-          ? [] : [{ node, property, requested, target: ui.describePreviewTarget(node) }]
+          ? [] : [{ node, property, requested, target, sourceContext }]
       })
     })
     if (!updates.length) return
@@ -458,8 +472,13 @@
       if (!isCurrent() || updates.some(({ node, target }) => !ui.matchesPreviewTarget(node, target))) {
         throw Error('Selection changed. Choose the text style again.')
       }
-      records = await Promise.all(entries.map((entry, index) => editRecord(entry, updates[index].target, editRoute,
-        pendingTextStyle && index === 0 ? (draft ? { pendingTextStyle } : { pendingTextStyleName: pendingTextStyle.name }) : tokenOptions)))
+      records = await Promise.all(entries.map((entry, index) => {
+        const { target, sourceContext } = updates[index]
+        const options = pendingTextStyle && index === 0
+          ? draft ? { pendingTextStyle } : { pendingTextStyleName: pendingTextStyle.name }
+          : tokenOptions
+        return editRecord(entry, target, { editRoute, sourceContext, tokenOptions: options })
+      }))
       if (pendingTextStyle && (!isCurrent() || selection.current !== selected ||
           entries.some(entry => !ui.ownsPreviewDeclaration(entry)))) {
         throw Error('Selection changed. Choose the text style again.')

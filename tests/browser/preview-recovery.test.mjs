@@ -206,3 +206,34 @@ test('an ID-based preview omits selected text and refuses an ID reused for diffe
     assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })
+
+test('an unkeyed edit records cell position for source handoff without using it for preview restoration', async () => {
+  const h = await createHarness()
+  try {
+    await h.app.evaluate(() => {
+      const table = document.createElement('table')
+      table.innerHTML = '<tbody><tr><td><div>Private row value</div></td><td><div>Other content</div></td></tr></tbody>'
+      table.querySelector('td').setAttribute('data-slot', 'table-cell')
+      document.querySelector('#target').append(table)
+    })
+    const example = 'td:first-child > div'
+    await h.open(); await h.select(example)
+    await h.enter('Corner radius', 18); await h.settled()
+    const [record] = await h.journal()
+    assert.equal(record.intent, 'feature-template')
+    assert.equal(record.restore, 'ambiguous')
+    assert.equal(record.sourceContext.tableCellPosition, 1)
+    assert.equal(record.sourceContext.tableRowCellCount, 2)
+    assert.deepEqual(record.sourceContext.ancestors.slice(0, 3),
+      [{ tag: 'td', slot: 'table-cell' }, { tag: 'tr', slot: null }, { tag: 'tbody', slot: null }])
+    assert.doesNotMatch(JSON.stringify(record), /Private row value|Other content/)
+    await h.app.locator(example).evaluate(node => {
+      const replacement = document.createElement('div')
+      replacement.textContent = 'Replacement'
+      node.replaceWith(replacement)
+    })
+    await h.host.getByText('Some saved previews could not be restored.').waitFor()
+    assert.equal(await h.css('border-radius', example), '0px')
+    assert.equal((await h.journal()).length, 1)
+  } finally { await h.close() }
+})

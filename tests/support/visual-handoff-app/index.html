@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workplace admin · Inspector trial</title>
+<link rel="stylesheet" href="/device.css">
+<link rel="stylesheet" href="/identity.css">
+<style>
+  body { margin: 0; font: 16px system-ui, sans-serif; background: #eef3f8; color: #1a2437 }
+  main { padding: 28px; max-width: 740px; margin: 0 auto }
+  h1 { font-size: 24px }
+  nav { display: flex; gap: 10px; margin: 16px 0 }
+  button { padding: 9px 13px; border-radius: 6px; border: 1px solid #8096b0; background: #fff; cursor: pointer }
+  article { background: white; border-radius: 8px; padding: 14px; margin-bottom: 8px; max-width: 520px }
+  h2 { font-size: 19px; margin: 8px 0 14px }
+  footer { margin-top: 24px; color: #465675 }
+</style>
+</head>
+<body>
+<main>
+  <h1>Workplace admin</h1>
+  <p>Manage policies for this workspace.</p>
+  <nav aria-label="Policy categories">
+    <button type="button">Device rules</button>
+    <button type="button">Identity rules</button>
+  </nav>
+  <section hidden>
+    <h2>Device rules</h2>
+    <article><div class="device-rule"><span aria-hidden="true">●</span><span>Review required</span></div></article>
+    <article><div class="device-rule"><span aria-hidden="true">●</span><span>Manual approval</span></div></article>
+  </section>
+  <section hidden>
+    <h2>Identity rules</h2>
+    <article><div class="identity-rule"><span aria-hidden="true">●</span><span>Review required</span></div></article>
+    <article><div class="identity-rule"><span aria-hidden="true">●</span><span>Manual approval</span></div></article>
+  </section>
+  <footer><a href="/about">About this workspace</a></footer>
+</main>
+<script>
+  const buttons = [...document.querySelectorAll('nav button')]
+  const sections = [...document.querySelectorAll('main > section')]
+  function show(index) {
+    for (let i = 0; i < buttons.length; i++) {
+      buttons[i].setAttribute('aria-pressed', String(i === index))
+      sections[i].hidden = i !== index
+    }
+  }
+  for (const [index, button] of buttons.entries()) button.addEventListener('click', () => show(index))
+  if (location.pathname === '/about') {
+    document.querySelector('main').innerHTML = '<h1>About this workspace</h1><p>Example policy dashboard.</p><a href="/">Go back</a>'
+  } else {
+    show(0)
+  }
+</script>
+</body>
+</html>

@@ -3,6 +3,7 @@
     "includes": [
       "extension/**",
       "local-helper.mjs",
+      "source-handoff.mjs",
       "tests/**",
       "scripts/**"
     ]

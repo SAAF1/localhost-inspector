@@ -15,6 +15,7 @@
   },
   "options_page": "settings.html",
   "background": {
+    "type": "module",
     "service_worker": "worker.js"
   },
   "web_accessible_resources": [

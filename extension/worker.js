@@ -1,5 +1,8 @@
+import { captureEditEvidence } from './capture-evidence.js'
+
 const endpoint = 'http://127.0.0.1:5188/inspector'
 const setting = 'helperKey'
+const pendingCaptures = new Map()
 
 async function helper(key, request) {
   if (!key) throw Error('Pair the local helper in extension settings')
@@ -34,12 +37,13 @@ async function inject(tabId) {
     'ui/policy.js', 'ui/menu.js', 'ui/controls.js', 'ui/padding.js',
     'ui/resizing.js', 'ui/alignment-settings.js', 'ui/spacing-gap.js', 'ui/alignment.js', 'ui/layout.js', 'ui/text-targets.js', 'ui/text-style-values.js', 'ui/field-view.js',
     'ui/solid-color-picker.js', 'ui/create-definition.js', 'ui/create-color-variable.js', 'ui/create-text-style.js', 'ui/color-variable-picker.js', 'ui/color-bindings.js', 'ui/text-style-control.js', 'ui/sections.js', 'ui/panel-styles.js', 'ui/tooltip.js',
-    'ui/panel.js', 'ui/revert-dialog.js', 'selection.js', 'shortcuts.js', 'preview-recovery.js', 'button-size.js', 'inspector.js',
+    'ui/panel.js', 'ui/revert-dialog.js', 'selection.js', 'shortcuts.js', 'preview-recovery.js', 'button-size.js', 'edit-evidence.js', 'inspector.js',
   ] })}
 }
 
 async function attach(tabId, origin) {
   await call({ type: 'check', origin })
+  pendingCaptures.delete(tabId)
   await chrome.storage.session.set({ ['tab:' + tabId]: origin })
   await inject(tabId)
   await chrome.action.setBadgeText({ tabId, text: '' })
@@ -62,13 +66,17 @@ chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
     const saved = (await chrome.storage.session.get(key))[key]
     if (!saved) return
     if (localOrigin(tab.url) !== saved) {
+      pendingCaptures.delete(tabId)
       await chrome.storage.session.remove(key)
       return
     }
     await attach(tabId, saved)
   })().catch(error => failed(tabId, error))
 })
-chrome.tabs.onRemoved.addListener(tabId => { void chrome.storage.session.remove('tab:' + tabId) })
+chrome.tabs.onRemoved.addListener(tabId => {
+  pendingCaptures.delete(tabId)
+  void chrome.storage.session.remove('tab:' + tabId)
+})
 
 async function previewButtonSize(key, before, requested, route, origin) {
   // Fixed operation in the app world. No source path, extension data or general
@@ -110,9 +118,22 @@ async function handle(message, sender) {
     return
   }
   const origin = localOrigin(sender.url)
-  const key = 'tab:' + sender.tab?.id
+  const tabId = sender.tab?.id
+  const key = 'tab:' + tabId
   if (!origin || sender.frameId !== 0 || origin !== (await chrome.storage.session.get(key))[key]) {
     throw Error('Tab is not attached')
+  }
+  if (message.type === 'complete') throw Error('Completion requires the local helper command')
+  if (message.type === 'saveEvidence') throw Error('Evidence must come from the browser capture')
+  if (message.type === 'captureEditEvidence') {
+    const { id, route } = message
+    const authorization = pendingCaptures.get(tabId)
+    if (!authorization || authorization.documentId !== sender.documentId ||
+        authorization.id !== id || authorization.route !== route) return
+    pendingCaptures.delete(tabId)
+    const image = await captureEditEvidence(sender, id)
+    if (image) await call({ type: 'saveEvidence', origin, id, route, image })
+    return
   }
   if (message.type === 'previewButtonSize') {
     const { key, before, requested, route } = message
@@ -128,7 +149,15 @@ async function handle(message, sender) {
     })
     return result === true
   }
-  return call({ ...message, origin })
+  const result = await call({ ...message, origin })
+  if (message.type === 'save') {
+    pendingCaptures.delete(tabId)
+    if (result?.visualEvidence === true && sender.documentId) {
+      const { id, route } = message.record
+      pendingCaptures.set(tabId, { documentId: sender.documentId, id, route })
+    }
+  }
+  return result
 }
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   handle(message, sender).then(value => respond({ ok: true, value }), error => respond({ ok: false, error: error.message, code: error.code }))

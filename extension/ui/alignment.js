@@ -129,15 +129,11 @@
     const gap = ui.spacingField(context, controls, 'gap', 'Gap', 'gapHorizontal', {
       placeholder: auto ? 'Auto' : undefined,
       displayValue: auto ? '' : undefined,
-      submit: async value => {
-        const changes = []
-        if (gapValue !== value + 'px') changes.push(['gap', value + 'px'])
-        if (auto) changes.push(['justify-content', 'start'])
-        await ui.commitChanges(commit, changes)
-      },
+      readOnly: auto,
+      description: auto ? 'Choose Fixed in Gap options to enter a value.' : undefined,
       menu: {
         label: 'Gap options',
-        options: [['fixed', fixedGap ?? 'Fixed'], ['auto', 'Auto']],
+        options: [['fixed', auto ? 'Fixed' : fixedGap ?? 'Fixed'], ['auto', 'Auto']],
         current: auto ? 'auto' : 'fixed',
         radio: true,
         choose: requested => {

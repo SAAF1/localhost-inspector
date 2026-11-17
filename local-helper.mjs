@@ -5,6 +5,9 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import { access, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
+import { completeHandoff } from './complete-handoff.mjs'
+import { buildSourceHandoff, featureTemplateScope, sourceContextFrom } from './source-handoff.mjs'
+import { addVisualEvidence, maxEvidenceLength, removeVisualEvidence, saveVisualEvidence } from './visual-evidence.mjs'
 
 const exec = promisify(execFile)
 const stateArgument = process.argv[2]
@@ -15,10 +18,10 @@ const catalogKinds = new Map([
   ['register-spacing', 'spacing'],
   ['register-text-styles', 'text-styles'],
 ])
-if (!root || (!['bind', 'status', 'serve', 'register-button-size'].includes(mode) && !catalogKinds.has(mode))) {
-  throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors/register-spacing/register-text-styles <port> <relative.css> <name>... | register-button-size <port> <target-key> <relative-source> | status | serve')
+if (!root || (!['bind', 'status', 'handoff', 'complete', 'serve', 'register-button-size', 'visual-evidence'].includes(mode) && !catalogKinds.has(mode))) {
+  throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors/register-spacing/register-text-styles <port> <relative.css> <name>... | register-button-size <port> <target-key> <relative-source> | status | handoff <port> | complete <port> <report.json> | visual-evidence <port> on|off | serve')
 }
-await mkdir(root, { recursive: true, mode: 0o700 })
+if (mode !== 'handoff' && mode !== 'complete') await mkdir(root, { recursive: true, mode: 0o700 })
 const configPath = join(root, 'bindings.json')
 const keyPath = join(root, 'pairing-key')
 const read = async (file, fallback) => readFile(file, 'utf8').then(JSON.parse).catch(error => {
@@ -29,6 +32,11 @@ async function atomic(file, value) {
   const temp = file + '.' + randomUUID() + '.tmp'
   await writeFile(temp, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
   await rename(temp, file)
+}
+function printJson(value) {
+  return new Promise((resolve, reject) => {
+    process.stdout.write(JSON.stringify(value, null, 2) + '\n', error => error ? reject(error) : resolve())
+  })
 }
 function originFor(port) {
   if (!/^\d{1,5}$/.test(port) || Number(port) < 1024 || Number(port) > 65535 || port === '5188') {
@@ -146,6 +154,19 @@ if (mode === 'register-button-size') {
   process.exit(0)
 }
 
+if (mode === 'visual-evidence') {
+  const [port, state] = args
+  if (!['on', 'off'].includes(state) || args.length !== 2) throw Error('Expected a port and on or off')
+  const origin = originFor(port)
+  const bindings = await read(configPath, {})
+  const binding = bindings[origin]
+  if (!binding) throw Error('No saved project connection for this origin')
+  binding.visualEvidence = state === 'on'
+  await atomic(configPath, bindings)
+  console.log('Visual evidence ' + state + ' for ' + origin)
+  process.exit(0)
+}
+
 if (mode === 'status') {
   const bindings = await read(configPath, {})
   for (const binding of Object.values(bindings)) {
@@ -157,11 +178,49 @@ if (mode === 'status') {
   process.exit(0)
 }
 
+if (mode === 'handoff') {
+  const origin = originFor(args[0])
+  const bindings = await read(configPath, {})
+  const binding = bindings[origin]
+  if (!binding) throw Error('No saved project connection for this origin')
+  await verify(binding)
+  const file = join(root, binding.id + '-changes.json')
+  const journal = await read(file, { version: 2, revision: 0, binding, edits: [] })
+  assertJournalBinding(journal, binding)
+  if (journal.version !== 2) throw Error('Open Inspector to migrate this journal before exporting a handoff')
+  const handoff = buildSourceHandoff(binding, journal)
+  await addVisualEvidence(root, binding, handoff)
+  await printJson(handoff)
+  process.exit(0)
+}
+
+if (mode === 'complete') {
+  const [port, reportPath] = args
+  if (args.length !== 2) throw Error('Expected a port and a completion report path')
+  const origin = originFor(port)
+  const report = await readFile(reportPath, 'utf8').then(JSON.parse)
+  const pairingKey = (await readFile(keyPath, 'utf8')).trim()
+  const response = await fetch('http://127.0.0.1:5188/inspector', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + pairingKey },
+    body: JSON.stringify({ type: 'complete', origin, expectedRevision: report?.revision, report }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  const result = await response.json()
+  if (!response.ok) {
+    throw Error(result.code === 'STALE_JOURNAL'
+      ? 'This handoff is stale. Export a fresh handoff and recheck the verified operations.' : result.error)
+  }
+  await printJson(result.value)
+  process.exit(0)
+}
+
 try { await writeFile(keyPath, randomBytes(32).toString('hex'), { flag: 'wx', mode: 0o600 }) }
 catch (error) { if (error.code !== 'EEXIST') throw error }
 const key = (await readFile(keyPath, 'utf8')).trim()
 let tail = Promise.resolve()
 const maxRequestLength = 64_000
+const maxEvidenceRequestLength = maxEvidenceLength + 4096
 const pixelProperties = new Set(['font-size','line-height','letter-spacing','gap','width','height','min-width','max-width',
   'min-height','max-height','padding','padding-top','padding-right','padding-bottom','padding-left','border-radius','border-width'])
 const keywords = {
@@ -215,6 +274,10 @@ function journalRoute(route) {
 }
 function validRoute(route) {
   return typeof route === 'string' && route.startsWith('/') && route.length <= 2048
+}
+function assertJournalBinding(journal, binding) {
+  if (journal.binding?.id !== binding.id || journal.binding.source !== binding.source ||
+      journal.binding.origin !== binding.origin) throw Error('Journal binding mismatch')
 }
 function journalTarget({ tag, id, slot, key, textFingerprint }) {
   return { tag, id, slot, key, textFingerprint }
@@ -271,13 +334,20 @@ function editFrom(record, catalog, group, pendingTextStyle) {
     throw Error('Invalid edit record')
   }
   const { id, route, property, requested, observed, before, restore } = record
+  // An older extension can still save previews, but only a current extension
+  // explicitly signals the template intent expected by the new handoff.
+  const intent = record.intent === featureTemplateScope ? featureTemplateScope : 'selected occurrence only'
+  const sourceContext = intent === featureTemplateScope ? sourceContextFrom(record.sourceContext) : undefined
   const { width, height } = record.viewport ?? {}
   const viewport = Number.isInteger(width) && Number.isInteger(height) ? { width, height } : undefined
   const colorToken = token ? { source: token.source, name: token.name } : undefined
   const spacingToken = spacing ? { source: spacing.source, name: spacing.name } : undefined
   const pendingColor = pending ? { source: pending.source, name: pending.name, label: pending.label, value: pending.value } : undefined
   const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
-  return { id, route: journalRoute(route), property, requested, observed, before, restore, target: journalTarget(target), viewport, colorToken, pendingColor, spacingToken, textStyleToken, group, intent: 'selected occurrence only' }
+  return {
+    id, route: journalRoute(route), property, requested, observed, before, restore,
+    target: journalTarget(target), viewport, colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,
+  }
 }
 async function pendingTextStyleFrom(records, catalog, journal) {
   const pending = records[0]?.pendingTextStyle
@@ -372,10 +442,10 @@ async function handle(message) {
     const canCreate = await access(catalog.file, constants.W_OK).then(() => true, () => false)
     return { source: catalog.source, names: catalog.names, canCreate }
   }
-  if (message.type === 'check') return { id: binding.id }
+  if (message.type === 'check') return { id: binding.id, visualEvidence: binding.visualEvidence === true }
   const file = join(root, binding.id + '-changes.json')
   const journal = await read(file, { version: 2, revision: 0, binding, edits: [] })
-  if (journal.binding.id !== binding.id || journal.binding.source !== binding.source) throw Error('Journal binding mismatch')
+  assertJournalBinding(journal, binding)
   if (journal.version === 1) {
     migrateJournal(journal)
     await atomic(file, journal)
@@ -387,11 +457,23 @@ async function handle(message) {
     const buttonSize = await readButtonSize(binding).catch(() => null)
     return { revision: journal.revision, route, edits: journal.edits.filter(edit => edit.route === route), buttonSizeKey: buttonSize?.key }
   }
+  if (message.type === 'saveEvidence') {
+    if (!validRoute(message.route)) return false
+    return saveVisualEvidence(root, binding, journal, message.id, journalRoute(message.route), message.image)
+  }
   if (!Number.isSafeInteger(message.expectedRevision) || message.expectedRevision !== journal.revision) {
     const error = Error('Saved previews changed in another tab. Reload the page and try again.')
     error.code = 'STALE_JOURNAL'
     throw error
   }
+  if (message.type === 'complete') {
+    const { completed, retired } = completeHandoff(binding, journal, message.report, new Date().toISOString())
+    journal.revision++
+    await atomic(file, journal)
+    const imageCleanupFailed = await removeVisualEvidence(root, binding, retired)
+    return { revision: journal.revision, completed, imageCleanupFailed, reloadInspector: true }
+  }
+  let removed = []
   if (message.type === 'save') {
     const catalog = message.record?.spacingToken ? await readCatalog(binding, 'spacing') :
       message.record?.colorToken || message.record?.pendingColor ? await readCatalog(binding) : null
@@ -417,15 +499,21 @@ async function handle(message) {
   } else if (message.type === 'undo') {
     const edit = journal.edits.find(e => e.id === message.id)
     if (!edit) throw Error('Edit was not found')
-    journal.edits = journal.edits.filter(member => member !== edit && !(edit.group && member.group === edit.group))
+    const matches = member => member === edit || (edit.group && member.group === edit.group)
+    removed = journal.edits.filter(matches)
+    journal.edits = journal.edits.filter(member => !matches(member))
   } else if (message.type === 'reset') {
     if (!validRoute(message.route)) throw Error('Expected a route')
     const route = journalRoute(message.route)
+    removed = journal.edits.filter(edit => edit.route === route)
     journal.edits = journal.edits.filter(edit => edit.route !== route)
   } else throw Error('Unknown operation')
   journal.revision++
   await atomic(file, journal)
-  return { file, revision: journal.revision }
+  if (removed.length) await removeVisualEvidence(root, binding, removed.map(edit => edit.id))
+  return { file, revision: journal.revision,
+    ...(message.type === 'save' && binding.visualEvidence === true ? { visualEvidence: true } : {}),
+  }
 }
 createServer(async (req, res) => {
   const authorization = Buffer.from(req.headers.authorization ?? '')
@@ -440,9 +528,10 @@ createServer(async (req, res) => {
     let body = ''
     for await (const chunk of req) {
       body += chunk
-      if (body.length > maxRequestLength) throw Error('Request too large')
+      if (body.length > maxEvidenceRequestLength) throw Error('Request too large')
     }
     const message = JSON.parse(body)
+    if (body.length > maxRequestLength && message?.type !== 'saveEvidence') throw Error('Request too large')
     const task = tail.then(() => handle(message))
     tail = task.catch(() => {})
     reply(200, { value: await task })

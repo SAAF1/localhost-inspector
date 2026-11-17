@@ -49,6 +49,26 @@
       node.style.getPropertyPriority(property) === ''
   }
 
+  ui.describeSourceContext = node => {
+    const ancestors = []
+    for (let parent = node.parentElement; parent && ancestors.length < 6; parent = parent.parentElement) {
+      ancestors.push({ tag: parent.localName, slot: parent.getAttribute('data-slot') })
+    }
+    const childTags = []
+    for (let child = node.firstElementChild; child && childTags.length < 4; child = child.nextElementSibling) {
+      childTags.push(child.localName)
+    }
+    const cell = node.closest('td,th')
+    const row = cell?.parentElement
+    if (row?.localName !== 'tr' || cell.cellIndex < 0) return { ancestors, childTags }
+    return {
+      ancestors,
+      childTags,
+      tableCellPosition: cell.cellIndex + 1,
+      tableRowCellCount: row.cells.length,
+    }
+  }
+
   ui.describePreviewTarget = describe
   ui.previewTargetForJournal = async ({ text, ...target }) => ({
     ...target,

@@ -19,9 +19,10 @@
       return
     }
     const input = next.localName === 'input'
-    const retainError = input && !next.disabled && current.defaultValue === next.defaultValue &&
+    const editable = input && !next.disabled && !next.readOnly
+    const retainError = editable && current.defaultValue === next.defaultValue &&
       current.hasAttribute('aria-invalid')
-    const keepDraft = input && !next.disabled && (retainError ||
+    const keepDraft = editable && (retainError ||
       (current === active && current.value !== current.defaultValue))
     for (const { name } of Array.from(current.attributes)) {
       if (!next.hasAttribute(name) && !(retainError && validationAttributes.includes(name))) current.removeAttribute(name)
@@ -57,7 +58,9 @@
   }
 
   ui.setFieldsSaving = (container, saving) => {
-    for (const input of container.querySelectorAll('input')) input.readOnly = saving
+    for (const input of container.querySelectorAll('input')) {
+      input.readOnly = saving || input.getAttribute('aria-readonly') === 'true'
+    }
     for (const button of container.querySelectorAll('button')) {
       if (saving && !button.disabled) {
         button.setAttribute('data-preview-pending', '')

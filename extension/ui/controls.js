@@ -87,10 +87,18 @@
       input.min = property === 'letter-spacing' ? '-20' : '0'
       input.max = '2000'
       input.disabled = disabled
+      if (settings.readOnly) {
+        input.readOnly = true
+        input.setAttribute('aria-readonly', 'true')
+      }
       const current = settings.value ?? value(property)
       input.defaultValue = settings.displayValue ?? (/^-?[\d.]+px$/.test(current) ? String(parseFloat(current)) : '')
       input.placeholder = settings.placeholder ?? (current ?? 'Mixed')
       input.title = label + (current ? ': ' + current : current === null ? ': Mixed' : '')
+      if (settings.description) {
+        input.title = settings.description
+        input.setAttribute('aria-description', settings.description)
+      }
       if (settings.placeholder === 'Auto') input.setAttribute('aria-valuetext', 'Auto')
       else if (current === null) input.setAttribute('aria-valuetext', 'Mixed')
       inputEvents(input, entry => settings.submit
