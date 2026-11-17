@@ -1,8 +1,10 @@
+import { dockFlowInspector, flowPath, isFlowChild, watchFlowFrame } from './flow-attachment.js'
 import { captureEditEvidence } from './capture-evidence.js'
 
 const endpoint = 'http://127.0.0.1:5188/inspector'
 const setting = 'helperKey'
 const pendingCaptures = new Map()
+const flowAttachments = new Map()
 
 async function helper(key, request) {
   if (!key) throw Error('Pair the local helper in extension settings')
@@ -28,11 +30,11 @@ function localOrigin(url) {
     ? address.origin : null
 }
 
-async function inject(tabId) {
+async function inject(target) {
   const [{ result: mounted }] = await chrome.scripting.executeScript({
-    target: { tabId }, func: () => Boolean(window.phaseAInspectorReady),
+    target, func: () => Boolean(window.phaseAInspectorReady),
   })
-  if (!mounted) {await chrome.scripting.executeScript({ target: { tabId }, files: [
+  if (!mounted) {await chrome.scripting.executeScript({ target, files: [
     'bridge.js', 'ui/font.js', 'ui/tokens.js', 'ui/styles.js', 'ui/icons.js', 'ui/dom.js',
     'ui/policy.js', 'ui/menu.js', 'ui/controls.js', 'ui/padding.js',
     'ui/resizing.js', 'ui/alignment-settings.js', 'ui/spacing-gap.js', 'ui/alignment.js', 'ui/layout.js', 'ui/text-targets.js', 'ui/text-style-values.js', 'ui/field-view.js',
@@ -45,12 +47,46 @@ async function attach(tabId, origin) {
   await call({ type: 'check', origin })
   pendingCaptures.delete(tabId)
   await chrome.storage.session.set({ ['tab:' + tabId]: origin })
-  await inject(tabId)
+  const tab = await chrome.tabs.get(tabId)
+  if (new URL(tab.url).pathname === flowPath) {
+    await chrome.scripting.executeScript({ target: { tabId }, func: watchFlowFrame })
+  } else {
+    await chrome.storage.session.remove('flow:' + tabId)
+    await inject({ tabId })
+  }
   await chrome.action.setBadgeText({ tabId, text: '' })
 }
 
+function queueFlowAttachment(tabId, origin) {
+  const previous = flowAttachments.get(tabId) ?? Promise.resolve()
+  const active = previous.catch(() => {}).then(() => attachFlowFrame(tabId, origin))
+  flowAttachments.set(tabId, active)
+  return active.finally(() => {
+    if (flowAttachments.get(tabId) === active) flowAttachments.delete(tabId)
+  })
+}
+
+async function attachFlowFrame(tabId, origin) {
+  const tab = await chrome.tabs.get(tabId)
+  if (localOrigin(tab.url) !== origin || new URL(tab.url).pathname !== flowPath) return
+  const key = 'flow:' + tabId
+  const frames = await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true }, func: isFlowChild, args: [flowPath],
+  })
+  const child = frames.find(frame => frame.result && frame.documentId)
+  if (!child) return
+  const target = { tabId, documentIds: [child.documentId] }
+  const [{ result: childOrigin }] = await chrome.scripting.executeScript({ target, func: () => location.origin })
+  if (childOrigin !== origin) return
+  await chrome.storage.session.set({ [key]: child.documentId })
+  await chrome.scripting.executeScript({ target, func: dockFlowInspector })
+  await inject(target)
+  await chrome.scripting.executeScript({ target, func: async () => { await window.phaseAInspectorReady } })
+  return child.documentId
+}
+
 async function failed(tabId, error) {
-  await chrome.storage.session.remove('tab:' + tabId)
+  await chrome.storage.session.remove(['tab:' + tabId, 'flow:' + tabId])
   await chrome.action.setBadgeText({ tabId, text: '!' })
   await chrome.action.setTitle({ tabId, title: error.message })
 }
@@ -67,7 +103,7 @@ chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
     if (!saved) return
     if (localOrigin(tab.url) !== saved) {
       pendingCaptures.delete(tabId)
-      await chrome.storage.session.remove(key)
+      await chrome.storage.session.remove([key, 'flow:' + tabId])
       return
     }
     await attach(tabId, saved)
@@ -75,7 +111,7 @@ chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
 })
 chrome.tabs.onRemoved.addListener(tabId => {
   pendingCaptures.delete(tabId)
-  void chrome.storage.session.remove('tab:' + tabId)
+  void chrome.storage.session.remove(['tab:' + tabId, 'flow:' + tabId])
 })
 
 async function previewButtonSize(key, before, requested, route, origin) {
@@ -120,8 +156,17 @@ async function handle(message, sender) {
   const origin = localOrigin(sender.url)
   const tabId = sender.tab?.id
   const key = 'tab:' + tabId
-  if (!origin || sender.frameId !== 0 || origin !== (await chrome.storage.session.get(key))[key]) {
-    throw Error('Tab is not attached')
+  const flowKey = 'flow:' + tabId
+  const paired = await chrome.storage.session.get([key, flowKey])
+  if (!origin || origin !== paired[key]) throw Error('Tab is not attached')
+  const shell = new URL(sender.url).pathname === flowPath
+  if (message.type === 'attachFlowFrame' && sender.frameId === 0 && shell) {
+    return queueFlowAttachment(tabId, origin)
+  }
+  const authorizedChild = sender.documentId && sender.documentId === paired[flowKey] &&
+    sender.documentLifecycle === 'active' && sender.tab.url && new URL(sender.tab.url).pathname === flowPath
+  if (shell || (sender.frameId !== 0 && !authorizedChild)) {
+    throw Error('Document is not attached')
   }
   if (message.type === 'complete') throw Error('Completion requires the local helper command')
   if (message.type === 'saveEvidence') throw Error('Evidence must come from the browser capture')
@@ -152,7 +197,7 @@ async function handle(message, sender) {
   const result = await call({ ...message, origin })
   if (message.type === 'save') {
     pendingCaptures.delete(tabId)
-    if (result?.visualEvidence === true && sender.documentId) {
+    if (result?.visualEvidence === true && sender.documentId && sender.frameId === 0) {
       const { id, route } = message.record
       pendingCaptures.set(tabId, { documentId: sender.documentId, id, route })
     }

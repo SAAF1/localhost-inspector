@@ -11,7 +11,7 @@
       text-align: left; isolation: isolate; overflow: hidden;
     }
     :host([data-docked]) .li-panel {
-      position: relative; inset: auto; height: 100vh; max-height: none;
+      position: relative; inset: auto; height: var(--li-dock-height, 100vh); max-height: none;
       width: min(var(--li-panel-width), 100vw); border-radius: 0; border-left: 1px solid var(--li-border);
     }
     .li-panel-toolbar {

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { injectedFiles, project } from '../../scripts/check-modules.mjs'
 
+import { serveWorkspaceAsset } from '../../scripts/flow/workspace-assets.mjs'
 import { fixture } from './fixture.mjs'
 import { connectPreviewDock, servePreviewDock } from '../../scripts/preview-dock.mjs'
 
@@ -15,7 +16,17 @@ export async function createHarness(options = {}) {
       response.setHeader('Content-Type', 'font/woff2')
       response.end(await readFile(join(project, 'extension/assets/inter-latin.woff2')))
     } else {
-      if (options.dock && servePreviewDock(request, response, 'http://127.0.0.1:' + server.address().port)) return
+      const origin = 'http://127.0.0.1:' + server.address().port
+      if (options.canvas) {
+        if (await serveWorkspaceAsset(request.url, response)) return
+        if (request.url === '/__inspector-flow/map.json') {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ origin, viewport: { width: 1100, height: 1356 },
+            frames: [{ id: 'first', route: '/', label: 'Fixture', steps: [], checkpoint: [], image: 'frame-1.png' }],
+            connections: [] }))
+          return
+        }
+      } else if (options.dock && servePreviewDock(request, response, origin)) return
       response.setHeader('Content-Type', 'text/html')
       response.end(fixture)
     }
@@ -27,7 +38,8 @@ export async function createHarness(options = {}) {
     const page = await browser.newPage({ viewport: { width: 1100, height: 1400 }, deviceScaleFactor: 2 })
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
-    await page.goto('http://127.0.0.1:' + server.address().port)
+    await page.goto('http://127.0.0.1:' + server.address().port + (options.canvas ? '/__inspector-flow/' : '/'))
+    if (options.canvas) await page.frameLocator('#app-preview').locator('#target').waitFor()
     const app = options.dock ? page.frames().find(frame => frame.parentFrame() === page.mainFrame()) : page
     if (options.dock) await app.evaluate(connectPreviewDock)
     await app.evaluate(settings => {

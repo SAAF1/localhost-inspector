@@ -2,7 +2,11 @@
   if (!window.phaseABridge) return
   const ui = window.LocalhostInspector
   const { host, root, panel, setOpen, get } = ui.createPanel()
-  const selection = ui.createSelection({ host, panel, get, onSelect: renderSelection })
+  const selection = ui.createSelection({
+    host, panel, get, onSelect: renderSelection,
+    canOpenOnSelect: window.localhostInspectorCanOpenOnSelect,
+    openPanel: () => setOpen(true),
+  })
   function renderSelection() {
     renderFields()
     const node = selection.current
@@ -48,7 +52,10 @@
       ? Boolean(ui.buttonSize.currentSize(node, buttonSizeKey)) : ui.supported(property, node))
   }
   function overlayFor(node) {
-    return node?.closest('[role=menu], [role=dialog], [role=alertdialog], [role=listbox], dialog[open], :popover-open')
+    const overlay = node?.closest('[role=menu], [role=dialog], [role=alertdialog], [role=listbox], dialog[open], :popover-open')
+    // The canvas panel sits outside the app document and its dialog focus trap.
+    return window.localhostInspectorCanOpenOnSelect?.() && overlay?.matches('[role=dialog]')
+      ? null : overlay
   }
   function renderActions() {
     const pageActionsUnavailable = busy || loadingRoute

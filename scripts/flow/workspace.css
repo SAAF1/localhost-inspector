@@ -1,0 +1,18 @@
+:root { color-scheme: light; color: #252823; background: #f2f1ee; font: 14px system-ui; }
+body { margin: 0; }
+#flow-toggle { position: absolute; grid-area: 1 / 1 / 2 / 2; top: 12px; right: 12px; z-index: 1; width: 32px; height: 32px; border: 1px solid #d9ded8; background: #fff; border-radius: 7px; display: grid; place-items: center; cursor: pointer; }
+#flow-toggle[aria-pressed="true"] { background: #e8f0fd; color: #2563c9; }
+#viewport { position: relative; height: 100dvh; grid-template-rows: minmax(0, 1fr); overflow: clip; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+#app-preview { display: block; width: 100%; height: 100%; border: 0; background: white; }
+#localhost-inspector-dock { --li-dock-height: 100dvh; grid-column: 2; grid-row: 1; }
+body[data-expanded] #app-preview { position: absolute; transform-origin: top left; outline: 3px solid #2563c9; }
+#map { position: absolute; transform-origin: top left; }
+.flow-frame { cursor: pointer; position: absolute; display: grid; gap: 12px; padding: 0; background: none; border: 0; text-align: left; font: 500 27px system-ui; color: inherit; }
+.flow-frame img { width: 100%; display: block; border-radius: 5px; outline: 2px solid #d5d8d1; background: white; }
+.flow-frame:where(:hover, :focus-visible, [aria-busy="true"], [aria-pressed="true"]) img { outline-color: #2563c9; }
+.flow-frame[aria-busy="true"] { cursor: progress; }
+.flow-frame.active img { visibility: hidden; }
+.flow-frame.active > span::after { content: "Live"; margin-left: 16px; color: #2563c9; font-size: 20px; }
+svg.connections { position: absolute; overflow: visible; pointer-events: none; }
+#zoom, #notice { position: absolute; bottom: 14px; left: 14px; background: white; border: 1px solid #d9ded8; padding: 6px 9px; border-radius: 6px; }
+#notice { left: 72px; }

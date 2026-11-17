@@ -1,6 +1,6 @@
 (() => {
   const ui = window.LocalhostInspector
-  ui.createSelection = ({ host, panel, get, onSelect }) => {
+  ui.createSelection = ({ host, panel, get, onSelect, canOpenOnSelect, openPanel }) => {
     let selected
     let hovered
     let pointer
@@ -91,7 +91,7 @@
       })
     }
     function isSelectionGesture(event) {
-      return event.isTrusted && !panel.hidden && event.metaKey && event.button === 0 && !event.composedPath().includes(host)
+      return event.isTrusted && (!panel.hidden || canOpenOnSelect?.()) && event.metaKey && event.button === 0 && !event.composedPath().includes(host)
     }
     function preventPress(event) {
       if (!isSelectionGesture(event)) return
@@ -101,13 +101,17 @@
     document.addEventListener('pointerdown', preventPress, true)
     document.addEventListener('mousedown', preventPress, true)
     document.addEventListener('click', event => {
-      if (!event.isTrusted || event.composedPath().includes(host) || panel.hidden) return
-      if (!event.metaKey) { select(null); return }
+      if (!event.isTrusted || event.composedPath().includes(host)) return
+      if (!event.metaKey) {
+        if (!panel.hidden) select(null)
+        return
+      }
       if (!isSelectionGesture(event)) return
       const node = event.composedPath().find(target => target instanceof HTMLElement)
       if (!node) return
       event.preventDefault()
       event.stopImmediatePropagation()
+      if (panel.hidden) openPanel()
       select(node)
       panel.focus({ preventScroll: true })
     }, true)
