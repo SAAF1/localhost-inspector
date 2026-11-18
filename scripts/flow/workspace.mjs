@@ -1,6 +1,9 @@
-import { renderFrames } from './render-frames.mjs'
+import { frameLabelHeight, renderFrames } from './render-frames.mjs'
 import { flowRoute, observeSurfaces } from './page-state.mjs'
 import { findControl, matchesCheckpoint, openControl, waitFor } from './replay.mjs'
+import { contentOverflow, fitFrame, framePresets, sizeFrame } from './frame-view.mjs'
+import { createSharpPreviews } from './sharp-previews.mjs'
+import { connectViewControls } from './view-controls.mjs'
 
 const map = document.querySelector('#map')
 let preview = document.querySelector('#app-preview')
@@ -11,37 +14,128 @@ const notice = document.querySelector('#notice')
 const dock = document.querySelector('#localhost-inspector-dock')
 const data = await fetch('./map.json').then(response => response.json())
 if (data.origin !== location.origin) throw Error('This flow map belongs to a different app origin')
-const { width, height } = data.viewport
-const cards = renderFrames(map, data, activate)
+const presets = framePresets(data.viewport)
+let device = 'desktop'
+const heights = new Map()
+const viewOf = (id, preset = device) => {
+  const size = presets[preset]
+  const height = heights.get(preset + ':' + id)
+  return { ...size, preset, fixedHeight: size.height, height: height ?? size.height, mode: height ? 'hug' : 'fixed' }
+}
+const saveView = (id, view) => {
+  const key = view.preset + ':' + id
+  if (view.mode === 'hug') heights.set(key, view.height)
+  else heights.delete(key)
+}
+const previewIndex = await fetch('./previews.json').then(response => response.ok ? response.json() : null).catch(() => null)
+const { cards, layout } = renderFrames(map, data, activate, viewOf, previewIndex)
+const updateSharpPreviews = createSharpPreviews(cards)
+const framesById = new Map(data.frames.map(frame => [frame.id, frame]))
 const routeOf = frame => {
   try {
     const address = frame.contentWindow.location
     return address.origin === location.origin ? flowRoute(address) : null
   } catch { return null }
 }
-const labelHeight = 45
 const camera = { x: 34, y: 28, scale: .36 }
 let active
 let request = 0
 let pendingCard
 let candidate
 let preparation
-let hoverTimer
+let warmTimer
+let activateTimer
+let hoverCard
 let expanded = false
 let unmapped = false
+let resizing = false
+let previewUpdate
+const syncView = connectViewControls({ apply: changeView, read: readView, presets })
+
+function refreshViewControls() {
+  syncView(expanded, resizing || Boolean(pendingCard))
+}
+
+function readView() {
+  if (!expanded) return null
+  if (!active) return { preset: device }
+  const view = viewOf(active)
+  return { ...view, canHug: view.mode === 'hug' || contentOverflow(preview.contentDocument) > 0 }
+}
+
+async function changeView(change) {
+  if (!expanded || pendingCard || resizing) return
+  const preset = change.preset ?? device
+  if (!active) {
+    device = preset
+    layout()
+    position()
+    return
+  }
+  const id = active
+  const frame = framesById.get(id)
+  const iframe = preview
+  const prior = viewOf(id)
+  const wanted = { preset, mode: change.mode ?? viewOf(id, preset).mode }
+  if (preset === device && wanted.mode === prior.mode) return
+  clearHover()
+  cancelCandidate()
+  resizing = true
+  refreshViewControls()
+  const current = () => preview === iframe && expanded && active === id
+  const { x, y } = cards.get(id)
+  try {
+    let fitted = await fitFrame(iframe, frame, wanted, presets[preset], current)
+    if (!fitted && preset !== device && wanted.mode === 'hug' && current()) {
+      fitted = await fitFrame(iframe, frame, { preset, mode: 'fixed' }, presets[preset], current)
+    }
+    if (!current()) return
+    if (!fitted && preset === device) {
+      sizeFrame(iframe, prior)
+      message('This page could not expand to fit its contents.')
+      return
+    }
+    device = preset
+    if (fitted) saveView(id, fitted)
+    layout()
+    camera.x += (x - cards.get(id).x) * camera.scale
+    camera.y += (y - cards.get(id).y) * camera.scale
+    position()
+    message('')
+    if (!fitted) {
+      sizeFrame(iframe, prior)
+      iframe.style.visibility = 'hidden'
+      setActive(null)
+      resizing = false
+      await activate(frame)
+    }
+  } finally {
+    resizing = false
+    refreshViewControls()
+  }
+}
 
 function message(text) {
   notice.value = text
   notice.hidden = !text
 }
 
+function schedulePreviewUpdate() {
+  if (previewUpdate) return
+  previewUpdate = requestAnimationFrame(() => {
+    previewUpdate = null
+    updateSharpPreviews(expanded, camera, viewport.clientWidth - dock.offsetWidth, viewport.clientHeight)
+  })
+}
+
 function position() {
   map.style.transform = 'translate(' + camera.x + 'px,' + camera.y + 'px) scale(' + camera.scale + ')'
   zoom.value = Math.round(camera.scale * 100) + '%'
+  schedulePreviewUpdate()
   if (!expanded || !active) return
   const card = cards.get(active)
   preview.style.left = camera.x + card.x * camera.scale + 'px'
-  preview.style.top = camera.y + (card.y + labelHeight) * camera.scale + 'px'
+  preview.style.top = camera.y + (card.y + frameLabelHeight) * camera.scale + 'px'
   preview.style.transform = 'scale(' + camera.scale + ')'
 }
 
@@ -51,6 +145,7 @@ function setActive(id) {
     cards.get(active).button.setAttribute('aria-pressed', 'false')
   }
   active = id
+  refreshViewControls()
   if (id) {
     cards.get(id).button.classList.add('active')
     cards.get(id).button.setAttribute('aria-pressed', 'true')
@@ -59,14 +154,15 @@ function setActive(id) {
 
 function center(id) {
   const card = cards.get(id)
-  camera.x = Math.round((viewport.clientWidth - width * camera.scale) / 2 - card.x * camera.scale)
-  camera.y = Math.round((viewport.clientHeight - height * camera.scale) / 2 - card.y * camera.scale)
+  camera.x = Math.round((viewport.clientWidth - card.width * camera.scale) / 2 - card.x * camera.scale)
+  camera.y = Math.round((viewport.clientHeight - card.height * camera.scale) / 2 - card.y * camera.scale)
 }
 
 function setPending(card) {
   pendingCard?.removeAttribute('aria-busy')
   pendingCard = card
   pendingCard?.setAttribute('aria-busy', 'true')
+  refreshViewControls()
 }
 
 function currentFrame() {
@@ -97,6 +193,7 @@ function syncLiveFrame() {
     return
   }
   setActive(frame.id)
+  sizeFrame(preview, viewOf(frame.id))
   center(frame.id)
   position()
   if (unmapped) { unmapped = false; message('') }
@@ -122,14 +219,14 @@ function prepare(frame) {
   next.className = 'flow-candidate'
   next.title = 'Preparing selected app frame'
   next.inert = true
-  next.style.width = width + 'px'
-  next.style.height = height + 'px'
+  const view = viewOf(frame.id)
+  sizeFrame(next, presets[view.preset])
   next.src = frame.route
   preview.after(next)
   const ready = (async () => {
     const doc = await waitFor(() => {
       const loaded = next.contentDocument
-      return routeOf(next) === frame.route && loaded?.readyState === 'complete' &&
+      return routeOf(next) === frame.route && loaded && loaded.readyState !== 'loading' &&
         loaded?.body?.innerText.trim() && loaded
     }, current)
     for (const step of frame.steps) {
@@ -137,28 +234,48 @@ function prepare(frame) {
       openControl(control)
     }
     await waitFor(() => doc === next.contentDocument && matchesCheckpoint(doc, frame), current)
+    // Finish finite browser animations while the frame is still hidden.
+    for (const animation of doc.getAnimations()) {
+      if (animation.playState === 'running' && animation.playbackRate > 0 &&
+          Number.isFinite(animation.effect?.getComputedTiming().endTime)) animation.finish()
+    }
+    if (view.mode === 'fixed') return view
+    const fitted = await fitFrame(next, frame, { preset: view.preset, mode: 'hug' }, presets[view.preset], current)
+    if (fitted) return fitted
+    sizeFrame(next, presets[view.preset])
+    await waitFor(() => doc === next.contentDocument && matchesCheckpoint(doc, frame), current)
+    return { ...presets[view.preset], preset: view.preset, mode: 'fixed' }
   })()
   preparation = { frame, next, current, ready }
   return preparation
 }
 
+function clearHoverTimers() {
+  clearTimeout(warmTimer)
+  clearTimeout(activateTimer)
+  warmTimer = null
+}
+
 function clearHover() {
-  clearTimeout(hoverTimer)
+  clearHoverTimers()
+  hoverCard = null
   if (candidate && !pendingCard) cancelCandidate()
 }
 
 async function activate(frame) {
-  clearTimeout(hoverTimer)
+  if (resizing) return
+  clearHoverTimers()
   if (frame.id === active && !preview.style.visibility && routeOf(preview) === frame.route &&
       matchesCheckpoint(preview.contentDocument, frame) &&
       (frame.steps.length || (currentFrame()?.id === frame.id && observeSurfaces(preview.contentDocument).every(surface =>
         surface.role === 'tabpanel' || frame.checkpoint.some(item => item.role === surface.role && item.label === surface.label))))) return
   if (pendingCard === cards.get(frame.id).button) return
+  const viewBeforeActivation = viewOf(frame.id)
   const { next, current, ready } = prepare(frame)
   setPending(cards.get(frame.id).button)
   message('')
   try {
-    await ready
+    const fitted = await ready
     if (!current()) return
 
     const attached = document.body.hasAttribute('data-inspector-watching')
@@ -174,8 +291,11 @@ async function activate(frame) {
     preview = next
     candidate = null
     preparation = null
+    saveView(frame.id, fitted)
+    layout()
     setActive(frame.id)
     position()
+    if (fitted.mode === 'fixed' && viewBeforeActivation.mode === 'hug') message('Opened with fixed height. The page could not expand.')
     watchLiveFrame(preview)
     if (attached) {
       try { await waitFor(() => next.dataset.inspectorDocument, current) }
@@ -201,15 +321,17 @@ async function activate(frame) {
 }
 
 toggle.addEventListener('click', () => {
+  if (resizing) return
   expanded = !expanded
   document.body.toggleAttribute('data-expanded', expanded)
   toggle.setAttribute('aria-pressed', String(expanded))
   toggle.title = expanded ? 'Back to localhost' : 'Expand flow'
   toggle.setAttribute('aria-label', toggle.title)
   map.hidden = zoom.hidden = !expanded
+  schedulePreviewUpdate()
+  refreshViewControls()
   if (expanded) {
-    preview.style.width = width + 'px'
-    preview.style.height = height + 'px'
+    sizeFrame(preview, viewOf(active))
     syncLiveFrame()
   } else {
     clearHover()
@@ -221,7 +343,6 @@ toggle.addEventListener('click', () => {
 })
 
 function zoomAt(event, x, y) {
-  clearHover()
   event.preventDefault()
   const next = Math.min(1, Math.max(.12, camera.scale * Math.exp(-event.deltaY * .006)))
   camera.x = x - (x - camera.x) * next / camera.scale
@@ -231,43 +352,69 @@ function zoomAt(event, x, y) {
 }
 
 function panByWheel(event) {
-  clearHover()
   event.preventDefault()
   camera.x -= event.deltaX
   camera.y -= event.deltaY
   position()
 }
 
-function overHorizontalScroller(event, view) {
-  return event.composedPath().some(node => node.nodeType === 1 && node.scrollWidth > node.clientWidth &&
-    ['auto', 'scroll', 'overlay'].includes(view.getComputedStyle(node).overflowX))
-}
-
 viewport.addEventListener('wheel', event => {
-  if (!expanded) return
-  const rect = viewport.getBoundingClientRect()
-  if (event.ctrlKey || event.metaKey) {
+  if (!expanded || event.target.closest('#workspace-toolbar, #localhost-inspector-dock')) return
+  if (event.ctrlKey) {
+    const rect = viewport.getBoundingClientRect()
     zoomAt(event, event.clientX - rect.x, event.clientY - rect.y)
   } else {
     panByWheel(event)
   }
+  warmAt(event.clientX, event.clientY)
 }, { passive: false })
+
+function fillsCanvas(card) {
+  const bounds = card.getBoundingClientRect()
+  const board = viewport.getBoundingClientRect()
+  const right = board.right - dock.offsetWidth
+  const width = Math.max(0, Math.min(bounds.right, right) - Math.max(bounds.left, board.left))
+  const height = Math.max(0, Math.min(bounds.bottom, board.bottom) - Math.max(bounds.top, board.top))
+  return width * height >= .75 * (right - board.left) * board.height
+}
+
+function warmAt(x, y) {
+  const card = document.elementFromPoint(x, y)?.closest('.flow-frame')
+  if (pendingCard || resizing) return
+  if (!expanded || !card || camera.scale < .5 || card.dataset.frame === active) {
+    clearHover()
+    return
+  }
+  if (hoverCard !== card) {
+    clearHover()
+    hoverCard = card
+  }
+  const frame = framesById.get(card.dataset.frame)
+  const stillOver = () => expanded && hoverCard === card && !pendingCard && !resizing &&
+    document.elementFromPoint(x, y)?.closest('.flow-frame') === card
+  if (!warmTimer && preparation?.frame !== frame) {
+    warmTimer = setTimeout(() => {
+      warmTimer = null
+      if (!expanded || hoverCard !== card || pendingCard || resizing) return
+      const warm = prepare(frame)
+      void warm.ready.catch(() => {
+        if (preparation === warm && !pendingCard) cancelCandidate()
+      })
+    }, 60)
+  }
+  clearTimeout(activateTimer)
+  if (fillsCanvas(card)) {
+    activateTimer = setTimeout(() => {
+      if (stillOver() && fillsCanvas(card)) void activate(frame)
+    }, 140)
+  }
+}
 
 map.addEventListener('pointerover', event => {
   const card = event.target.closest('.flow-frame')
-  if (!card || card.contains(event.relatedTarget) || event.pointerType !== 'mouse' ||
-      camera.scale < .65 || pendingCard || card.dataset.frame === active) return
-  clearHover()
-  hoverTimer = setTimeout(() => {
-    if (!expanded || camera.scale < .65 || pendingCard || !card.matches(':hover')) return
-    const frame = data.frames.find(item => item.id === card.dataset.frame)
-    if (!frame) return
-    const warm = prepare(frame)
-    void warm.ready.catch(() => {
-      if (preparation === warm && !pendingCard) cancelCandidate()
-    })
-  }, 180)
+  if (card && !card.contains(event.relatedTarget) && event.pointerType === 'mouse') warmAt(event.clientX, event.clientY)
 })
+
 map.addEventListener('pointerout', event => {
   const card = event.target.closest('.flow-frame')
   if (card && !card.contains(event.relatedTarget)) clearHover()
@@ -300,19 +447,24 @@ function watchLiveFrame(frame) {
     appWindow.addEventListener('keydown', lockAppKey, true)
     appWindow.addEventListener('keyup', lockAppKey, true)
     appWindow.addEventListener('beforeinput', lockAppKey, true)
-    doc.addEventListener('wheel', event => {
-      if (!expanded) return
-      if (!event.ctrlKey && !event.metaKey) {
-        if (Math.abs(event.deltaX) > Math.abs(event.deltaY) && !overHorizontalScroller(event, doc.defaultView)) {
-          panByWheel(event)
-        }
+    appWindow.addEventListener('wheel', event => {
+      if (!expanded || frame !== preview) return
+      if (event.metaKey && !event.ctrlKey) {
+        clearHover()
+        return
+      }
+      event.stopImmediatePropagation()
+      if (!event.ctrlKey) {
+        clearHover()
+        panByWheel(event)
         return
       }
       const view = viewport.getBoundingClientRect()
       const app = preview.getBoundingClientRect()
+      clearHover()
       zoomAt(event, app.x - view.x + event.clientX * camera.scale,
         app.y - view.y + event.clientY * camera.scale)
-    }, { passive: false })
+    }, { capture: true, passive: false })
     if (expanded && !active) syncLiveFrame()
   }
   new MutationObserver(() => {
@@ -322,10 +474,13 @@ function watchLiveFrame(frame) {
     message('')
   }).observe(frame, { attributes: true, attributeFilter: ['data-inspector-document'] })
   frame.addEventListener('load', connect)
-  if (frame.contentDocument?.readyState === 'complete') connect()
+  if (frame.contentDocument && frame.contentDocument.readyState !== 'loading') connect()
 }
 
 watchLiveFrame(preview)
+const previewBounds = new ResizeObserver(schedulePreviewUpdate)
+previewBounds.observe(viewport)
+previewBounds.observe(dock)
 
 const entry = new URLSearchParams(location.search).get('page')
 preview.src = data.frames.some(frame => frame.route === entry) ? entry : '/'

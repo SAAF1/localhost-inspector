@@ -99,23 +99,31 @@ test('preset menu supports keyboard selection, Escape and direct numeric editing
   } finally { await h.close() }
 })
 
-test('padding expansion preserves unequal values and axis edits have reversible side entries', async () => {
+test('padding expansion preserves unequal values and axis edits undo both sides together', async () => {
   const h = await createHarness()
   try {
-    await h.page.locator('body > #target').evaluate(node => { node.style.paddingRight = '24px' })
+    const target = h.page.locator('body > #target')
+    await target.evaluate(node => { node.style.paddingRight = '24px'; node.style.width = 'max-content' })
     await h.open(); await h.select()
     await h.host.getByRole('button', { name: 'Collapse individual padding' }).click()
     assert.equal(await h.field('Horizontal padding').getAttribute('placeholder'), 'Mixed')
     assert.equal((await h.journal()).length, 0)
+    const original = await target.boundingBox()
     await h.enter('Horizontal padding', 30); await h.settled()
     assert.equal(await h.css('padding-left'), '30px')
     assert.equal(await h.css('padding-right'), '30px')
-    assert.deepEqual((await h.journal()).map(edit => edit.property), ['padding-left', 'padding-right'])
+    const edits = await h.journal()
+    assert.deepEqual(edits.map(edit => edit.property), ['padding-left', 'padding-right'])
+    assert.equal(edits[1].group, edits[0].id)
+    const bounds = [original.x, original.y, original.width, original.height].map(Math.round)
+    assert.notEqual((await target.boundingBox()).width, original.width)
+    assert.deepEqual(edits.map(edit => edit.sourceContext.bounds), [bounds, bounds])
     await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).click(); await h.settled()
-    assert.equal(await h.css('padding-left'), '30px')
+    assert.equal(await h.css('padding-left'), '16px')
     assert.equal(await h.css('padding-right'), '24px')
+    assert.equal((await h.journal()).length, 0)
     await h.host.getByRole('button', { name: 'Expand individual padding' }).click()
-    assert.equal(await h.field('Left padding').inputValue(), '30')
+    assert.equal(await h.field('Left padding').inputValue(), '16')
     assert.equal(await h.field('Right padding').inputValue(), '24')
   } finally { await h.close() }
 })

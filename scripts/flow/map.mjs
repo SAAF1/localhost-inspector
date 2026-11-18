@@ -2,6 +2,7 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { chromium } from 'playwright'
 import { locateTrigger, observePage, repoRoutes } from './discover.mjs'
+import { captureContext, capturePreviews } from './capture-previews.mjs'
 import { flowRoute } from './page-state.mjs'
 
 const [repo, url, destination, stateRoute, stateLabel] = process.argv.slice(2)
@@ -101,13 +102,7 @@ await mkdir(output, { recursive: true })
 if ((await readdir(output)).length) throw Error('Choose an empty output directory')
 const browser = await chromium.launch({ headless: true })
 try {
-  const context = await browser.newContext({ viewport, serviceWorkers: 'block', acceptDownloads: false })
-  await context.route('**/*', route => {
-    const request = route.request()
-    return new URL(request.url()).origin === start.origin && ['GET', 'HEAD'].includes(request.method())
-      ? route.continue() : route.abort()
-  })
-  await context.routeWebSocket('**/*', socket => socket.close())
+  const context = await captureContext(browser, start.origin, viewport)
   const page = await context.newPage()
   let visited = 0
   while (queue.length && visited++ < routeLimit) {
@@ -157,7 +152,10 @@ try {
     }
   }
   for (const route of queue) gaps.push({ route, reason: 'Route budget reached' })
-  await writeFile(join(output, 'map.json'), JSON.stringify({ origin: start.origin, viewport, frames, connections, gaps }, null, 2))
+  const map = { origin: start.origin, viewport, frames, connections, gaps }
+  await writeFile(join(output, 'map.json'), JSON.stringify(map, null, 2))
+  await context.close()
+  await capturePreviews(browser, output, map)
   console.log('Mapped', frames.length, 'frames and', connections.length, 'connections. Gaps:', gaps.length)
 } finally {
   await browser.close()

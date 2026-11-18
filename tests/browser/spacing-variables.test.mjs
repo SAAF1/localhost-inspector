@@ -179,8 +179,8 @@ test('compact Padding exposes the picker and applies or detaches only the select
   } finally { await h.close() }
 })
 
-test('retrying a partial compact Padding save only writes the remaining side', async () => {
-  const h = await createHarness({ appStyles, spacingCatalog, failSave: 2 })
+test('retrying a rejected compact padding variable saves both sides in one operation', async () => {
+  const h = await createHarness({ appStyles, spacingCatalog, failSave: 1 })
   try {
     await h.open()
     await target(h).evaluate(node => { node.style.padding = '4px 12px' })
@@ -188,11 +188,17 @@ test('retrying a partial compact Padding save only writes the remaining side', a
     await h.field('Vertical padding').press('=')
     await choose(h, 'space-small')
     await picker(h).getByText('Could not apply spacing. Try again.').waitFor()
-    assert.equal(await h.css('padding'), '8px 12px 4px')
-    assert.equal((await h.journal()).length, 1)
+    assert.equal(await h.css('padding'), '4px 12px')
+    assert.deepEqual(await h.journal(), [])
     await choose(h, 'space-small')
     await h.settled()
     assert.equal(await h.css('padding'), '8px 12px')
-    assert.deepEqual((await h.journal()).map(entry => entry.property), ['padding-top', 'padding-bottom'])
+    const records = await h.journal()
+    assert.deepEqual(records.map(entry => entry.property), ['padding-top', 'padding-bottom'])
+    assert.equal(new Set(records.map(entry => entry.group)).size, 1)
+    await h.host.getByRole('button', { name: 'Undo last preview' }).click()
+    await h.settled()
+    assert.equal(await h.css('padding'), '4px 12px')
+    assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })

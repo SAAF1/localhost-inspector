@@ -9,7 +9,7 @@ if (!builtApp || !/^\d+$/.test(port ?? '')) throw Error('Usage: node scripts/flo
 const appRoot = resolve(builtApp)
 const mapRoot = mapDirectory ? resolve(mapDirectory) : null
 const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json',
-  '.mjs': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ico': 'image/x-icon' }
+  '.mjs': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.webp': 'image/webp' }
 
 async function serve(request, response) {
   const origin = 'http://127.0.0.1:' + port
@@ -23,7 +23,7 @@ async function serve(request, response) {
   if (path.startsWith(flowPath)) {
     const relative = path.slice(flowPath.length)
     if (mapRoot && await serveWorkspaceAsset(path, response)) return
-    if (mapRoot && /^(map\.json|frame-\d+\.png)$/.test(relative)) {
+    if (mapRoot && /^((map|previews)\.json|frame-\d+(\.png|-(desktop|tablet|phone)(-hug)?(-2x)?\.webp))$/.test(relative)) {
       data = await readFile(resolve(mapRoot, relative))
       type = types[extname(relative)]
     } else {

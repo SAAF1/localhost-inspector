@@ -27,7 +27,7 @@ function start(file, args, options, ready) {
     child.once('error', error => { clearTimeout(timeout); reject(error) })
     child.once('exit', code => { clearTimeout(timeout); reject(Error(file + ' exited: ' + code)) })
     child.stdout.on('data', data => {
-      if (String(data).includes(ready)) { clearTimeout(timeout); resolve() }
+      if (String(data).includes(ready)) { clearTimeout(timeout); resolve(child) }
     })
   })
 }
@@ -45,7 +45,11 @@ try {
   await mkdir(output, { recursive: true })
   await start('scripts/flow/serve.mjs', [join(fixture, 'dist'), port, map], { cwd: fixture }, 'listening')
   await exec(process.execPath, [join(repo, 'local-helper.mjs'), state, 'bind', port, fixture])
-  await start('local-helper.mjs', [state, 'serve'], { cwd: repo }, 'listening')
+  const cli = (...args) => exec(process.execPath, [join(repo, 'local-helper.mjs'), state, ...args])
+  const handoff = async () => JSON.parse((await cli('handoff', port)).stdout)
+  await cli('visual-evidence', port, 'on')
+  const startHelper = () => start('local-helper.mjs', [state, 'serve'], { cwd: repo }, 'listening')
+  const helper = await startHelper()
   if (!process.env.INSPECTOR_FLOW_MAP) {
     const { stdout } = await exec(process.execPath, [join(repo, 'scripts/flow/map.mjs'), fixture, origin, map])
     console.log(stdout.trim())
@@ -79,6 +83,19 @@ try {
   const create = iframe.getByRole('button', { name: 'Create', exact: true })
   const attached = () => page.waitForFunction(() => document.querySelector('#app-preview').dataset.inspectorDocument, null, { timeout: 6000 })
   await attached()
+  const helperStopped = new Promise(resolve => helper.once('exit', resolve))
+  helper.kill('SIGTERM')
+  await helperStopped
+  await page.reload()
+  await attached()
+  await page.locator('#localhost-inspector-dock #localhost-inspector').waitFor({ state: 'attached' })
+  await startHelper()
+  await page.reload()
+  await attached()
+  await create.click({ modifiers: ['Meta'] })
+  await page.locator('#localhost-inspector-dock[data-inspector-open]').waitFor()
+  await iframe.locator('#localhost-inspector-outlines #outline').waitFor({ state: 'visible' })
+  console.log('Inspector survived a helper outage and recovered after reload without reattaching.')
   const bridge = await worker.evaluate(async origin => {
     const [tab] = await chrome.tabs.query({ url: origin + '/__inspector-flow/*' })
     const frames = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true },
@@ -89,7 +106,19 @@ try {
   assert.equal(bridge?.ok, true, JSON.stringify(bridge))
   await create.waitFor({ timeout: 6000 })
   const toggle = page.locator('#flow-toggle')
+  const inspectorToggle = page.locator('#inspector-toggle')
+  await inspectorToggle.click()
+  assert.equal(await inspectorToggle.getAttribute('aria-expanded'), 'false')
+  await inspectorToggle.click()
+  assert.equal(await inspectorToggle.getAttribute('aria-expanded'), 'true')
   await toggle.click()
+  const viewOptions = page.locator('#frame-view-toggle')
+  await viewOptions.click()
+  await page.getByRole('menuitemradio', { name: /Tablet/ }).click()
+  await page.waitForFunction(() => document.querySelector('#app-preview').contentWindow.innerWidth === 768)
+  await viewOptions.click()
+  await page.getByRole('menuitemradio', { name: /Desktop/ }).click()
+  await page.locator('#frame-view-toggle[aria-disabled="false"]').waitFor()
   // Open the closed shadow-root inspector with the trusted extension context.
   const panelPoint = async selector => worker.evaluate(async ({ origin, selector }) => {
     const [tab] = await chrome.tabs.query({ url: origin + '/__inspector-flow/*' })
@@ -130,29 +159,47 @@ try {
   for (const dimension of ['x', 'y', 'width', 'height']) {
     assert.ok(Math.abs(outline[dimension] - element[dimension]) < 2, JSON.stringify({ dimension, outline, element }))
   }
-  const before = await create.evaluate(node => getComputedStyle(node).borderRadius)
+  const before = await create.evaluate(node => getComputedStyle(node).paddingTop)
   await page.evaluate(() => document.querySelector('#viewport').dispatchEvent(new WheelEvent('wheel',
     { deltaY: -48, ctrlKey: true, clientX: 500, clientY: 400, cancelable: true, bubbles: true })))
   assert.notEqual(await page.locator('#zoom').textContent(), '36%')
-  await panelClick('#control-border-radius')
+  await panelClick('#control-padding-vertical')
   await page.keyboard.press('Meta+a')
   await page.keyboard.insertText('19')
   await page.keyboard.press('Enter')
   await create.evaluate(node => new Promise((resolve, reject) => {
     const start = performance.now()
     const time = setInterval(() => {
-      if (getComputedStyle(node).borderRadius === '19px') { clearInterval(time); resolve() }
+      if (getComputedStyle(node).paddingTop === '19px' && getComputedStyle(node).paddingBottom === '19px') { clearInterval(time); resolve() }
       else if (performance.now() - start > 4000) { clearInterval(time); reject(Error('Edit did not apply')) }
     }, 50)
   }))
+  const evidenceDeadline = Date.now() + 5000
+  let operation
+  while (Date.now() < evidenceDeadline) {
+    operation = (await handoff()).operations.find(entry => entry.changes[0].requested === '19px')
+    if (operation?.visualEvidence) break
+    await new Promise(resolve => setTimeout(resolve, 80))
+  }
+  assert.deepEqual(operation?.changes.map(change => [change.route, change.property, change.requested]), [
+    ['/tasks', 'padding-top', '19px'], ['/tasks', 'padding-bottom', '19px'],
+  ])
+  assert.equal(operation?.changes[0].sourceContext.bounds.length, 4)
+  assert.ok(operation?.visualEvidence?.imagePath, 'Expanded canvas edit should have a visual crop')
+  const png = await readFile(operation.visualEvidence.imagePath)
+  const appFrame = await page.locator('#app-preview').boundingBox()
+  assert.ok(png.readUInt32BE(16) <= Math.ceil(appFrame.width), 'Crop cannot include neighboring frames')
+  assert.ok(png.readUInt32BE(20) <= Math.ceil(appFrame.height), 'Crop cannot include neighboring frames')
   await panelClick('button[aria-label="Undo last preview"]')
   const until = Date.now() + 4000
-  while (await create.evaluate(node => getComputedStyle(node).borderRadius) !== before && Date.now() < until) {
+  while (await create.evaluate(node => getComputedStyle(node).paddingTop) !== before && Date.now() < until) {
     await new Promise(resolve => setTimeout(resolve, 25))
   }
-  assert.equal(await create.evaluate(node => getComputedStyle(node).borderRadius), before)
+  assert.deepEqual(await create.evaluate(node => [getComputedStyle(node).paddingTop, getComputedStyle(node).paddingBottom]), [before, before])
 
-  console.log('Verified real helper edit and Undo on Tasks at canvas scale.')
+  assert.equal((await handoff()).operations.some(entry => entry.id === operation.id), false)
+  await assert.rejects(readFile(operation.visualEvidence.imagePath), { code: 'ENOENT' })
+  console.log('Verified real helper edit, cropped visual evidence, and Undo on Tasks at canvas scale.')
   async function showCard(label) {
     const viewport = page.locator('#viewport')
     const card = page.locator('.flow-frame').getByText(label, { exact: true })

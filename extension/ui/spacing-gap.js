@@ -63,10 +63,13 @@
       ui.openSpacingVariablePicker(anchor, {
         variables, current: bound ? name : null, sourceLabel: spacingCatalog.source,
         fallbackFocus: () => root.getElementById('control-' + property),
-        onChoose: id => run(() => ui.commitChanges(commit, properties
-          .filter(side => !hasBinding(side, id))
-          .map(side => [side, ui.spacingVariableValue(id), node, { spacingToken: { name: id, source: spacingCatalog.source } }]),
-        ), { keepPopup: true, rethrow: true }),
+        onChoose: id => run(() => {
+          const value = ui.spacingVariableValue(id)
+          const options = { spacingToken: { name: id, source: spacingCatalog.source } }
+          if (settings.submitVariable) return settings.submitVariable(value, options)
+          return ui.commitChanges(commit, properties.filter(side => !hasBinding(side, id))
+            .map(side => [side, value, node, options]))
+        }, { keepPopup: true, rethrow: true }),
       })
     }
     const menu = settings.menu

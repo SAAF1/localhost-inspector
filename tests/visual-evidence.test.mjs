@@ -17,7 +17,10 @@ test('visual evidence applies only to an enabled, active edit in the bound proje
   assert.equal(await saveVisualEvidence(root, binding, journal, id, '/elsewhere', image), false)
   assert.equal(await saveVisualEvidence(root, binding, journal, id, '/tasks', 'malformed'), false)
   assert.equal(await saveVisualEvidence(root, binding, journal, '../../other', '/tasks', image), false)
-  assert.equal(await saveVisualEvidence(root, binding, journal, id, '/tasks', image), true)
+  const peer = 'e01bbf42-0977-4954-b118-98ecf58fb272'
+  const group = { edits: [{ ...journal.edits[0], group: id }, { ...journal.edits[0], id: peer, group: id }] }
+  assert.equal(await saveVisualEvidence(root, binding, group, peer, '/tasks', image), false)
+  assert.equal(await saveVisualEvidence(root, binding, group, id, '/tasks', image), true)
 
   const current = { id, status: 'pending' }
   const other = { id: 'e01bbf42-0977-4954-b118-98ecf58fb272', status: 'pending' }

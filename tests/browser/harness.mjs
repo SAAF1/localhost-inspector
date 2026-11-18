@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { injectedFiles, project } from '../../scripts/check-modules.mjs'
 
+import { dockFlowInspector } from '../../extension/flow-attachment.js'
 import { serveWorkspaceAsset } from '../../scripts/flow/workspace-assets.mjs'
 import { fixture } from './fixture.mjs'
 import { connectPreviewDock, servePreviewDock } from '../../scripts/preview-dock.mjs'
@@ -19,6 +20,16 @@ export async function createHarness(options = {}) {
       const origin = 'http://127.0.0.1:' + server.address().port
       if (options.canvas) {
         if (await serveWorkspaceAsset(request.url, response)) return
+        if (request.url === '/__inspector-flow/previews.json') {
+          response.writeHead(options.flowPreviews ? 200 : 404, { 'content-type': 'application/json' })
+          response.end(JSON.stringify(options.flowPreviews ?? null))
+          return
+        }
+        if (/^\/__inspector-flow\/[^/]+\.(?:webp|png)$/.test(request.url)) {
+          response.writeHead(200, { 'content-type': 'image/png' })
+          response.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=', 'base64'))
+          return
+        }
         if (request.url === '/__inspector-flow/map.json') {
           response.writeHead(200, { 'content-type': 'application/json' })
           response.end(JSON.stringify({ origin, viewport: { width: 1100, height: 1356 },
@@ -43,10 +54,8 @@ export async function createHarness(options = {}) {
     await page.goto('http://127.0.0.1:' + server.address().port + (options.canvas ? '/__inspector-flow/' : '/'))
     if (options.canvas) await page.frameLocator('#app-preview').locator('#target').waitFor()
     const app = options.dock ? page.frames().find(frame => frame.parentFrame() === page.mainFrame()) : page
-    if (options.dock) await app.evaluate(connectPreviewDock)
-    if (options.canvas) await app.evaluate(() => {
-      window.localhostInspectorIsCanvasExpanded = () => window.parent.document.body.hasAttribute('data-expanded')
-    })
+    if (options.canvas && options.dock) await app.evaluate(dockFlowInspector)
+    else if (options.dock) await app.evaluate(connectPreviewDock)
     await app.evaluate(settings => {
       // Existing tests use Playwright locators for the Inspector's internal controls.
       if (!settings.closedPanel) {
@@ -87,7 +96,7 @@ export async function createHarness(options = {}) {
           return true
         }
         if (type === 'load') return { revision: window.__revision, route: message.route, buttonSizeKey: settings.buttonSizeKey, edits: structuredClone(window.__journal.filter(edit => !edit.undone && edit.route === message.route)) }
-        if (type === 'save' || type === 'saveTextStyle' || type === 'saveButtonSize') {
+        if (['save', 'saveTextStyle', 'saveButtonSize', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
           window.__saveCount++
           if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
           if (window.__settings.failSave === window.__saveCount) {
@@ -108,7 +117,7 @@ export async function createHarness(options = {}) {
           throw error
         }
         if (type === 'save' || type === 'saveButtonSize') window.__journal.push(message.record)
-        if (type === 'saveTextStyle') {
+        if (['saveTextStyle', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
           window.__journal.push(...message.records.map(record => ({ ...record, group: message.records[0].id })))
         }
         if (type === 'undo') {
@@ -128,7 +137,7 @@ export async function createHarness(options = {}) {
     await app.evaluate(() => window.phaseAInspectorReady)
     await app.evaluate(() => window.LocalhostInspector.fontReady)
     const host = page.locator('#localhost-inspector')
-    const open = async () => host.locator('#entry').click()
+    const open = async () => (options.canvas ? page.locator('#inspector-toggle') : host.locator('#entry')).click()
     const select = async (selector = 'body > #target') => app.locator(selector).click({ modifiers: ['Meta'], position: { x: 5, y: 5 } })
     const field = name => host.getByRole('spinbutton', { name, exact: true })
     const enter = async (name, value) => { await field(name).fill(String(value)); await field(name).press('Enter') }

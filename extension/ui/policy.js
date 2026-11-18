@@ -8,7 +8,13 @@
         own.boxSizing !== 'border-box' || !['static', 'relative'].includes(own.position)) return []
     return ['fill', 'hug']
   }
+  const boxesWithoutPadding = new Set([
+    'contents', 'table-row', 'table-row-group', 'table-header-group',
+    'table-footer-group', 'table-column', 'table-column-group',
+  ])
+  ui.canApplyPadding = style => !boxesWithoutPadding.has(style.display)
   ui.supported = (property, node, style = getComputedStyle(node)) => {
+    if (property === 'padding' || property.startsWith('padding-')) return ui.canApplyPadding(style)
     if (['gap', 'justify-content', 'align-items'].includes(property)) return layouts.has(style.display)
     if (property === 'flex-direction') return ['flex', 'inline-flex'].includes(style.display)
     if (property === 'justify-items') return style.display.includes('grid')

@@ -7,15 +7,17 @@ test('Inspector selects, edits, and undoes on the real page at canvas scale', as
   try {
     const toggle = h.page.locator('#flow-toggle')
     const dock = h.page.locator('#localhost-inspector-dock')
+    const panelToggle = h.page.locator('#inspector-toggle')
+    const initialIcon = await panelToggle.locator('svg').innerHTML()
     const layout = async () => {
       const size = h.page.viewportSize()
       const dockBox = await dock.boundingBox()
-      const toggleBox = await toggle.boundingBox()
+      const toolbarBox = await h.page.locator('#workspace-toolbar').boundingBox()
       assert.equal(dockBox.x + dockBox.width, size.width)
       assert.equal(dockBox.y, 0)
       assert.equal(dockBox.height, size.height)
-      assert.equal(dockBox.x - toggleBox.x - toggleBox.width, dockBox.width ? 12 : 50)
-      assert.equal(toggleBox.y, 12)
+      assert.equal(size.width - toolbarBox.x - toolbarBox.width, dockBox.width ? 0 : 12)
+      assert.equal(toolbarBox.y, dockBox.width ? 0 : 12)
       return dockBox.width
     }
     assert.equal(await layout(), 0)
@@ -30,7 +32,12 @@ test('Inspector selects, edits, and undoes on the real page at canvas scale', as
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true')
     assert.equal(await h.app.evaluate(() => innerWidth), originalWidth)
     await h.open()
+    assert.equal(await panelToggle.getAttribute('aria-expanded'), 'true')
+    assert.equal(await panelToggle.locator('svg').innerHTML(), initialIcon)
     assert.ok(await layout() > 0)
+    assert.ok((await toggle.boundingBox()).x < (await panelToggle.boundingBox()).x)
+    await h.page.mouse.move(80, 60)
+    assert.equal(await panelToggle.evaluate(button => getComputedStyle(button).backgroundColor), 'rgba(0, 0, 0, 0)')
     await h.page.setViewportSize({ width: 1723, height: 996 })
     assert.ok(await layout() > 0)
     await h.page.setViewportSize({ width: 1100, height: 1400 })
@@ -64,7 +71,8 @@ test('Inspector selects, edits, and undoes on the real page at canvas scale', as
     await toggle.click()
     assert.equal(await toggle.getAttribute('aria-pressed'), 'false')
     assert.ok(await layout() > 0)
-    await h.host.getByRole('button', { name: 'Collapse Inspector' }).click()
+    await panelToggle.click()
+    assert.equal(await panelToggle.getAttribute('aria-expanded'), 'false')
     assert.equal(await layout(), 0)
     assert.equal(await h.app.locator('#unsaved').inputValue(), 'unsaved draft')
   } finally { await h.close() }
@@ -104,6 +112,100 @@ async function chooseCard(page, id) {
     deltaY: rect.y - view.y - 75, bubbles: true, cancelable: true })
   await card.locator('span').click()
 }
+
+test('canvas view settings resize the real app and reflow rows without moving the camera', async () => {
+  const h = await createHarness({
+    canvas: true, dock: true, flowFrames: lifecycleFrames,
+    flowPreviews: {
+      home: { phone: { fixed: 'home-phone.webp' } },
+      other: { phone: { fixed: 'other-phone.webp' } },
+    },
+    flowPages: { ...flowPages, '/': { body: flowPages['/'].body +
+      '<div style="height:1550px"></div><p id="below-fold">Below the fold</p>' } },
+  })
+  try {
+    const toggle = h.page.locator('#flow-toggle')
+    const trigger = h.page.getByRole('button', { name: 'Canvas view settings' })
+    const preview = h.page.locator('#app-preview')
+    const nextRow = h.page.locator('[data-frame="other"]')
+    const choose = async name => {
+      await trigger.click()
+      await h.page.getByRole('menuitemradio', { name }).click()
+      await trigger.waitFor()
+      await h.page.locator('#frame-view-toggle[aria-disabled="false"]').waitFor()
+    }
+    assert.equal(await trigger.count(), 0)
+    await toggle.click()
+    await trigger.press('ArrowDown')
+    assert.equal(await h.page.getByRole('menuitemradio', { name: /Desktop/ }).getAttribute('aria-checked'), 'true')
+    await h.page.keyboard.press('Escape')
+    assert.equal(await trigger.getAttribute('aria-expanded'), 'false')
+    assert.equal(await trigger.evaluate(node => node === document.activeElement), true)
+    const camera = () => h.page.locator('#map').evaluate(node => node.style.transform)
+    const previousCamera = await camera()
+    const before = await preview.boundingBox()
+    const originalRow = await nextRow.evaluate(node => node.offsetTop)
+    await choose(/Phone/)
+    assert.equal(await h.app.evaluate(() => innerWidth), 390)
+    assert.equal(await nextRow.evaluate(node => node.offsetWidth), 390)
+    assert.match(await nextRow.locator('img').getAttribute('src'), /other-phone\.webp$/)
+    assert.equal(await h.app.evaluate(() => innerHeight), 844)
+    assert.equal(await camera(), previousCamera)
+    const phone = await preview.boundingBox()
+    assert.deepEqual([phone.x, phone.y], [before.x, before.y])
+    const fixedRow = await nextRow.evaluate(node => node.offsetTop)
+    await choose('Hug page contents')
+    const hug = await preview.boundingBox()
+    assert.deepEqual([hug.x, hug.y], [phone.x, phone.y])
+    assert.equal(await camera(), previousCamera)
+    assert.ok(await h.app.evaluate(() => innerHeight > 1550))
+    assert.ok(await nextRow.evaluate((node, y) => node.offsetTop > y, fixedRow))
+    await h.select('#below-fold')
+    await h.app.locator('#localhost-inspector-outlines #outline').waitFor({ state: 'visible' })
+    assert.equal(await h.page.locator('#inspector-toggle').getAttribute('aria-expanded'), 'true')
+    await chooseCard(h.page, 'other')
+    await h.page.locator('[data-frame="other"][aria-pressed="true"]').waitFor()
+    await h.page.locator('[data-frame="home"] img').waitFor({ state: 'visible' })
+    assert.equal(await preview.evaluate(node => node.contentWindow.innerWidth), 390)
+    await chooseCard(h.page, 'home')
+    await h.page.locator('[data-frame="home"][aria-pressed="true"]').waitFor()
+    await trigger.click()
+    assert.equal(await h.page.getByRole('menuitemradio', { name: /Phone/ }).getAttribute('aria-checked'), 'true')
+    assert.equal(await h.page.getByRole('menuitemradio', { name: 'Hug page contents' }).getAttribute('aria-checked'), 'true')
+    await h.page.keyboard.press('Escape')
+    await choose('Fixed height')
+    await choose(/Desktop/)
+    assert.equal(await preview.evaluate(node => node.contentWindow.innerHeight), 1356)
+    assert.equal(await nextRow.evaluate(node => node.offsetTop), originalRow)
+    await toggle.click()
+    assert.equal(await trigger.count(), 0)
+  } finally { await h.close() }
+})
+
+test('Hug extends a single viewport-bound scroll region and restores fixed height', async () => {
+  const h = await createHarness({ canvas: true, dock: true })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    await h.app.evaluate(() => {
+      const scroller = document.createElement('div')
+      scroller.id = 'scroller'
+      scroller.style.cssText = 'height:calc(100vh - 800px);overflow:auto'
+      scroller.innerHTML = '<div style="height:1040px">Nested content</div>'
+      const main = document.createElement('main')
+      main.append(scroller)
+      document.body.append(main)
+    })
+    const trigger = h.page.getByRole('button', { name: 'Canvas view settings' })
+    await trigger.click()
+    await h.page.getByRole('menuitemradio', { name: 'Hug page contents' }).click()
+    await h.page.locator('#frame-view-toggle[aria-disabled="false"]').waitFor()
+    assert.equal(await h.app.locator('#scroller').evaluate(node => node.scrollHeight - node.clientHeight), 0)
+    await trigger.click()
+    await h.page.getByRole('menuitemradio', { name: 'Fixed height' }).click()
+    await h.page.locator('#frame-view-toggle[aria-disabled="false"]').waitFor()
+    assert.equal(await h.app.evaluate(() => innerHeight), 1356)
+  } finally { await h.close() }
+})
 
 test('canvas blocks in-app navigation and keeps the last working document during cancelled activation', async () => {
   const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
@@ -149,20 +251,13 @@ test('a failed or visually hidden replay retains the current app and reports the
   } finally { await h.close() }
 })
 
-test('horizontal wheel pans over the live frame and still scrolls an app table', async () => {
+test('wheel pans over a live frame and Command-wheel scrolls its app content', async () => {
   const h = await createHarness({ canvas: true, dock: true })
   try {
-    await h.page.locator('#flow-toggle').click()
+    const toggle = h.page.locator('#flow-toggle')
+    await toggle.click()
     const map = h.page.locator('#map')
     const scene = () => map.evaluate(node => getComputedStyle(node).transform)
-    const initial = await scene()
-    await h.app.locator('#target').hover()
-    await h.page.mouse.wheel(90, 5)
-    await h.page.waitForFunction(previous =>
-      getComputedStyle(document.querySelector('#map')).transform !== previous, initial)
-    const shifted = await scene()
-    assert.ok(await h.page.locator('[aria-pressed="true"].flow-frame').count())
-
     await h.app.evaluate(() => {
       const scroll = document.createElement('div')
       scroll.id = 'scrolling-table'
@@ -174,13 +269,50 @@ test('horizontal wheel pans over the live frame and still scrolls an app table',
       document.body.prepend(scroll)
     })
     const table = h.app.locator('#scrolling-table')
+    const offset = () => table.evaluate(node => [node.scrollLeft, node.scrollTop])
+    const pan = async (dx, dy) => {
+      const previous = await scene()
+      await table.hover()
+      await h.page.mouse.wheel(dx, dy)
+      await h.page.waitForFunction(({ previous, dx, dy }) => {
+        const before = new DOMMatrix(previous)
+        const after = new DOMMatrix(getComputedStyle(document.querySelector('#map')).transform)
+        return (dx ? Math.sign(before.e - after.e) === Math.sign(dx) : before.e === after.e) &&
+          (dy ? Math.sign(before.f - after.f) === Math.sign(dy) : before.f === after.f) && before.a === after.a
+      }, { previous, dx, dy }, { timeout: 3000 })
+    }
+
+    await pan(30, 0)
+    await pan(0, 24)
+    assert.deepEqual(await offset(), [0, 0])
+    const shifted = await scene()
+
     await table.hover()
+    await h.page.keyboard.down('Meta')
     await h.page.mouse.wheel(90, 0)
     await h.app.waitForFunction(() => document.querySelector('#scrolling-table').scrollLeft > 0)
-    assert.equal(await scene(), shifted)
     await h.page.mouse.wheel(0, 45)
     await h.app.waitForFunction(() => document.querySelector('#scrolling-table').scrollTop > 0)
+    await h.page.keyboard.up('Meta')
     assert.equal(await scene(), shifted)
+    const scrolled = await offset()
+    await pan(-18, -16)
+    assert.deepEqual(await offset(), scrolled)
+
+    await table.hover()
+    const zoom = h.page.locator('#zoom')
+    const beforePinch = await zoom.textContent()
+    await h.page.keyboard.down('Control')
+    await h.page.mouse.wheel(0, -30)
+    await h.page.keyboard.up('Control')
+    await h.page.waitForFunction(previous => document.querySelector('#zoom').value !== previous, beforePinch)
+    assert.deepEqual(await offset(), scrolled)
+
+    await toggle.click()
+    await table.hover()
+    await h.page.mouse.wheel(0, 24)
+    await h.app.waitForFunction(previous =>
+      document.querySelector('#scrolling-table').scrollTop > previous, scrolled[1])
   } finally { await h.close() }
 })
 
@@ -207,13 +339,13 @@ test('inspect mode blocks menu activation and saved states still replay', async 
   } finally { await h.close() }
 })
 
-test('close-zoom hover prepares one frame and click reuses it', async () => {
+test('moderate zoom prepares one frame and further zoom and click reuse it', async () => {
   const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
   try {
     await h.page.locator('#flow-toggle').click()
     const viewport = h.page.locator('#viewport')
     const card = h.page.locator('[data-frame="other"] span')
-    await viewport.dispatchEvent('wheel', { deltaY: -130, ctrlKey: true, clientX: 200, clientY: 150, cancelable: true })
+    await viewport.dispatchEvent('wheel', { deltaY: -66, ctrlKey: true, clientX: 200, clientY: 150, cancelable: true })
     const rect = await card.boundingBox()
     await viewport.dispatchEvent('wheel', { deltaX: rect.x - 90, deltaY: rect.y - 110, cancelable: true })
     await card.hover()
@@ -222,10 +354,77 @@ test('close-zoom hover prepares one frame and click reuses it', async () => {
     assert.equal(await staged.count(), 1)
     assert.equal(await h.page.locator('[data-frame="home"]').getAttribute('aria-pressed'), 'true')
     await staged.evaluate(node => { node.dataset.prepared = 'yes' })
+    const point = await card.boundingBox()
+    await viewport.dispatchEvent('wheel', { deltaY: -45, ctrlKey: true, clientX: point.x + 10, clientY: point.y + 5, cancelable: true })
+    assert.equal(await staged.getAttribute('data-prepared'), 'yes')
     await card.click()
     const live = h.page.locator('#app-preview')
     assert.equal(await live.getAttribute('data-prepared'), 'yes')
     assert.equal(await h.page.locator('[data-frame="other"]').getAttribute('aria-pressed'), 'true')
     assert.equal(await staged.count(), 0)
+  } finally { await h.close() }
+})
+
+test('zoomed-in frame finishes finite browser animations without waiting on app timers', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages: {
+    ...flowPages,
+    '/other?view=details': { body: flowPages['/other?view=details'].body + `
+      <style>
+        @keyframes enter { from { opacity: 0 } to { opacity: 1 } }
+        #entrance { animation: enter 10s both }
+      </style>
+      <svg id="entrance" role="application" width="400" height="150"><rect width="10" height="20"/></svg>
+      <script>
+        const bar = document.querySelector('rect');
+        window.chartTimer = setInterval(() => {
+          bar.setAttribute('width', Number(bar.getAttribute('width')) + 1);
+        }, 40);
+      </script>` },
+  } })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    const viewport = h.page.locator('#viewport')
+    const card = h.page.locator('[data-frame="other"]')
+    await viewport.dispatchEvent('wheel', { deltaY: -190, ctrlKey: true, clientX: 200, clientY: 150, cancelable: true })
+    const rect = await card.boundingBox()
+    await viewport.dispatchEvent('wheel', { deltaX: rect.x - 10, deltaY: rect.y - 10, cancelable: true })
+    await h.page.mouse.move(200, 210)
+    await h.page.locator('.flow-candidate').waitFor({ state: 'attached' })
+    assert.equal(await card.getAttribute('aria-pressed'), 'false')
+    await h.page.locator('[data-frame="other"][aria-pressed="true"]').waitFor()
+    const chart = h.page.frameLocator('#app-preview').locator('svg[role="application"] rect')
+    assert.equal(await chart.evaluate(node => getComputedStyle(node.parentElement).opacity), '1')
+    assert.equal(await h.page.locator('.flow-candidate').count(), 0)
+    const initial = Number(await chart.getAttribute('width'))
+    await h.page.waitForFunction(width => Number(document.querySelector('#app-preview').contentDocument.querySelector('#entrance rect').getAttribute('width')) > width, initial)
+  } finally { await h.close() }
+})
+
+test('continuous zoom upgrades a nearby image after decode and releases it at overview zoom', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages,
+    flowPreviews: { other: { desktop: { fixed: 'other.webp', sharp: 'other-2x.webp' } } },
+  })
+  try {
+    let resume
+    const blocked = new Promise(resolve => { resume = resolve })
+    await h.page.route('**/other-2x.webp', async route => { await blocked; await route.continue() })
+    await h.page.locator('#flow-toggle').click()
+    const card = h.page.locator('[data-frame="other"]')
+    const image = card.locator('img')
+    const viewport = h.page.locator('#viewport')
+    const wheel = deltaY => viewport.dispatchEvent('wheel', { deltaY, ctrlKey: true,
+      clientX: 100, clientY: 130, cancelable: true })
+    const requested = h.page.waitForRequest('**/other-2x.webp')
+    await wheel(-16)
+    await requested
+    await wheel(-35)
+    assert.match(await image.getAttribute('src'), /\/other\.webp$/)
+    const before = await image.boundingBox()
+    resume()
+    await card.locator('img[src="./other-2x.webp"]').waitFor()
+    assert.deepEqual(await image.boundingBox(), before)
+    assert.equal(await h.page.locator('#app-preview').count(), 1)
+    await wheel(110)
+    await card.locator('img[src="./other.webp"]').waitFor()
   } finally { await h.close() }
 })

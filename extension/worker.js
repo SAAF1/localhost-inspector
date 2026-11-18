@@ -39,15 +39,22 @@ async function inject(target) {
     'ui/policy.js', 'ui/menu.js', 'ui/controls.js', 'ui/padding.js',
     'ui/resizing.js', 'ui/alignment-settings.js', 'ui/spacing-gap.js', 'ui/alignment.js', 'ui/layout.js', 'ui/text-targets.js', 'ui/text-style-values.js', 'ui/field-view.js',
     'ui/solid-color-picker.js', 'ui/create-definition.js', 'ui/create-color-variable.js', 'ui/create-text-style.js', 'ui/color-variable-picker.js', 'ui/color-bindings.js', 'ui/text-style-control.js', 'ui/sections.js', 'ui/panel-styles.js', 'ui/tooltip.js',
-    'ui/panel.js', 'ui/revert-dialog.js', 'selection.js', 'shortcuts.js', 'preview-recovery.js', 'button-size.js', 'edit-evidence.js', 'inspector.js',
+    'ui/panel.js', 'ui/revert-dialog.js', 'selection.js', 'shortcuts.js', 'preview-recovery.js', 'shared-padding.js', 'button-size.js', 'edit-evidence.js', 'inspector.js',
   ] })}
 }
 
 async function attach(tabId, origin) {
   await call({ type: 'check', origin })
-  pendingCaptures.delete(tabId)
-  await chrome.storage.session.set({ ['tab:' + tabId]: origin })
   const tab = await chrome.tabs.get(tabId)
+  if (localOrigin(tab.url) !== origin) return
+  await chrome.storage.session.set({ ['tab:' + tabId]: origin })
+  await mountInspector(tabId, origin)
+}
+
+async function mountInspector(tabId, origin) {
+  const tab = await chrome.tabs.get(tabId)
+  if (localOrigin(tab.url) !== origin) return
+  pendingCaptures.delete(tabId)
   if (new URL(tab.url).pathname === flowPath) {
     await chrome.scripting.executeScript({ target: { tabId }, func: watchFlowFrame })
   } else {
@@ -55,6 +62,7 @@ async function attach(tabId, origin) {
     await inject({ tabId })
   }
   await chrome.action.setBadgeText({ tabId, text: '' })
+  await chrome.action.setTitle({ tabId, title: 'Attach Localhost Inspector' })
 }
 
 function queueFlowAttachment(tabId, origin) {
@@ -86,7 +94,6 @@ async function attachFlowFrame(tabId, origin) {
 }
 
 async function failed(tabId, error) {
-  await chrome.storage.session.remove(['tab:' + tabId, 'flow:' + tabId])
   await chrome.action.setBadgeText({ tabId, text: '!' })
   await chrome.action.setTitle({ tabId, title: error.message })
 }
@@ -106,7 +113,7 @@ chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
       await chrome.storage.session.remove([key, 'flow:' + tabId])
       return
     }
-    await attach(tabId, saved)
+    await mountInspector(tabId, saved)
   })().catch(error => failed(tabId, error))
 })
 chrome.tabs.onRemoved.addListener(tabId => {
@@ -195,10 +202,10 @@ async function handle(message, sender) {
     return result === true
   }
   const result = await call({ ...message, origin })
-  if (message.type === 'save') {
+  if (['save', 'saveTextStyle', 'saveSharedPadding', 'savePairedPadding'].includes(message.type)) {
     pendingCaptures.delete(tabId)
-    if (result?.visualEvidence === true && sender.documentId && sender.frameId === 0) {
-      const { id, route } = message.record
+    if (result?.visualEvidence === true && sender.documentId) {
+      const { id, route } = message.record ?? message.records[0]
       pendingCaptures.set(tabId, { documentId: sender.documentId, id, route })
     }
   }

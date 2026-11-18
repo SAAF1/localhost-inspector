@@ -2,6 +2,34 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHarness } from './harness.mjs'
 
+test('evidence can frame a settled panel but refuses movement during capture', async () => {
+  const h = await createHarness()
+  try {
+    await h.open()
+    const result = await h.page.evaluate(async () => {
+      const ui = window.LocalhostInspector
+      const target = document.querySelector('#target')
+      const panel = document.querySelector('#localhost-inspector').shadowRoot.querySelector('#inspector-panel')
+      const bridge = window.phaseABridge
+      let finish
+      window.phaseABridge = () => new Promise(resolve => { finish = resolve })
+      try {
+        const originalTop = panel.getBoundingClientRect().top
+        ui.captureEditEvidence(target, panel, { id: 'first', route: '/' }, () => true)
+        panel.style.transform = 'translateY(20px)'
+        const framed = await ui.probeEditEvidence('first', 'read')
+        panel.style.transform = 'translateY(40px)'
+        const after = await ui.probeEditEvidence('first', 'read')
+        return { settledOffset: framed?.panel.top - originalTop, after }
+      } finally {
+        finish?.()
+        window.phaseABridge = bridge
+      }
+    })
+    assert.deepEqual(result, { settledOffset: 20, after: null })
+  } finally { await h.close() }
+})
+
 test('holding Command previews the pointed element without changing selection', async () => {
   const h = await createHarness()
   try {
@@ -88,9 +116,9 @@ test('partial restoration leaves successfully restored edits available to Undo',
   } finally { await h.close() }
 })
 
-test('partial paired writes remain undoable and never spill into a changed selection', async () => {
+test('paired padding saves atomically and never spills into a changed selection', async () => {
   for (const interrupted of [false, true]) {
-    const h = await createHarness(interrupted ? { holdSave: 1 } : { failSave: 2 })
+    const h = await createHarness(interrupted ? { holdSave: 1 } : { failSave: 1 })
     try {
       await h.open(); await h.select()
       await h.enter('Horizontal padding', 30)
@@ -100,13 +128,22 @@ test('partial paired writes remain undoable and never spill into a changed selec
         await h.page.evaluate(() => window.__releaseSave())
       }
       await h.settled()
-      assert.equal(await h.css('padding-left'), '30px')
-      assert.equal(await h.css('padding-right'), '16px')
-      assert.equal((await h.journal()).length, 1)
-      assert.match(await h.host.locator('#status').innerText(), /First change saved/)
       assert.equal(await h.page.locator('body > #other').evaluate(node => node.style.paddingLeft), '')
-      await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).click(); await h.settled()
+      const edits = await h.journal()
+      if (interrupted) {
+        assert.deepEqual(edits.map(edit => [edit.target.id, edit.property]), [
+          ['target', 'padding-left'], ['target', 'padding-right'],
+        ])
+        assert.equal(new Set(edits.map(edit => edit.group)).size, 1)
+        await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).click()
+        await h.settled()
+      } else {
+        assert.match(await h.host.locator('#status').innerText(), /Simulated save failure/)
+        assert.deepEqual(edits, [])
+      }
       assert.equal(await h.css('padding-left'), '16px')
+      assert.equal(await h.css('padding-right'), '16px')
+      assert.deepEqual(await h.journal(), [])
     } finally { await h.close() }
   }
 })

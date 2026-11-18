@@ -30,6 +30,7 @@
   })
   const fields = get('fields')
   let renderedSelection
+  let scopeHovered = false
   let busy = false
   let loadingRoute = true
   let comparing = false
@@ -81,6 +82,7 @@
     const hasSelection = Boolean(node?.isConnected)
     get('guidance').hidden = hasSelection
     if (node !== renderedSelection) {
+      scopeHovered = false
       renderedSelection = node
       fields.replaceChildren()
     }
@@ -90,9 +92,20 @@
       return
     }
     const version = activeRouteVersion
+    const sharedPadding = paddingMembers(node)
     try {
       ui.renderInspector(fields, {
         node, style: getComputedStyle(node), disabled: comparing || loadingRoute || journalRevision === null, run, colorCatalog, spacingCatalog,
+        paddingCount: sharedPadding.length,
+        previewRelated: resolve => selection.previewRelated(resolve && (() =>
+          selection.current === node ? resolve() : null)),
+        selectRelated: target => {
+          if (selection.current !== node || !target?.isConnected || target.ownerDocument !== document) return
+          selection.select(target)
+          panel.focus({ preventScroll: true })
+        },
+        hasPaddingPreview: recovery.hasVerticalPaddingPreview(node),
+        commitPaddingPair: (axis, requested, options) => commitPaddingPair(node, version, axis, sharedPadding, requested, options),
         pendingColorFor: target => recovery.pendingColorFor(target),
         textStyleCatalog, textStyleUnavailable,
         pendingTextStyles: recovery.pendingTextStyles(),
@@ -113,6 +126,10 @@
           await commitEdit(target, property, requested, tokenOptions)
         },
       })
+      if (!fields.querySelector('button.li-padding-scope')) {
+        scopeHovered = false
+        selection.showRelated(false)
+      }
       ui.setFieldsSaving(fields, busy)
     } catch (error) {
       console.error('Localhost Inspector controls failed to render:', error)
@@ -278,24 +295,51 @@
     event.preventDefault()
     event.stopPropagation()
   }, true)
+  const scopeButton = target => target?.closest?.('button.li-padding-scope')
+  for (const [event, active] of [['pointerover', true], ['pointerout', false]]) {
+    fields.addEventListener(event, e => {
+      if (e.pointerType === 'touch' || !scopeButton(e.target) || scopeButton(e.relatedTarget)) return
+      scopeHovered = active
+      selection.showRelated(active || Boolean(scopeButton(root.activeElement)))
+    })
+  }
+  for (const event of ['focusin', 'focusout']) {
+    fields.addEventListener(event, e => {
+      if (!scopeButton(e.target)) return
+      selection.showRelated(event === 'focusin' || scopeHovered)
+    })
+  }
+  fields.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && scopeButton(event.target)) {
+      event.stopPropagation()
+      scopeHovered = false
+      panel.focus({ preventScroll: true })
+      selection.showRelated(false)
+    }
+  })
   const entry = get('entry')
   const closeInspector = get('close-inspector')
-  function toggleInspector() {
+  function toggleInspector(moveFocus = true) {
     const open = panel.hidden
     ui.dismissTooltip()
     ui.closeMenu()
     setOpen(open)
     selection.syncOutlines()
-    const focusTarget = open ? closeInspector : entry
-    focusTarget.focus({ preventScroll: true })
+    if (moveFocus) (open ? closeInspector : entry).focus({ preventScroll: true })
   }
   entry.onclick = toggleInspector
   closeInspector.onclick = toggleInspector
+  if (host.hasAttribute('data-workspace-toolbar')) {
+    host.addEventListener('toggle-workspace-inspector', () => toggleInspector(false))
+  }
   get('parent').onclick = () => {
     const parent = selection.parent()
     if (!parent) return
     selection.select(parent)
-    if (!selection.parent()) closeInspector.focus({ preventScroll: true })
+    if (!selection.parent()) {
+      const focusTarget = host.hasAttribute('data-workspace-toolbar') ? panel : closeInspector
+      focusTarget.focus({ preventScroll: true })
+    }
   }
   ui.bindInspectorShortcuts({ root, panel, selection, undo: get('undo'), parent: get('parent') })
   window.addEventListener('pagehide', () => { ui.dismissTooltip(); ui.closeMenu(); revertDialog.dismiss() })
@@ -343,6 +387,83 @@
       recovery.remember(edit)
       recoveryRequested = true
     }
+    reportRecovery()
+  }
+  function paddingMembers(node) {
+    const members = ui.sharedPadding.members(node)
+    return members.every(peer => ui.sharedPadding.properties.every(property =>
+      canEdit(peer, property) && ui.supportsSpacingVariable(peer, property),
+    )) ? members : []
+  }
+
+  async function commitPaddingPair(selected, version, axis, sharedMembers, requested, options) {
+    const editRoute = currentRoute
+    const isCurrent = () => isCurrentRoute(editRoute, version) && selection.current === selected
+    if (!isCurrent() || comparing || !selected.isConnected || journalRevision === null) {
+      throw Error('Selection changed. Try the edit again.')
+    }
+    const shared = axis === 'vertical' && sharedMembers.length > 0
+    const members = shared ? sharedMembers : [selected]
+    const properties = axis === 'vertical' ? ui.sharedPadding.properties : ['padding-left', 'padding-right']
+    const sharedPadding = shared ? selected.getAttribute(ui.sharedPadding.attribute) : undefined
+    function sameMembers() {
+      if (axis !== 'vertical') return true
+      const current = paddingMembers(selected)
+      return current.length === sharedMembers.length &&
+        sharedMembers.every(node => current.includes(node)) &&
+        (!shared || selected.getAttribute(ui.sharedPadding.attribute) === sharedPadding)
+    }
+    if (!sameMembers()) throw Error('The shared rows changed. Try the edit again.')
+    if (options?.spacingToken && members.every(node => properties.every(property =>
+      node.style.getPropertyValue(property) === requested && ui.spacingVariableMatches(node, property, options.spacingToken.name),
+    ))) return
+    const entries = []
+    const targets = new Map([selected, ...members.filter(peer => peer !== selected)].map(node => [node, {
+      target: ui.describePreviewTarget(node), sourceContext: ui.describeSourceContext(node),
+    }]))
+    const evidence = ++evidenceVersion
+    let records, captureEnabled
+    try {
+      for (const [node, { target }] of targets) {
+        for (const property of properties) {
+          if (!canEdit(node, property)) throw Error('The selected padding cannot be edited.')
+          const entry = await apply(node, property, requested, isCurrent, options)
+          entry.liveTarget = target
+          entries.push(entry)
+        }
+      }
+      records = await Promise.all(entries.map(async entry => ({
+        ...await editRecord(entry, entry.liveTarget, {
+          editRoute, sourceContext: targets.get(entry.node).sourceContext, tokenOptions: options,
+        }),
+        sharedPadding,
+      })))
+      if (!isCurrent() || !sameMembers() || !entries.every(entry => ui.ownsPreviewDeclaration(entry) &&
+          ui.matchesPreviewTarget(entry.node, entry.liveTarget)) ||
+          (shared && !ui.sharedPadding.matchesGroup(records))) throw Error('The padding target changed. Try the edit again.')
+      const type = shared ? 'saveSharedPadding' : 'savePairedPadding'
+      captureEnabled = (await write({ type, records }, editRoute, version)).visualEvidence === true
+    } catch (error) {
+      for (const entry of entries.reverse()) discardTemporary(entry)
+      throw error
+    }
+    const attached = isCurrent() && sameMembers() && entries.every(entry => ui.ownsPreviewDeclaration(entry) &&
+      ui.matchesPreviewTarget(entry.node, entry.liveTarget)) && (!shared || ui.sharedPadding.matchesGroup(records))
+    if (!attached) for (const entry of [...entries].reverse()) discardTemporary(entry)
+    if (!isCurrentRoute(editRoute, version)) {
+      if (currentRoute === editRoute) window.phaseAInspectorReady = loadRoute()
+      return
+    }
+    records.forEach((record, index) => {
+      const entry = entries[index]
+      if (attached) temporary.delete(entry)
+      recovery.remember({ ...record, group: records[0].id }, attached ? entry : undefined)
+    })
+    if (attached && captureEnabled) {
+      ui.captureEditEvidence?.(selected, panel, records[0], () => evidence === evidenceVersion &&
+        isCurrent() && selection.current === selected && entries.every(ui.ownsPreviewDeclaration))
+    }
+    recoveryRequested ||= !attached
     reportRecovery()
   }
   async function editRecord(entry, target, { editRoute, sourceContext, tokenOptions }) {
@@ -468,7 +589,8 @@
     })
     if (!updates.length) return
     const entries = []
-    let records
+    const evidence = ++evidenceVersion
+    let records, captureEnabled
     try {
       for (const { node, property, requested, target } of updates) {
         if (!isCurrent() || !canEdit(node, property)) throw Error('The selected text cannot be edited.')
@@ -490,7 +612,7 @@
           entries.some(entry => !ui.ownsPreviewDeclaration(entry)))) {
         throw Error('Selection changed. Choose the text style again.')
       }
-      await write({ type: 'saveTextStyle', records }, editRoute, version)
+      captureEnabled = (await write({ type: 'saveTextStyle', records }, editRoute, version)).visualEvidence === true
     } catch (error) {
       for (const entry of entries.reverse()) discardTemporary(entry)
       if (pendingTextStyle && error.message === 'That style name is already in use.') error.field = 'name'
@@ -512,6 +634,10 @@
       if (attached) temporary.delete(entry)
       recovery.remember({ ...record, group: records[0].id }, attached ? entry : undefined)
     })
+    if (attached && captureEnabled) {
+      ui.captureEditEvidence?.(selected, panel, records[0], () => evidence === evidenceVersion &&
+        isCurrent() && selection.current === selected && entries.every(ui.ownsPreviewDeclaration))
+    }
     recoveryRequested ||= !attached
     reportRecovery()
     return pendingTextStyle
@@ -668,6 +794,13 @@
   new MutationObserver(records => {
     onRouteChange()
     selection.refresh()
+    const scopeChanged = records.some(record => record.type === 'childList' ||
+      [ui.sharedPadding.attribute, 'data-inspector-target', 'hidden'].includes(record.attributeName))
+    const selected = selection.current
+    if (scopeChanged && !busy && !loadingRoute && selected?.parentElement &&
+      (selected.hasAttribute(ui.sharedPadding.attribute) || fields.querySelector('button.li-padding-scope')) &&
+      records.some(record => record.target === selected || record.target === selected.parentElement ||
+        record.target.parentElement === selected.parentElement)) renderFields({ keepPopup: true })
     const styleChanges = records.filter(record => ['style', 'class', 'data-theme'].includes(record.attributeName))
     const node = selection.current
     if ((colorCatalog || spacingCatalog || textStyleCatalog) && !busy && !loadingRoute && node &&
@@ -683,7 +816,7 @@
     queueRecovery()
   }).observe(document.documentElement, {
     childList: true, subtree: true, characterData: true, attributes: true,
-    attributeFilter: ['id', 'data-slot', 'data-inspector-target', 'style', 'class', 'data-theme'],
+    attributeFilter: ['id', 'data-slot', 'data-inspector-target', 'style', 'class', 'data-theme', 'hidden', ui.sharedPadding.attribute],
   })
   function refreshResponsiveSpacing() {
     const node = selection.current

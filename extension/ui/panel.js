@@ -2,12 +2,14 @@
   const ui = window.LocalhostInspector
   ui.createPanel = () => {
     const dock = window.localhostInspectorDock
+    const workspaceToolbar = dock?.hasAttribute('data-workspace-toolbar')
     const host = document.createElement('div')
     host.id = 'localhost-inspector'
     host.style.cssText = dock
       ? 'position:relative;z-index:2147483647;visibility:hidden'
       : 'position:fixed;bottom:12px;right:12px;z-index:2147483647;visibility:hidden'
     host.toggleAttribute('data-docked', Boolean(dock))
+    host.toggleAttribute('data-workspace-toolbar', Boolean(workspaceToolbar))
     host.dataset.fontState = 'loading'
     ui.fontReady.then(loaded => {
       host.dataset.fontState = loaded ? 'loaded' : 'fallback'
@@ -92,7 +94,10 @@
     toolbar.append(comparison, actions)
     footer.append(status, toolbar)
     panel.append(header, properties, footer)
-    outlineRoot.append(hoverOutline, outline)
+    const related = ui.element('div')
+    related.id = 'related-outlines'
+    related.setAttribute('aria-hidden', 'true')
+    outlineRoot.append(related, hoverOutline, outline)
     root.append(entry, panel)
     function setOpen(open) {
       panel.hidden = !open

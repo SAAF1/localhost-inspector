@@ -12,7 +12,7 @@ test('handoff carries exact gap intent, visual evidence and grouping independent
   const target = { tag: 'div', slot: null, text: 'private page content', textFingerprint: 'preview guard' }
   const sourceContext = {
     ancestors: [{ tag: 'td', slot: 'table-cell', text: 'private row' }, { tag: 'tr', id: 'row-id' }],
-    childTags: ['svg', 'span'], tableCellPosition: 4, tableRowCellCount: 6, rowIndex: 3,
+    childTags: ['svg', 'span'], tableCellPosition: 4, tableRowCellCount: 6, bounds: [31, 84, 120, 24], rowIndex: 3,
   }
   const token = { source: 'theme.css', name: '--foreground' }
   const journal = { revision: 9, edits: [
@@ -37,7 +37,7 @@ test('handoff carries exact gap intent, visual evidence and grouping independent
   assert.equal(change.requested, '12px')
   assert.deepEqual(change.sourceContext, {
     ancestors: [{ tag: 'td', slot: 'table-cell' }, { tag: 'tr', slot: undefined }],
-    childTags: ['svg', 'span'], tableCellPosition: 4, tableRowCellCount: 6,
+    childTags: ['svg', 'span'], tableCellPosition: 4, tableRowCellCount: 6, bounds: [31, 84, 120, 24],
   })
   assert.deepEqual(font.changes.map(({ id, property }) => [id, property]),
     [['font', 'font-size'], ['tracking', 'letter-spacing']])
@@ -72,4 +72,5 @@ test('malformed and excessive browser metadata cannot expand source context', ()
     ancestors: [{ tag: 'td', slot: undefined }], childTags: undefined,
   })
   assert.equal(sourceContextFrom({ ancestors: [], tableCellPosition: 4 }).tableCellPosition, undefined)
+  assert.equal(sourceContextFrom({ ancestors: [], bounds: ['x', 0, 100, 200] }).bounds, undefined)
 })

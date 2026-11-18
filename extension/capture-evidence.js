@@ -12,16 +12,18 @@ function rectIntersects(a, b) {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
 }
 
-function cropAroundTarget({ width, height, target, panel }) {
+function cropAroundTarget({ width, height, target, panel, clip }) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width < 32 || height < 32) return null
   if (!Object.values(target).every(Number.isFinite)) return null
   if (target.left < 0 || target.top < 0 || target.right > width || target.bottom > height ||
       target.right <= target.left || target.bottom <= target.top) return null
+  if (clip && (target.left < clip.left || target.top < clip.top || target.right > clip.right ||
+      target.bottom > clip.bottom)) return null
   const crop = {
-    left: Math.max(0, Math.floor(target.left - 175)),
-    top: Math.max(0, Math.floor(target.top - 175)),
-    right: Math.min(width, Math.ceil(target.right + 175)),
-    bottom: Math.min(height, Math.ceil(target.bottom + 132)),
+    left: Math.max(0, Math.ceil(clip?.left ?? 0), Math.floor(target.left - 175)),
+    top: Math.max(0, Math.ceil(clip?.top ?? 0), Math.floor(target.top - 175)),
+    right: Math.min(width, Math.floor(clip?.right ?? width), Math.ceil(target.right + 175)),
+    bottom: Math.min(height, Math.floor(clip?.bottom ?? height), Math.ceil(target.bottom + 132)),
   }
   // Keep the inspector itself out of the evidence. If it covers the selected
   // element, a crop cannot establish what the user was looking at.

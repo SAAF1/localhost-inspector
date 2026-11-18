@@ -25,6 +25,19 @@ test('completing verified operations retires all grouped members and leaves othe
   assert.deepEqual(journal.completed, [earlier, expected])
 })
 
+test('completion clears shared-padding peers omitted from the source handoff', () => {
+  const padding = ['anchor-top', 'anchor-bottom', 'peer-top', 'peer-bottom'].map(id =>
+    edit(id, { group: 'anchor-top', sharedPadding: 'rows', property: 'padding-' + id.split('-').at(-1) }),
+  )
+  const independent = edit('independent')
+  const journal = { edits: [...padding, independent] }
+
+  const result = completeHandoff(binding, journal, report('anchor-top'), completedAt)
+
+  assert.deepEqual(result.retired, padding.map(entry => entry.id))
+  assert.deepEqual(journal.edits, [independent])
+})
+
 test('a mixed invalid completion request leaves every edit and prior result intact', () => {
   const journal = { edits: [edit('first'), edit('legacy', { intent: undefined }), edit('button', { property: 'button-size' })] }
   const original = structuredClone(journal)

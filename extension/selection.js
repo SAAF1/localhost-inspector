@@ -3,21 +3,34 @@
   ui.createSelection = ({ host, panel, get, onSelect, isCanvasExpanded, openPanel }) => {
     let selected
     let hovered
+    let menuTarget
     let pointer
     let commandHeld = false
     let selectionObserver
     let outlineFrame = null
-    function positionOutline(outline, node) {
+    let showRelated = false
+    function positionOutline(outline, node, inset = 0) {
       outline.hidden = panel.hidden || !node?.isConnected
       if (outline.hidden) return
       const box = node.getBoundingClientRect()
-      for (const property of ['left', 'top', 'width', 'height']) {
-        const value = box[property] + 'px'
+      const geometry = {
+        left: box.left + inset, top: box.top + inset,
+        width: Math.max(0, box.width - 2 * inset), height: Math.max(0, box.height - 2 * inset),
+      }
+      for (const [property, pixels] of Object.entries(geometry)) {
+        const value = pixels + 'px'
         if (outline.style[property] !== value) outline.style[property] = value
       }
     }
     function syncOutline() {
       positionOutline(get('outline'), selected)
+      const layer = get('related-outlines')
+      const peers = showRelated && !panel.hidden ? ui.sharedPadding.members(selected).filter(node => node !== selected) : []
+      while (layer.childElementCount > peers.length) layer.lastElementChild.remove()
+      for (const [index, node] of peers.entries()) {
+        if (!layer.children[index]) layer.append(ui.element('div', 'li-outline li-outline-related'))
+        positionOutline(layer.children[index], node)
+      }
     }
     function pointedElement() {
       const { x, y } = pointer
@@ -33,13 +46,19 @@
     }
     function syncHoverOutline() {
       hovered = !panel.hidden && commandHeld && pointer ? pointedElement() : null
-      positionOutline(get('hover-outline'), hovered === selected ? null : hovered)
+      const target = menuTarget?.()
+      const outline = get('hover-outline')
+      outline.toggleAttribute('data-menu-preview', Boolean(target))
+      const candidate = target ?? hovered
+      positionOutline(outline, candidate === selected ? null : candidate, target ? 2 : 0)
     }
     function syncOutlines() {
       syncOutline()
       syncHoverOutline()
     }
     function select(node) {
+      showRelated = false
+      menuTarget = null
       selected = node
       selectionObserver?.disconnect()
       if (node) {
@@ -88,7 +107,7 @@
           }, scope)
           panelWindow.addEventListener('keydown', event => {
             if (event.isTrusted && !event.defaultPrevented && event.key === 'Escape' && isCanvasExpanded() && selected) select(null)
-          }, scope)
+          }, { signal: listeners.signal })
         }
         window.addEventListener('pagehide', () => listeners.abort(), { once: true })
       }
@@ -141,6 +160,15 @@
     }
     return {
       get current() { return selected },
+      previewRelated(resolve) {
+        menuTarget = resolve
+        syncHoverOutline()
+      },
+      showRelated(value) {
+        if (value === showRelated) return
+        showRelated = value
+        syncOutline()
+      },
       parent, select, refresh, syncOutline, syncOutlines,
     }
   }

@@ -58,12 +58,14 @@
     for (let child = node.firstElementChild; child && childTags.length < 4; child = child.nextElementSibling) {
       childTags.push(child.localName)
     }
+    const box = node.getBoundingClientRect()
+    const bounds = [box.x, box.y, box.width, box.height].map(Math.round)
+    const context = { ancestors, childTags, bounds }
     const cell = node.closest('td,th')
     const row = cell?.parentElement
-    if (row?.localName !== 'tr' || cell.cellIndex < 0) return { ancestors, childTags }
+    if (row?.localName !== 'tr' || cell.cellIndex < 0) return context
     return {
-      ancestors,
-      childTags,
+      ...context,
       tableCellPosition: cell.cellIndex + 1,
       tableRowCellCount: row.cells.length,
     }
@@ -158,11 +160,29 @@
         (edit.restore !== 'unique' || findTarget(edit.target, entry.node) === entry.node))
     }
 
-    function prune() {
+    function operations() {
+      const groups = new Map()
+      for (const edit of saved.values()) {
+        const id = edit.group ?? edit.id
+        if (!groups.has(id)) groups.set(id, [])
+        groups.get(id).push(edit)
+      }
+      return groups
+    }
+
+    function sharedGroupValid(edits) {
+      return !edits[0].sharedPadding ||
+        (!edits.some(edit => conflicts.has(edit.id)) && ui.sharedPadding.matchesGroup(edits))
+    }
+
+    function prune(groups) {
       reconcileConflicts()
+      const invalid = new Set()
+      for (const [id, edits] of groups) if (!sharedGroupValid(edits)) invalid.add(id)
       for (const [id, entry] of Array.from(attached).reverse()) {
         if (entry.property === 'button-size') continue
-        if (!isAttached(saved.get(id), entry)) detach(id)
+        const edit = saved.get(id)
+        if (invalid.has(edit?.group) || !isAttached(edit, entry)) detach(id)
       }
     }
 
@@ -173,16 +193,12 @@
     async function restore(isCurrent, fromOriginal = false) {
       const exactNodes = fromOriginal ? original : new Map()
       if (fromOriginal) original = new Map()
-      prune()
-      const operations = new Map()
-      for (const edit of saved.values()) {
-        const id = edit.group ?? edit.id
-        if (!operations.has(id)) operations.set(id, [])
-        operations.get(id).push(edit)
-      }
+      const groups = operations()
+      prune(groups)
       const definitions = new Map(pendingTextStyles().map(style => [style.name, style]))
-      for (const edits of operations.values()) {
+      for (const edits of groups.values()) {
         if (!isCurrent()) return
+        if (!sharedGroupValid(edits)) continue
         const pendingTextStyle = edits[0].pendingTextStyle ?? definitions.get(edits[0].pendingTextStyleName)
         const applied = []
         let complete = true
@@ -222,7 +238,7 @@
             break
           }
         }
-        if (!complete || !isCurrent()) {
+        if (!complete || !isCurrent() || !sharedGroupValid(edits)) {
           for (const [, entry] of applied.reverse()) {
             if (entry.property === 'button-size') await removeButtonSize(entry).catch(() => false)
             else remove(entry)
@@ -248,6 +264,11 @@
         )
         return entry?.pendingColor && !lostPreview(entry) ? entry.pendingColor : null
       },
+      hasVerticalPaddingPreview(node) {
+        return Array.from(attached.values()).some(entry =>
+          entry.node === node && ui.sharedPadding.properties.includes(entry.property),
+        )
+      },
       pendingTextStyles,
       pendingTextStyleFor(node) {
         const entries = topEntries().filter(entry => entry.node === node && ui.textStyleProperties.includes(entry.property))
@@ -264,10 +285,14 @@
       get hasConflicts() { return conflicts.size > 0 },
       get lastSavedId() { return Array.from(saved.keys()).at(-1) },
       get needsRestore() {
-        return hasStyleConflict() || Array.from(saved.values()).some(edit => {
-          const entry = attached.get(edit.id)
-          if (entry) return entry.property !== 'button-size' && !isAttached(edit, entry)
-          return !conflicts.has(edit.id) && edit.restore === 'unique' && Boolean(findTarget(edit.target))
+        if (hasStyleConflict()) return true
+        return Array.from(operations().values()).some(edits => {
+          if (!sharedGroupValid(edits)) return edits.some(edit => attached.has(edit.id))
+          return edits.some(edit => {
+            const entry = attached.get(edit.id)
+            if (entry) return entry.property !== 'button-size' && !isAttached(edit, entry)
+            return !conflicts.has(edit.id) && edit.restore === 'unique' && Boolean(findTarget(edit.target))
+          })
         })
       },
       hasStyleConflict,

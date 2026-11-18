@@ -8,7 +8,6 @@ export function completeHandoff(binding, journal, report, completedAt) {
   const pending = new Map(buildSourceHandoff(binding, journal).operations
     .filter(operation => operation.status === 'pending').map(operation => [operation.id, operation]))
   const completed = []
-  const retired = new Set()
   for (const { id, summary } of verified.map(item => item ?? {})) {
     const operation = pending.get(id)
     if (!operation || typeof summary !== 'string' || !summary.trim() || summary.length > 800) {
@@ -16,9 +15,14 @@ export function completeHandoff(binding, journal, report, completedAt) {
     }
     pending.delete(id)
     completed.push({ id, summary: summary.trim(), completedAt })
-    for (const change of operation.changes) retired.add(change.id)
   }
 
+  // A handoff can show only the edits needed to describe one source change.
+  // Completion must also retire its preview-only journal members.
+  const completedIds = new Set(completed.map(entry => entry.id))
+  const retired = new Set(journal.edits.filter(edit =>
+    !edit.undone && completedIds.has(edit.group ?? edit.id),
+  ).map(edit => edit.id))
   const retiredStyles = new Set(journal.edits.flatMap(edit =>
     retired.has(edit.id) && edit.pendingTextStyle ? [edit.pendingTextStyle.name] : []))
   const remaining = journal.edits.filter(edit => !retired.has(edit.id))

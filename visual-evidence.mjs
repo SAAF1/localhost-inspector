@@ -26,7 +26,7 @@ function decodeImage(image) {
 
 export async function saveVisualEvidence(root, binding, journal, id, route, image) {
   if (binding.visualEvidence !== true || !validId(binding.id) || !validId(id) ||
-      !journal.edits.some(edit => edit.id === id && edit.route === route && !edit.group &&
+      !journal.edits.some(edit => edit.id === id && edit.route === route && (!edit.group || edit.group === id) &&
         !edit.undone && edit.intent === 'feature-template' && edit.property !== 'button-size')) return false
   const bytes = decodeImage(image)
   if (!bytes) return false

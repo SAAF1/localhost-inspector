@@ -3,7 +3,7 @@
   let closeActive = () => {}
   ui.closeMenu = () => closeActive()
 
-  function mountPopup(anchor, popup, position, { closeOnPanelScroll = false, parent, onClose, matchAnchorWidth = true, fallbackFocus, trackSize = false } = {}) {
+  function mountPopup(anchor, popup, position, { closeOnPanelScroll = false, parent, onClose, matchAnchorWidth = true, fallbackFocus, trackSize = false, below = false } = {}) {
     ui.dismissTooltip()
     if (!parent) closeActive(false)
     const root = anchor.getRootNode()
@@ -46,6 +46,15 @@
       const width = popup.offsetWidth
       const [left, top] = position(rect, width)
       popup.style.left = Math.max(8, Math.min(left, viewport.innerWidth - width - 8)) + 'px'
+      if (below) {
+        const belowSpace = viewport.innerHeight - rect.bottom - 14
+        const aboveSpace = rect.top - 14
+        // Preserve one usable menu row when the trigger is near the bottom.
+        const above = belowSpace < 72 && aboveSpace > belowSpace
+        popup.style.maxHeight = Math.max(0, above ? aboveSpace : belowSpace) + 'px'
+        popup.style.top = (above ? rect.top - 6 - popup.offsetHeight : rect.bottom + 6) + 'px'
+        return
+      }
       const height = Math.min(popup.scrollHeight, viewport.innerHeight - 16)
       const y = parent && top + height > viewport.innerHeight - 8 ? rect.top - height - 2 : top
       popup.style.top = Math.max(8, Math.min(y, viewport.innerHeight - height - 8)) + 'px'
@@ -63,12 +72,19 @@
 
   ui.mountPopup = mountPopup
 
-  ui.openMenu = (anchor, options, current, onChoose, { label = 'Options', size = false, commands = false, parent, onPreview, onClose } = {}) => {
+  ui.openMenu = (anchor, options, current, onChoose, { label = 'Options', size = false, commands = false, description, parent, onPreview, onClose, below = false } = {}) => {
     const root = anchor.getRootNode()
     const menu = ui.element('div', 'li-menu' + (size ? ' li-size-menu' : ''))
     if (parent) menu.classList.add('li-settings-menu')
+    if (below) menu.classList.add('li-menu-below')
     menu.setAttribute('role', 'menu')
     menu.setAttribute('aria-label', label)
+    if (description) {
+      const message = ui.element('p', 'li-menu-description', description)
+      message.id = 'li-menu-description'
+      menu.setAttribute('aria-describedby', message.id)
+      menu.append(message)
+    }
     const list = ui.element('div', 'li-menu-list')
     menu.append(list)
     const buttons = options.map(([value, name, detail = {}]) => {
@@ -83,13 +99,17 @@
       if (!commands && !detail.command) button.setAttribute('aria-checked', String(value === current))
       const check = ui.element('span', 'li-menu-check')
       if (!commands && value === current) check.append(ui.icon('menuCheck'))
-      button.append(check)
+      if (!detail.destination) button.append(check)
       if (detail.icon) button.append(ui.icon(detail.icon))
       button.append(ui.element('span', '', name))
+      if (detail.destination) {
+        button.classList.add('li-menu-destination')
+        button.append(ui.icon('chevronRight'))
+      }
       if (onPreview) {
         button.onpointerenter = () => onPreview(value)
         button.onfocus = () => {
-          if (!list.querySelector('.li-menu-option:hover')) onPreview(value)
+          if (below ? button.matches(':focus-visible') : !list.querySelector('.li-menu-option:hover')) onPreview(value)
         }
       }
       button.onclick = () => { close(); onChoose(value, anchor) }
@@ -113,7 +133,7 @@
       const controls = Array.from(menu.querySelectorAll('button'))
       const index = controls.indexOf(root.activeElement)
       const moves = { ArrowDown: (index + 1) % controls.length, ArrowUp: (index - 1 + controls.length) % controls.length }
-      if (event.key in moves) { event.preventDefault(); controls[moves[event.key]].focus() }
+      if (controls.length && event.key in moves) { event.preventDefault(); controls[moves[event.key]].focus() }
       if (event.key === 'Home' || event.key === 'End') {
         event.preventDefault()
         buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus()
@@ -122,8 +142,10 @@
     const selected = Math.max(0, options.findIndex(([value]) => value === current))
     const close = mountPopup(anchor, menu, (rect, width) => [
       rect.right - width, parent ? rect.bottom + 3 : rect.top - selected * 24 - 8,
-    ], { parent, onClose })
-    buttons[selected]?.focus({ preventScroll: true })
+    ], { parent, onClose, below, closeOnPanelScroll: below })
+    menu.tabIndex = -1
+    const focusTarget = buttons[selected] ?? menu
+    focusTarget.focus({ preventScroll: true })
     buttons[selected]?.scrollIntoView({ block: 'nearest' })
     return close
   }

@@ -106,6 +106,23 @@ async function readCatalog(binding, kind = 'colors') {
   return catalog && verifyCatalog(binding, catalog, kind)
 }
 
+async function verifyPublishedDefinitions(binding, edits) {
+  for (const [kind, property, command] of [
+    ['colors', 'pendingColor', 'register-colors'],
+    ['text-styles', 'pendingTextStyle', 'register-text-styles'],
+  ]) {
+    const definitions = edits.flatMap(edit => edit[property] ? [edit[property]] : [])
+    if (!definitions.length) continue
+    const catalog = await readCatalog(binding, kind)
+    for (const { name, source } of definitions) {
+      if (catalog?.source !== source || !catalog.names.includes(name)) {
+        throw Error('Add ' + name + ' to the registered ' + kind + ' catalog with ' + command +
+          ' before completing this handoff. Keep the previously registered names.')
+      }
+    }
+  }
+}
+
 if (catalogKinds.has(mode)) {
   const [port, source, ...names] = args
   const origin = originFor(port)
@@ -349,6 +366,36 @@ function editFrom(record, catalog, group, pendingTextStyle) {
     target: journalTarget(target), viewport, colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,
   }
 }
+function groupedPaddingEdits(records, catalog, journal, shared) {
+  if (!Array.isArray(records) || (shared ? records.length < 4 || records.length > 40 || records.length % 2 : records.length !== 2)) {
+    throw Error('Invalid grouped padding operation')
+  }
+  const edits = records.map(record => editFrom(record, catalog))
+  const first = edits[0]
+  const name = records[0].sharedPadding
+  const horizontal = !shared && first.property === 'padding-left'
+  const [firstSide, secondSide] = horizontal ? ['padding-left', 'padding-right'] : ['padding-top', 'padding-bottom']
+  const keys = new Set()
+  const ids = new Set(edits.map(edit => edit.id))
+  if ((shared ? typeof name !== 'string' || !/^[a-z0-9_-]{1,80}$/i.test(name) : name !== undefined) ||
+      ids.size !== edits.length || journal.edits.some(edit => ids.has(edit.id))) {
+    throw Error('Invalid grouped padding operation')
+  }
+  for (let index = 0; index < edits.length; index += 2) {
+    const [top, bottom] = edits.slice(index, index + 2)
+    const { key, tag } = top.target
+    if ((shared && (!key || keys.has(key))) || tag !== first.target.tag || top.property !== firstSide ||
+      bottom.property !== secondSide || JSON.stringify(top.target) !== JSON.stringify(bottom.target) ||
+      [top, bottom].some((entry, offset) => entry.route !== first.route || entry.requested !== first.requested ||
+        Boolean(entry.spacingToken) !== Boolean(first.spacingToken) ||
+        (shared && entry.restore !== 'unique') || entry.intent !== featureTemplateScope || records[index + offset].sharedPadding !== name)) {
+      throw Error('Invalid grouped padding operation')
+    }
+    keys.add(key)
+  }
+  return edits.map(edit => ({ ...edit, group: first.id, sharedPadding: name }))
+}
+
 async function pendingTextStyleFrom(records, catalog, journal) {
   const pending = records[0]?.pendingTextStyle
   if (!pending) return null
@@ -467,7 +514,10 @@ async function handle(message) {
     throw error
   }
   if (message.type === 'complete') {
+    const originalEdits = journal.edits
     const { completed, retired } = completeHandoff(binding, journal, message.report, new Date().toISOString())
+    const retiredIds = new Set(retired)
+    await verifyPublishedDefinitions(binding, originalEdits.filter(edit => retiredIds.has(edit.id)))
     journal.revision++
     await atomic(file, journal)
     const imageCleanupFailed = await removeVisualEvidence(root, binding, retired)
@@ -492,6 +542,9 @@ async function handle(message) {
     const edit = buttonSizeEdit(message.record, await readButtonSize(binding))
     if (journal.edits.some(entry => entry.id === edit.id)) return { file, revision: journal.revision }
     journal.edits.push(edit)
+  } else if (message.type === 'saveSharedPadding' || message.type === 'savePairedPadding') {
+    const catalog = Array.isArray(message.records) && message.records.some(record => record?.spacingToken) ? await readCatalog(binding, 'spacing') : null
+    journal.edits.push(...groupedPaddingEdits(message.records, catalog, journal, message.type === 'saveSharedPadding'))
   } else if (message.type === 'saveTextStyle') {
     const first = message.records?.[0]
     const catalog = first?.textStyleToken || first?.pendingTextStyle || first?.pendingTextStyleName ? await readCatalog(binding, 'text-styles') : null
@@ -512,7 +565,7 @@ async function handle(message) {
   await atomic(file, journal)
   if (removed.length) await removeVisualEvidence(root, binding, removed.map(edit => edit.id))
   return { file, revision: journal.revision,
-    ...(message.type === 'save' && binding.visualEvidence === true ? { visualEvidence: true } : {}),
+    ...(binding.visualEvidence === true && ['save', 'saveTextStyle', 'saveSharedPadding', 'savePairedPadding'].includes(message.type) ? { visualEvidence: true } : {}),
   }
 }
 createServer(async (req, res) => {

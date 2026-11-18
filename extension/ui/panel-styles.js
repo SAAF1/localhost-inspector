@@ -14,6 +14,10 @@
       position: relative; inset: auto; height: var(--li-dock-height, 100vh); max-height: none;
       width: min(var(--li-panel-width), 100vw); border-radius: 0; border-left: 1px solid var(--li-border);
     }
+    :host([data-workspace-toolbar]) .li-panel { padding-top: var(--li-dock-workspace-top); }
+    :host([data-workspace-toolbar]) :is(.li-entry, #close-inspector) { display: none; }
+    :host([data-workspace-toolbar]) .li-header { min-height: 32px; }
+    :host([data-workspace-toolbar]) .li-header:not(:has(#parent:not([hidden]))) { display: none; }
     .li-panel-toolbar {
       min-height: 40px; flex: none; padding: 0 var(--li-inset);
       display: flex; align-items: center; justify-content: flex-end; gap: var(--li-gap);
