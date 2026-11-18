@@ -76,7 +76,20 @@ export async function capturePreviews(browser, output, map) {
           const response = await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 5500 })
           if (!response?.ok()) throw Error('Page unavailable')
           await page.waitForFunction(() => document.body.innerText.trim(), null, { timeout: 1600 })
-          for (const step of frame.steps) await locateTrigger(page, step).click({ timeout: 1400 })
+          for (const step of frame.steps) {
+            try {
+              await locateTrigger(page, step).click({ timeout: 1400 })
+            } catch (error) {
+              const trigger = locateTrigger(page, step, true)
+              const opened = new URL(page.url())
+              if (preset !== 'desktop' && opened.origin === origin && flowRoute(opened) === frame.route &&
+                  await trigger.count() === 1 && !(await trigger.isVisible())) {
+                const variants = (previews[frame.id] ??= {})
+                variants[preset] = { unavailable: 'hidden-control' }
+              }
+              throw error
+            }
+          }
           const deadline = Date.now() + 800
           while (!(await verify(page, frame, origin))) {
             if (Date.now() >= deadline) throw Error('Mapped state changed at this size')
@@ -98,14 +111,15 @@ export async function capturePreviews(browser, output, map) {
             Object.assign(variants[preset], { hug, hugSharp, height: expandedHeight })
           }
         } catch {
-          if (!previews[frame.id]?.[preset]) gaps.push({ id: frame.id, label: frame.label, preset })
+          if (!previews[frame.id]?.[preset]?.fixed) gaps.push({ id: frame.id, label: frame.label, preset,
+            reason: previews[frame.id]?.[preset]?.unavailable ?? 'capture-failed' })
         }
       }
     }
     const file = join(output, 'previews.json')
     await writeFile(file + '.tmp', JSON.stringify(previews))
     await rename(file + '.tmp', file)
-    console.log('Responsive previews:', Object.values(previews).reduce((count, variants) => count + Object.keys(variants).length, 0),
+    console.log('Responsive previews:', Object.values(previews).reduce((count, variants) => count + Object.values(variants).filter(view => view.fixed).length, 0),
       'of', frames.length * 3, 'states', gaps.length ? JSON.stringify(gaps) : '')
   } finally { await context.close() }
 }

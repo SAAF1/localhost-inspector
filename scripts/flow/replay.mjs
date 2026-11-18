@@ -16,13 +16,7 @@ export function waitFor(read, current) {
 }
 
 export function findControl(doc, step) {
-  const root = step.inMain ? doc.querySelector('main, [role="main"]') : doc
-  const controls = root?.querySelectorAll(step.role === 'tab' ? '[role="tab"]' : 'button') ?? []
-  const candidates = [...controls].filter(node => !node.disabled && !node.closest('th, [hidden], [inert]') &&
-    node.getClientRects().length && (!step.popup || node.hasAttribute('aria-haspopup')) &&
-    (node.getAttribute('role') || 'button') === step.role &&
-    (node.getAttribute('aria-label') || node.innerText || node.title || '').trim().replace(/\s+/g, ' ') === step.label)
-  return candidates.length === 1 ? candidates[0] : null
+  return observePage(doc, false, step)
 }
 
 export function openControl(control) {

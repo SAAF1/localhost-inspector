@@ -2,9 +2,10 @@ import { restoreStandardPreview } from './sharp-previews.mjs'
 
 export const frameLabelHeight = 45
 
-export function renderFrames(map, data, activate, viewOf, previews) {
+export function renderFrames(map, data, activate, viewOf, previews, switchToDesktop) {
   const cards = new Map()
   const rows = new Map()
+  const missingPreview = previews ? 'Couldn’t load preview' : 'Open live preview'
   for (const frame of data.frames) {
     const page = frame.route.split('?')[0]
     if (!rows.has(page)) rows.set(page, [])
@@ -20,14 +21,18 @@ export function renderFrames(map, data, activate, viewOf, previews) {
     image.loading = 'lazy'
     const unavailable = document.createElement('div')
     unavailable.className = 'flow-preview-unavailable'
-    unavailable.textContent = previews ? 'Preview unavailable at this size' : 'Open live preview'
+    unavailable.textContent = missingPreview
     image.addEventListener('error', () => {
       image.hidden = true
       if (image.isConnected) unavailable.hidden = false
     })
     button.append(text, image, unavailable)
-    button.addEventListener('click', () => void activate(frame))
-    const card = { id: frame.id, button, image, unavailable, labelHeight: frameLabelHeight, desktop: frame.image }
+    button.addEventListener('click', () => {
+      if (card.hiddenControl) void switchToDesktop(frame.id)
+      else void activate(frame)
+    })
+    const card = { id: frame.id, button, image, unavailable, hiddenControl: false,
+      labelHeight: frameLabelHeight, desktop: frame.image }
     rows.get(page).push(card)
     cards.set(frame.id, card)
     map.append(button)
@@ -54,9 +59,27 @@ export function renderFrames(map, data, activate, viewOf, previews) {
       let rowHeight = 0
       for (const card of row) {
         const { width, height, preset, mode, fixedHeight } = viewOf(card.id)
-        Object.assign(card, { x, y, width, height })
+        const variants = previews?.[card.id]
+        const saved = variants?.[preset]
+        const hiddenControl = saved?.unavailable === 'hidden-control'
+        const cardHeight = hiddenControl ? 176 : height
+        Object.assign(card, { x, y, width, height: cardHeight })
+        if (card.hiddenControl !== hiddenControl) {
+          card.hiddenControl = hiddenControl
+          card.unavailable.classList.toggle('compact', hiddenControl)
+          if (hiddenControl) {
+            const desktopOnly = ['tablet', 'phone'].every(size => variants?.[size]?.unavailable === 'hidden-control')
+            const reason = document.createElement('strong')
+            reason.textContent = desktopOnly ? 'Desktop only' : 'Hidden at this size'
+            const detail = document.createElement('div')
+            detail.textContent = 'The app hides this control at smaller sizes.'
+            const action = document.createElement('div')
+            action.className = 'flow-unavailable-action'
+            action.textContent = 'Switch canvas to Desktop'
+            card.unavailable.replaceChildren(reason, detail, action)
+          } else card.unavailable.textContent = missingPreview
+        }
         Object.assign(card.button.style, { left: x + 'px', top: y + 'px', width: width + 'px' })
-        const saved = previews?.[card.id]?.[preset]
         const fittingHug = mode === 'hug' && saved?.height === height
         const file = (fittingHug && saved.hug) || saved?.fixed || (preset === 'desktop' && card.desktop)
         const imageFile = fittingHug && saved.hug ? saved.hugSharp : saved?.sharp
@@ -68,10 +91,10 @@ export function renderFrames(map, data, activate, viewOf, previews) {
         card.image.width = width
         card.image.height = fittingHug || mode === 'fixed' ? height : fixedHeight
         card.unavailable.hidden = Boolean(file)
-        card.unavailable.style.height = height + 'px'
-        card.button.style.minHeight = height + frameLabelHeight + 'px'
+        card.unavailable.style.height = cardHeight + 'px'
+        card.button.style.minHeight = cardHeight + frameLabelHeight + 'px'
         x += width + 210
-        rowHeight = Math.max(rowHeight, height)
+        rowHeight = Math.max(rowHeight, cardHeight)
       }
       y += rowHeight + 174
     }

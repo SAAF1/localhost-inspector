@@ -28,7 +28,8 @@ const saveView = (id, view) => {
   else heights.delete(key)
 }
 const previewIndex = await fetch('./previews.json').then(response => response.ok ? response.json() : null).catch(() => null)
-const { cards, layout } = renderFrames(map, data, activate, viewOf, previewIndex)
+const { cards, layout } = renderFrames(map, data, activate, viewOf, previewIndex,
+  anchor => changeView({ preset: 'desktop', anchor }))
 const updateSharpPreviews = createSharpPreviews(cards)
 const framesById = new Map(data.frames.map(frame => [frame.id, frame]))
 const routeOf = frame => {
@@ -85,10 +86,12 @@ async function changeView(change) {
   resizing = true
   refreshViewControls()
   const current = () => preview === iframe && expanded && active === id
-  const { x, y } = cards.get(id)
+  const anchor = cards.get(change.anchor ?? id)
+  const { x, y } = anchor
+  const hiddenControl = previewIndex?.[id]?.[preset]?.unavailable === 'hidden-control'
   try {
-    let fitted = await fitFrame(iframe, frame, wanted, presets[preset], current)
-    if (!fitted && preset !== device && wanted.mode === 'hug' && current()) {
+    let fitted = hiddenControl ? null : await fitFrame(iframe, frame, wanted, presets[preset], current)
+    if (!hiddenControl && !fitted && preset !== device && wanted.mode === 'hug' && current()) {
       fitted = await fitFrame(iframe, frame, { preset, mode: 'fixed' }, presets[preset], current)
     }
     if (!current()) return
@@ -100,8 +103,8 @@ async function changeView(change) {
     device = preset
     if (fitted) saveView(id, fitted)
     layout()
-    camera.x += (x - cards.get(id).x) * camera.scale
-    camera.y += (y - cards.get(id).y) * camera.scale
+    camera.x += (x - anchor.x) * camera.scale
+    camera.y += (y - anchor.y) * camera.scale
     position()
     message('')
     if (!fitted) {
@@ -109,7 +112,8 @@ async function changeView(change) {
       iframe.style.visibility = 'hidden'
       setActive(null)
       resizing = false
-      await activate(frame)
+      const base = hiddenControl && data.frames.find(item => item.route === frame.route && !item.steps.length)
+      if (base || !hiddenControl) await activate(base || frame)
     }
   } finally {
     resizing = false
@@ -399,7 +403,8 @@ function fillsCanvas(card) {
 function warmAt(x, y, inspect = false) {
   const card = document.elementFromPoint(x, y)?.closest('.flow-frame')
   if (pendingCard || resizing) return
-  if (!expanded || !card || (!inspect && camera.scale < .5) || card.dataset.frame === active) {
+  if (!expanded || !card || cards.get(card.dataset.frame)?.hiddenControl ||
+      (!inspect && camera.scale < .5) || card.dataset.frame === active) {
     clearHover()
     return
   }

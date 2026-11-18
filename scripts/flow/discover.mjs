@@ -11,8 +11,8 @@ export async function repoRoutes(root) {
 
 export { observePage } from './page-state.mjs'
 
-export function locateTrigger(page, trigger) {
+export function locateTrigger(page, trigger, includeHidden = false) {
   const scope = trigger.inMain ? page.locator('main, [role="main"]').first() : page
-  const control = scope.getByRole(trigger.role, { name: trigger.label, exact: true })
+  const control = scope.getByRole(trigger.role, { name: trigger.label, exact: true, includeHidden })
   return trigger.popup ? control.and(page.locator('button[aria-haspopup]:not(th button)')) : control
 }
