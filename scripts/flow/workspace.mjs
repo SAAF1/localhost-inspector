@@ -46,6 +46,8 @@ let preparation
 let warmTimer
 let activateTimer
 let hoverCard
+let inspectHover
+let pointer
 let expanded = false
 let unmapped = false
 let resizing = false
@@ -139,17 +141,27 @@ function position() {
   preview.style.transform = 'scale(' + camera.scale + ')'
 }
 
+function setFrameSelected(selected) {
+  if (active) cards.get(active).button.setAttribute('aria-pressed', String(selected))
+  preview.toggleAttribute('data-frame-selected', Boolean(active && selected))
+}
+
 function setActive(id) {
-  if (active) {
-    cards.get(active).button.classList.remove('active')
-    cards.get(active).button.setAttribute('aria-pressed', 'false')
-  }
+  setFrameSelected(false)
+  if (active) cards.get(active).button.classList.remove('active')
   active = id
   refreshViewControls()
-  if (id) {
-    cards.get(id).button.classList.add('active')
-    cards.get(id).button.setAttribute('aria-pressed', 'true')
-  }
+  if (id) cards.get(id).button.classList.add('active')
+  setFrameSelected(Boolean(id))
+}
+
+function clearCanvasSelection() {
+  if (!expanded) return
+  const clearSelection = new Event('clear-workspace-selection', { cancelable: true })
+  if (dock.firstElementChild?.dispatchEvent(clearSelection) === false) return
+  clearHover()
+  if (candidate) cancelCandidate()
+  setFrameSelected(false)
 }
 
 function center(id) {
@@ -258,7 +270,7 @@ function clearHoverTimers() {
 
 function clearHover() {
   clearHoverTimers()
-  hoverCard = null
+  hoverCard = inspectHover = null
   if (candidate && !pendingCard) cancelCandidate()
 }
 
@@ -268,7 +280,10 @@ async function activate(frame) {
   if (frame.id === active && !preview.style.visibility && routeOf(preview) === frame.route &&
       matchesCheckpoint(preview.contentDocument, frame) &&
       (frame.steps.length || (currentFrame()?.id === frame.id && observeSurfaces(preview.contentDocument).every(surface =>
-        surface.role === 'tabpanel' || frame.checkpoint.some(item => item.role === surface.role && item.label === surface.label))))) return
+        surface.role === 'tabpanel' || frame.checkpoint.some(item => item.role === surface.role && item.label === surface.label))))) {
+    setFrameSelected(true)
+    return
+  }
   if (pendingCard === cards.get(frame.id).button) return
   const viewBeforeActivation = viewOf(frame.id)
   const { next, current, ready } = prepare(frame)
@@ -282,7 +297,7 @@ async function activate(frame) {
     preview.remove()
     if (attached) {
       dock.inert = true
-      dock.style.visibility = 'hidden'
+      if (!dock.hasAttribute('data-inspector-floating')) dock.style.visibility = 'hidden'
     }
     next.id = 'app-preview'
     next.className = ''
@@ -300,7 +315,10 @@ async function activate(frame) {
     if (attached) {
       try { await waitFor(() => next.dataset.inspectorDocument, current) }
       catch {
-        if (current()) message('Opened ' + frame.label + '. Inspector could not attach.')
+        if (current()) {
+          dock.style.visibility = 'hidden'
+          message('Opened ' + frame.label + '. Inspector could not attach.')
+        }
       } finally {
         if (next === preview && next.dataset.inspectorDocument) {
           dock.style.visibility = ''
@@ -366,7 +384,7 @@ viewport.addEventListener('wheel', event => {
   } else {
     panByWheel(event)
   }
-  warmAt(event.clientX, event.clientY)
+  warmAt(event.clientX, event.clientY, event.metaKey)
 }, { passive: false })
 
 function fillsCanvas(card) {
@@ -378,10 +396,10 @@ function fillsCanvas(card) {
   return width * height >= .75 * (right - board.left) * board.height
 }
 
-function warmAt(x, y) {
+function warmAt(x, y, inspect = false) {
   const card = document.elementFromPoint(x, y)?.closest('.flow-frame')
   if (pendingCard || resizing) return
-  if (!expanded || !card || camera.scale < .5 || card.dataset.frame === active) {
+  if (!expanded || !card || (!inspect && camera.scale < .5) || card.dataset.frame === active) {
     clearHover()
     return
   }
@@ -390,6 +408,12 @@ function warmAt(x, y) {
     hoverCard = card
   }
   const frame = framesById.get(card.dataset.frame)
+  if (inspect) {
+    inspectAfterHover(card, frame)
+    return
+  }
+  if (inspectHover) clearHoverTimers()
+  inspectHover = null
   const stillOver = () => expanded && hoverCard === card && !pendingCard && !resizing &&
     document.elementFromPoint(x, y)?.closest('.flow-frame') === card
   if (!warmTimer && preparation?.frame !== frame) {
@@ -410,14 +434,67 @@ function warmAt(x, y) {
   }
 }
 
+function inspectAfterHover(card, frame) {
+  if (inspectHover === card) return
+  clearHoverTimers()
+  inspectHover = card
+  warmTimer = setTimeout(async () => {
+    warmTimer = null
+    if (inspectHover !== card || !card.matches(':hover') || pendingCard || resizing) return
+    const warm = prepare(frame)
+    try {
+      await warm.ready
+      if (inspectHover === card && card.matches(':hover') && warm.current() && !pendingCard) void activate(frame)
+    } catch {
+      if (preparation === warm && !pendingCard) cancelCandidate()
+    }
+  }, 60)
+}
+
+function updateInspectModifier(event) {
+  if (!event.isTrusted || event.key !== 'Meta') return
+  if (!event.metaKey) {
+    if (inspectHover) clearHover()
+  } else if (pointer) {
+    warmAt(pointer.x, pointer.y, true)
+  }
+}
+
+viewport.addEventListener('click', event => {
+  if (event.isTrusted && !event.target.closest('.flow-frame, #workspace-toolbar, #localhost-inspector-dock')) {
+    clearCanvasSelection()
+  }
+})
+window.addEventListener('keydown', event => {
+  updateInspectModifier(event)
+  if (event.isTrusted && !event.defaultPrevented && event.key === 'Escape') clearCanvasSelection()
+})
+window.addEventListener('keyup', updateInspectModifier)
+window.addEventListener('blur', () => {
+  if (inspectHover) clearHover()
+})
+
+viewport.addEventListener('pointermove', event => {
+  if (event.pointerType !== 'mouse') return
+  const card = event.target.closest('.flow-frame')
+  pointer = card ? { x: event.clientX, y: event.clientY } : null
+  if (event.metaKey && card && card !== inspectHover && card.dataset.frame !== active) {
+    warmAt(event.clientX, event.clientY, true)
+  }
+})
 map.addEventListener('pointerover', event => {
   const card = event.target.closest('.flow-frame')
-  if (card && !card.contains(event.relatedTarget) && event.pointerType === 'mouse') warmAt(event.clientX, event.clientY)
+  if (card && !card.contains(event.relatedTarget) && event.pointerType === 'mouse') {
+    warmAt(event.clientX, event.clientY, event.metaKey)
+  }
 })
 
 map.addEventListener('pointerout', event => {
   const card = event.target.closest('.flow-frame')
-  if (card && !card.contains(event.relatedTarget)) clearHover()
+  if (card && !card.contains(event.relatedTarget)) {
+    pointer = null
+    clearHover()
+  }
 })
 
 function watchLiveFrame(frame) {
@@ -430,6 +507,7 @@ function watchLiveFrame(frame) {
     function lockAppClick(event) {
       if (!event.isTrusted || frame !== preview) return
       if (event.type === 'pointerdown' && candidate) cancelCandidate()
+      if (expanded && event.type === 'click' && event.button === 0) setFrameSelected(true)
       if (!expanded || (event.metaKey && event.button === 0)) return
       event.preventDefault()
       event.stopImmediatePropagation()
@@ -439,8 +517,10 @@ function watchLiveFrame(frame) {
     }
     function lockAppKey(event) {
       if (!event.isTrusted || frame !== preview) return
-      if (event.type === 'keydown' && candidate) cancelCandidate()
+      if (event.type === 'keydown' && candidate && event.key !== 'Meta') cancelCandidate()
+      updateInspectModifier(event)
       if (!expanded || event.key === 'Tab') return
+      if (event.type === 'keydown' && event.key === 'Escape') clearCanvasSelection()
       event.preventDefault()
       event.stopImmediatePropagation()
     }

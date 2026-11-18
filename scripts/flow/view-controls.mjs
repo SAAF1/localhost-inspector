@@ -12,11 +12,14 @@ export function connectViewControls({ apply, read, presets }) {
     inspector.disabled = dock.inert
     const open = dock.hasAttribute('data-inspector-open')
     inspector.setAttribute('aria-expanded', String(open))
-    inspector.title = open ? 'Collapse Inspector' : 'Open Inspector'
+    const floating = dock.hasAttribute('data-inspector-floating') && document.body.hasAttribute('data-expanded')
+    inspector.title = floating ? 'Dock Inspector' : open ? 'Collapse Inspector' : 'Open Inspector'
     inspector.setAttribute('aria-label', inspector.title)
     if (open) document.documentElement.style.setProperty('--li-workspace-panel-width', dock.offsetWidth + 'px')
   }
-  new MutationObserver(syncInspector).observe(dock, { childList: true, attributes: true })
+  const inspectorObserver = new MutationObserver(syncInspector)
+  inspectorObserver.observe(dock, { childList: true, attributes: true })
+  inspectorObserver.observe(document.body, { attributes: true, attributeFilter: ['data-expanded'] })
   syncInspector()
   inspector.addEventListener('click', () => dock.firstElementChild?.dispatchEvent(new Event('toggle-workspace-inspector')))
 

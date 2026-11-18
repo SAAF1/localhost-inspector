@@ -29,6 +29,11 @@ body:not([data-expanded]) .desktop-glyph, body[data-expanded] .flow-glyph { disp
   box-sizing: border-box; border: 0; border-left: 1px solid #e5e5e5; border-bottom: 1px solid #e5e5e5;
   border-radius: 0; box-shadow: none;
 }
+body[data-expanded] #viewport:has(#localhost-inspector-dock[data-inspector-floating]) #workspace-toolbar {
+  top: var(--action-inset); right: var(--action-inset);
+  width: min(var(--li-workspace-panel-width, 240px), calc(100% - 2 * var(--action-inset)));
+  border-left: 0; border-radius: 12px 12px 0 0; background: transparent;
+}
 #frame-view-toggle { margin-left: 12px; }
 #viewport:has(#localhost-inspector-dock[data-inspector-open]) #frame-view-toggle { margin-left: auto; }
 #frame-view-menu {
@@ -64,7 +69,17 @@ body:not([data-expanded]) .desktop-glyph, body[data-expanded] .flow-glyph { disp
   grid-column: 2;
   grid-row: 1;
 }
-body[data-expanded] #app-preview { position: absolute; transform-origin: top left; outline: 3px solid #2563c9; }
+body[data-expanded] #localhost-inspector-dock[data-inspector-floating] {
+  position: absolute; inset: var(--action-inset) var(--action-inset) var(--action-inset) auto;
+  --li-dock-height: calc(100dvh - 2 * var(--action-inset));
+  --li-dock-max-width: calc(100vw - 2 * var(--action-inset));
+  --li-dock-radius: 12px;
+  --li-dock-border-width: 1px;
+  border-radius: var(--li-dock-radius);
+  box-shadow: 0 2px 8px #0002;
+}
+body[data-expanded] #app-preview { position: absolute; transform-origin: top left; }
+body[data-expanded] #app-preview[data-frame-selected] { outline: 3px solid #2563c9; }
 .flow-candidate { position: absolute; visibility: hidden; pointer-events: none; border: 0; }
 #map { position: absolute; transform-origin: top left; }
 .flow-frame { grid-template-rows: 33px auto; align-content: start; cursor: pointer; position: absolute; display: grid; gap: 12px; padding: 0; background: none; border: 0; text-align: left; font: 500 27px system-ui; color: inherit; }

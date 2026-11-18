@@ -12,7 +12,9 @@
     }
     :host([data-docked]) .li-panel {
       position: relative; inset: auto; height: var(--li-dock-height, 100vh); max-height: none;
-      width: min(var(--li-panel-width), 100vw); border-radius: 0; border-left: 1px solid var(--li-border);
+      width: min(var(--li-panel-width), var(--li-dock-max-width, 100vw));
+      border-radius: var(--li-dock-radius, 0);
+      border: var(--li-dock-border-width, 0) solid var(--li-border); border-left-width: 1px;
     }
     :host([data-workspace-toolbar]) .li-panel { padding-top: var(--li-dock-workspace-top); }
     :host([data-workspace-toolbar]) :is(.li-entry, #close-inspector) { display: none; }

@@ -97,6 +97,12 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 */
 (() => {
   const ui = window.LocalhostInspector ||= {}
+  const ownerDocument = window.localhostInspectorDock?.ownerDocument ?? document
+  const family = 'Localhost Inspector Inter'
+  if (Array.from(ownerDocument.fonts).some(face => face.family === family && face.status === 'loaded')) {
+    ui.fontReady = Promise.resolve(true)
+    return
+  }
   const url = chrome.runtime.getURL('assets/inter-latin.woff2')
   const controller = new AbortController()
   let timeout
@@ -104,7 +110,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     const response = await fetch(url, { signal: controller.signal })
     if (!response.ok) throw Error('Inspector font unavailable')
     const data = await response.arrayBuffer()
-    const face = new FontFace('Localhost Inspector Inter', data, { weight: '100 900' })
+    const face = new FontFace(family, data, { weight: '100 900' })
     return face.load()
   }
   const deadline = new Promise((_, reject) => {
@@ -114,7 +120,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     }, 3000)
   })
   ui.fontReady = Promise.race([load(), deadline]).then(face => {
-    const ownerDocument = window.localhostInspectorDock?.ownerDocument ?? document
     ownerDocument.fonts.add(face)
     return true
   }).catch(error => {

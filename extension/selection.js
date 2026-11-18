@@ -1,6 +1,6 @@
 (() => {
   const ui = window.LocalhostInspector
-  ui.createSelection = ({ host, panel, get, onSelect, isCanvasExpanded, openPanel }) => {
+  ui.createSelection = ({ host, panel, get, onSelect, openPanel }) => {
     let selected
     let hovered
     let menuTarget
@@ -100,15 +100,6 @@
         panelWindow.addEventListener('keydown', updateCommand, options)
         panelWindow.addEventListener('keyup', updateCommand, options)
         panelWindow.addEventListener('blur', clearPointer, options)
-        if (isCanvasExpanded) {
-          const scope = { signal: listeners.signal }
-          panelWindow.addEventListener('click', event => {
-            if (event.isTrusted && isCanvasExpanded() && selected && ['viewport', 'map'].includes(event.target?.id)) select(null)
-          }, scope)
-          panelWindow.addEventListener('keydown', event => {
-            if (event.isTrusted && !event.defaultPrevented && event.key === 'Escape' && isCanvasExpanded() && selected) select(null)
-          }, { signal: listeners.signal })
-        }
         window.addEventListener('pagehide', () => listeners.abort(), { once: true })
       }
       watchPanelWindow()

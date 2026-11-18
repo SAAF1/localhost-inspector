@@ -99,15 +99,16 @@
     related.setAttribute('aria-hidden', 'true')
     outlineRoot.append(related, hoverOutline, outline)
     root.append(entry, panel)
-    function setOpen(open) {
+    function setOpen(open, floating = false) {
       panel.hidden = !open
       entry.setAttribute('aria-expanded', String(open))
       entry.hidden = open
       dock?.toggleAttribute('data-inspector-open', open)
+      if (workspaceToolbar) dock.toggleAttribute('data-inspector-floating', open && floating)
     }
     function mountDock() {
       dock.replaceChildren(host)
-      setOpen(dock.hasAttribute('data-inspector-open'))
+      setOpen(dock.hasAttribute('data-inspector-open'), dock.hasAttribute('data-inspector-floating'))
     }
     if (dock) {
       mountDock()

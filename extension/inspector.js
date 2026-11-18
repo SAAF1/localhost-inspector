@@ -2,10 +2,15 @@
   if (!window.phaseABridge) return
   const ui = window.LocalhostInspector
   const { host, root, panel, setOpen, get } = ui.createPanel()
+  const isCanvasExpanded = window.localhostInspectorIsCanvasExpanded
+  const isFloating = () => host.parentElement?.hasAttribute('data-inspector-floating')
   const selection = ui.createSelection({
-    host, panel, get, onSelect: renderSelection,
-    isCanvasExpanded: window.localhostInspectorIsCanvasExpanded,
-    openPanel: () => setOpen(true),
+    host, panel, get,
+    onSelect: () => {
+      if (!selection.current && isFloating()) setOpen(false)
+      renderSelection()
+    },
+    openPanel: () => setOpen(true, isCanvasExpanded?.()),
   })
   function renderSelection() {
     renderFields()
@@ -320,10 +325,12 @@
   const entry = get('entry')
   const closeInspector = get('close-inspector')
   function toggleInspector(moveFocus = true) {
-    const open = panel.hidden
+    const canvas = isCanvasExpanded?.()
+    const open = panel.hidden || (canvas && isFloating())
+    const floating = !open && canvas && Boolean(selection.current)
     ui.dismissTooltip()
     ui.closeMenu()
-    setOpen(open)
+    setOpen(open || floating, floating)
     selection.syncOutlines()
     if (moveFocus) (open ? closeInspector : entry).focus({ preventScroll: true })
   }
@@ -331,6 +338,10 @@
   closeInspector.onclick = toggleInspector
   if (host.hasAttribute('data-workspace-toolbar')) {
     host.addEventListener('toggle-workspace-inspector', () => toggleInspector(false))
+    host.addEventListener('clear-workspace-selection', event => {
+      if (root.querySelector('dialog[open]')) event.preventDefault()
+      else if (selection.current || isFloating()) selection.select(null)
+    })
   }
   get('parent').onclick = () => {
     const parent = selection.parent()
