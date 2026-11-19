@@ -173,3 +173,79 @@ test('native table row padding explains its owner and jumps to the chosen editab
     assert.equal(await menu.getByRole('menuitem').count(), 0)
   } finally { await h.close() }
 })
+
+test('template padding pairs follow regular and overdue rows through remount and stay reversible', async () => {
+  const h = await createHarness()
+  try {
+    await h.app.evaluate(() => {
+      const board = document.createElement('main')
+      board.id = 'row-templates'
+      board.innerHTML = `
+        <style>
+          .ledger-row { display:flex; padding: 6px 8px; }
+          .overdue { color:red; }
+          .ledger-row.override { padding-top:6px; padding-bottom:6px; }
+          .ledger-row.partial { padding-bottom:6px; }
+        </style>
+        <section><div id="regular" class="ledger-row" role="row" data-inspector-template="ledger/row">Record</div></section>
+        <section><div id="overdue" class="ledger-row overdue" role="row" data-inspector-template="ledger/row">Record</div></section>
+        <section><div id="override" class="ledger-row override" role="row" data-inspector-template="ledger/row">Record</div></section>
+        <section><div id="partial" class="ledger-row partial" role="row" data-inspector-template="ledger/row">Record</div></section>
+        <section><div id="independent" class="ledger-row" role="row" data-inspector-template="independent/row">Record</div></section>`
+      document.body.prepend(board)
+    })
+    const read = () => h.app.locator('.ledger-row').evaluateAll(nodes => Object.fromEntries(nodes.map(node => {
+      const style = getComputedStyle(node)
+      return [node.id, [style.paddingTop, style.paddingBottom, style.paddingLeft, style.paddingRight]]
+    })))
+    const initial = ['6px', '6px', '8px', '8px']
+    const padded = ['12px', '12px', '8px', '8px']
+    await h.open()
+    await h.select('#overdue')
+    await h.enter('Vertical padding', 12)
+    await h.settled()
+    assert.match(await h.host.locator('#status').textContent(), /padding sides do not share one verified scope/)
+    assert.deepEqual(await h.journal(), [])
+    assert.deepEqual(await read(), { regular: initial, overdue: initial, override: initial, partial: initial, independent: initial })
+    await h.app.locator('#partial').evaluate(node => node.parentElement.remove())
+    await h.host.getByRole('button', { name: 'Show 2 affected rows' }).waitFor()
+    await h.enter('Vertical padding', 12)
+    await h.settled()
+    assert.deepEqual(await read(), { regular: padded, overdue: padded, override: initial, independent: initial })
+    const records = await h.journal()
+    assert.deepEqual(records.map(edit => [edit.property, edit.target.id, edit.template]),
+      [['padding-top', 'overdue', 'ledger/row'], ['padding-bottom', 'overdue', 'ledger/row']])
+    assert.equal(records[0].group, records[1].group)
+    await h.app.evaluate(() => {
+      const board = document.querySelector('#row-templates')
+      const first = document.querySelector('#regular').parentElement
+      const second = document.querySelector('#overdue').parentElement
+      const fresh = [second, first].map(section => {
+        const copy = section.cloneNode(true)
+        copy.firstElementChild.removeAttribute('style')
+        return copy
+      })
+      first.remove()
+      second.remove()
+      board.append(...fresh)
+    })
+    await h.page.waitForFunction(() => getComputedStyle(document.querySelector('#regular')).paddingBottom === '12px')
+    assert.deepEqual(await read(), { regular: padded, overdue: padded, override: initial, independent: initial })
+    await h.select('#regular')
+    await h.enter('Horizontal padding', 10)
+    await h.settled()
+    const both = ['12px', '12px', '10px', '10px']
+    assert.deepEqual(await read(), { regular: both, overdue: both, override: ['6px', '6px', '10px', '10px'], independent: initial })
+    await h.previewAction('Undo last preview')
+    await h.settled()
+    assert.deepEqual(await read(), { regular: padded, overdue: padded, override: initial, independent: initial })
+    // An app takeover of either side removes the other side of the pair for that row.
+    await h.app.locator('#overdue').evaluate(node => { node.style.paddingTop = '14px' })
+    await h.page.waitForFunction(() => getComputedStyle(document.querySelector('#overdue')).paddingBottom === '6px')
+    assert.deepEqual(await read(), { regular: padded, overdue: ['14px', '6px', '8px', '8px'], override: initial, independent: initial })
+    await h.previewAction('Undo last preview')
+    await h.settled()
+    assert.deepEqual(await read(), { regular: initial, overdue: ['14px', '6px', '8px', '8px'], override: initial, independent: initial })
+    assert.deepEqual(await h.journal(), [])
+  } finally { await h.close() }
+})

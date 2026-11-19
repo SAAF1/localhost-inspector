@@ -219,3 +219,23 @@ test('pressing Enter and then opening Create saves a custom Fill only once', asy
     assert.equal(await h.css('background-color'), 'rgb(255, 255, 255)')
   } finally { await h.close() }
 })
+
+test('an explicitly inherited text color identifies its own source token even when another form paints identically', async () => {
+  const h = await createHarness({
+    ...options,
+    appStyles: options.appStyles + ' .save-label { color: inherit }',
+  })
+  try {
+    await h.app.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend',
+        '<form style="color: var(--accent)"><button type="button"><span id="profile-save" class="save-label">Save</span></button></form>' +
+        '<form style="color: var(--another)"><button type="button"><span id="billing-save" class="save-label">Save</span></button></form>')
+      for (const button of document.querySelectorAll('form > button')) button.style.color = 'inherit'
+    })
+    await h.open()
+    await h.select('#profile-save')
+    assert.equal(await action(h, 'Text color variable accent').count(), 1)
+    await h.select('#billing-save')
+    assert.equal(await action(h, 'Text color variable another').count(), 1)
+  } finally { await h.close() }
+})

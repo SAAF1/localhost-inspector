@@ -57,3 +57,15 @@ test('an unrelated baseline on a lookalike does not block removal', () => {
   assert.deepEqual(removePendingEdit([first, later], 'first'),
     { edits: [later], removed: [first], rebased: [] })
 })
+
+test('removing a template edit only rebases later edits to the same CSS declaration', () => {
+  const target = { tag: 'span', slot: 'status' }
+  const normal = { ...change('normal', '8px', '12px', target), template: 'status', templateSourceFingerprint: 'a'.repeat(64) }
+  const special = { ...normal, ...change('special', '12px', '16px', target), templateSourceFingerprint: 'b'.repeat(64) }
+  const later = { ...normal, ...change('later', '12px', '20px', target) }
+  assert.deepEqual(removePendingEdit([normal, special, later], normal.id), {
+    removed: [normal], rebased: [{ id: later.id, before: '8px' }], edits: [special, { ...later, before: '8px' }],
+  })
+  const legacy = { ...special, templateSourceFingerprint: undefined }
+  assert.throws(() => removePendingEdit([normal, legacy], normal.id), /can’t tell whether a newer edit/)
+})

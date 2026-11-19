@@ -88,7 +88,7 @@
   }
 
   ui.paddingControls = (context, controls, refresh) => {
-    const { node, disabled, paddingCount, hasPaddingPreview, commitPaddingPair } = context
+    const { node, disabled, paddingCount, paddingTemplate, hasPaddingPreview, commitPaddingPair } = context
     if (!ui.canApplyPadding(context.style)) {
       return ui.stack('Padding', ui.row(
         controlledPaddingField(context, 'Horizontal', 'paddingHorizontal'),
@@ -139,13 +139,14 @@
       values.append(ui.row(axis('horizontal', 'left', 'right', 'paddingHorizontal'), axis('vertical', 'top', 'bottom', 'paddingVertical'), toggle))
     }
     if (!expanded && paddingCount && !disabled) {
-      const scope = ui.element('button', 'li-padding-scope', paddingCount + ' rows')
+      const item = paddingTemplate && node.getAttribute('role') !== 'row' ? 'elements' : 'rows'
+      const scope = ui.element('button', 'li-padding-scope', paddingCount + ' ' + item)
       scope.type = 'button'
-      scope.setAttribute('aria-label', 'Show ' + paddingCount + ' affected rows')
+      scope.setAttribute('aria-label', 'Show ' + paddingCount + ' affected ' + item)
       scope.prepend(ui.icon('link'))
       ui.setTooltip(scope, 'Shared vertical padding')
       group.append(scope)
-    } else if (!expanded && !disabled && (node.getAttribute('role') === 'row' || hasPaddingPreview)) {
+    } else if (!paddingTemplate && !expanded && !disabled && (node.getAttribute('role') === 'row' || hasPaddingPreview)) {
       const text = node.getAttribute('role') === 'row' ? 'This row only in preview' : 'This selection only in preview'
       group.append(ui.element('span', 'li-padding-scope', text))
     }

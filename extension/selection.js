@@ -1,6 +1,6 @@
 (() => {
   const ui = window.LocalhostInspector
-  ui.createSelection = ({ host, panel, get, onSelect, openPanel, inspect }) => {
+  ui.createSelection = ({ host, panel, get, onSelect, openPanel, inspect, relatedPadding }) => {
     let selected
     let hovered
     let menuTarget
@@ -25,7 +25,7 @@
     function syncOutline() {
       positionOutline(get('outline'), panel.hidden ? null : selected)
       const layer = get('related-outlines')
-      const peers = showRelated && !panel.hidden ? ui.sharedPadding.members(selected).filter(node => node !== selected) : []
+      const peers = showRelated && !panel.hidden ? relatedPadding().filter(node => node.isConnected && node !== selected) : []
       while (layer.childElementCount > peers.length) layer.lastElementChild.remove()
       for (const [index, node] of peers.entries()) {
         if (!layer.children[index]) layer.append(ui.element('div', 'li-outline li-outline-related'))

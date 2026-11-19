@@ -193,6 +193,12 @@ function center(id, width = viewport.clientWidth) {
   camera.y = Math.round((viewport.clientHeight - card.height * camera.scale) / 2 - card.y * camera.scale)
 }
 
+function focusEditFrame() {
+  camera.scale = .9
+  center(active, viewport.clientWidth - dock.offsetWidth)
+  position()
+}
+
 function setPending(card) {
   clearTimeout(pendingIndicatorTimer)
   pendingCard?.removeAttribute('aria-busy')
@@ -475,8 +481,7 @@ dock.addEventListener('open-inspector-edit-route', event => {
     event.preventDefault()
     clearHover()
     if (candidate) cancelCandidate()
-    center(active, viewport.clientWidth - dock.offsetWidth)
-    position()
+    focusEditFrame()
     return
   }
   const frame = stateFrame ?? matchingFrames.find(frame => !frame.steps.length) ??
@@ -498,9 +503,7 @@ dock.addEventListener('open-inspector-edit-route', event => {
   }
   void activate(frame, frameState).then(opened => {
     if (!opened) notifyUnavailable('unavailable')
-    if (active !== frame.id || !expanded) return
-    center(active, viewport.clientWidth - dock.offsetWidth)
-    position()
+    if (opened && active === frame.id && expanded) focusEditFrame()
   })
 }, true)
 

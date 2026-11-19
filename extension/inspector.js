@@ -6,6 +6,7 @@
   const isFloating = () => host.parentElement?.hasAttribute('data-inspector-floating')
   const selection = ui.createSelection({
     host, panel, get,
+    relatedPadding: () => paddingOutlineMembers,
     onSelect: () => {
       if (!selection.current && isFloating()) setOpen(false)
       renderSelection()
@@ -37,6 +38,7 @@
   const fields = get('fields')
   let renderedSelection
   let scopeHovered = false
+  let paddingOutlineMembers = []
   let busy = false
   let loadingRoute = true
   let comparing = false
@@ -57,7 +59,10 @@
   let savedRoute
   let scopedPreviewTargets = false
   let landmarkPreviewTargets = false
+  let sectionPreviewTargets = false
   let templatePreviews = false
+  let templateSourcePreviews = false
+  let templatePaddingPreviews = false
   let projectWideRevert = false
   let refreshing = false
   let editNavigation = 0
@@ -288,6 +293,7 @@
     if (node !== renderedSelection) {
       scopeHovered = false
       renderedSelection = node
+      paddingOutlineMembers = []
       fields.replaceChildren()
     }
     if (!hasSelection) {
@@ -299,11 +305,13 @@
       return
     }
     const version = activeRouteVersion
-    const sharedPadding = paddingMembers(node)
+    const verticalPadding = paddingScope(node, 'vertical')
+    paddingOutlineMembers = verticalPadding.members
     try {
       ui.renderInspector(fields, {
         node, style: getComputedStyle(node), disabled: comparing || loadingRoute || journalRevision === null, run, colorCatalog, spacingCatalog,
-        paddingCount: sharedPadding.length,
+        paddingCount: verticalPadding.members.length > 1 ? verticalPadding.members.length : 0,
+        paddingTemplate: verticalPadding.template,
         previewRelated: resolve => selection.previewRelated(resolve && (() =>
           selection.current === node ? resolve() : null)),
         selectRelated: target => {
@@ -312,7 +320,7 @@
           panel.focus({ preventScroll: true })
         },
         hasPaddingPreview: recovery.hasVerticalPaddingPreview(node),
-        commitPaddingPair: (axis, requested, options) => commitPaddingPair(node, version, axis, sharedPadding, requested, options),
+        commitPaddingPair: (axis, requested, options) => commitPaddingPair(node, version, axis, axis === 'vertical' ? verticalPadding : paddingScope(node, axis), requested, options),
         pendingColorFor: target => recovery.pendingColorFor(target),
         textStyleCatalog, textStyleUnavailable,
         pendingTextStyles: recovery.pendingTextStyles(),
@@ -575,20 +583,25 @@
     const version = activeRouteVersion
     const isCurrent = () => isCurrentRoute(editRoute, version)
     const target = ui.describePreviewTarget(node)
-    const template = templatePreviews && !tokenOptions?.pendingColor ? ui.templatePreview.of(node) : undefined
+    const marker = templatePreviews && !tokenOptions?.pendingColor ? ui.templatePreview.of(node) : undefined
+    const source = marker ? recovery.templateSource(node, property) : undefined
+    const template = source !== null && (source === undefined || templateSourcePreviews) ? marker : undefined
     const sourceContext = ui.describeSourceContext(node)
     const selected = selection.current
     const evidence = ++evidenceVersion
     const entry = await apply(node, property, requested, isCurrent, tokenOptions)
     entry.liveTarget = target
-    const sameTarget = () => ui.matchesPreviewTarget(node, target) && (!template || ui.templatePreview.of(node) === template)
+    const sameTarget = () => ui.matchesPreviewTarget(node, target) && (!template ||
+      (ui.templatePreview.of(node) === template && recovery.templateSource(node, property, entry) === source))
     if (!isCurrent() || !sameTarget()) {
       discardTemporary(entry)
       throw Error('Selection changed. Earlier saved changes remain available to Undo.')
     }
     let edit, captureEnabled
     try {
-      edit = await editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template })
+      const templateSourceFingerprint = template ? await ui.templateSourceFingerprint(source) : undefined
+      edit = await editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template, templateSourceFingerprint })
+      if (!isCurrent() || !sameTarget()) throw Error('Selection changed. Try the edit again.')
       const result = await write({ type: 'save', record: edit }, editRoute, version)
       captureEnabled = result.visualEvidence === true
     } catch (error) {
@@ -614,53 +627,107 @@
     }
     if (template) await restore(editRoute, version)
     reportRecovery()
+    if (marker && !template && sameTarget()) status('Preview applies to the selected element. Shared CSS scope could not be verified.')
   }
-  function paddingMembers(node) {
-    const members = ui.sharedPadding.members(node)
-    return members.every(peer => ui.sharedPadding.properties.every(property =>
-      canEdit(peer, property) && ui.supportsSpacingVariable(peer, property),
-    )) ? members : []
+  const paddingProperties = axis => axis === 'vertical' ? ui.sharedPadding.properties : ['padding-left', 'padding-right']
+
+  function paddingScope(node, axis, pending) {
+    const template = templatePaddingPreviews ? ui.templatePreview.of(node) : undefined
+    const properties = paddingProperties(axis)
+    const supports = peer => properties.every(property => canEdit(peer, property) && ui.supportsSpacingVariable(peer, property))
+    if (template) {
+      const candidates = ui.templatePreview.nodes({ template, target: { tag: node.localName, slot: node.getAttribute('data-slot') } })
+      const style = getComputedStyle(node)
+      const baseline = properties.map(property => pending?.get(node)?.get(property)?.before ?? style.getPropertyValue(property))
+      const sourceOf = (peer, property) => recovery.templateSource(peer, property, pending?.get(peer)?.get(property))
+      const sources = properties.map(property => sourceOf(node, property))
+      let blocked = sources.includes(null) || (!templateSourcePreviews && sources.some(source => typeof source === 'string'))
+      const members = blocked ? [] : candidates.filter(peer => {
+        const owners = peer === node ? sources : properties.map(property => sourceOf(peer, property))
+        const matches = sources.filter((source, index) => source === owners[index]).length
+        // A record sharing just one side would receive a different source
+        // change from the two-side preview.
+        if (owners.includes(null) || matches === 1) {
+          blocked = true
+          return false
+        }
+        if (!matches) return false
+        const peerStyle = getComputedStyle(peer)
+        if (!supports(peer) || !properties.every((property, index) =>
+          (pending?.get(peer)?.get(property)?.before ?? peerStyle.getPropertyValue(property)) === baseline[index])) {
+          blocked = true
+          return false
+        }
+        return true
+      })
+      return { template, candidates, members: blocked ? [] : members, sources, blocked: blocked || !members.includes(node) }
+    }
+    const members = axis === 'vertical' ? ui.sharedPadding.members(node) : []
+    return { members: members.every(supports) ? members : [] }
   }
 
-  async function commitPaddingPair(selected, version, axis, sharedMembers, requested, options) {
+  async function commitPaddingPair(selected, version, axis, scope, requested, options) {
     const editRoute = currentRoute
     const isCurrent = () => isCurrentRoute(editRoute, version) && selection.current === selected
     if (!isCurrent() || comparing || !selected.isConnected || journalRevision === null) {
       throw Error('Selection changed. Try the edit again.')
     }
-    const shared = axis === 'vertical' && sharedMembers.length > 0
-    const members = shared ? sharedMembers : [selected]
-    const properties = axis === 'vertical' ? ui.sharedPadding.properties : ['padding-left', 'padding-right']
+    const { template, members: sharedMembers } = scope
+    const shared = !template && axis === 'vertical' && sharedMembers.length > 0
+    const members = template || shared ? sharedMembers : [selected]
+    const properties = paddingProperties(axis)
     const sharedPadding = shared ? selected.getAttribute(ui.sharedPadding.attribute) : undefined
+    const sameSet = (left, right) => {
+      if (left.length !== right.length) return false
+      const current = new Set(left)
+      return right.every(node => current.has(node))
+    }
+    const pending = new Map()
     function sameMembers() {
+      if (template) {
+        const current = paddingScope(selected, axis, pending)
+        return current.template === template && !current.blocked &&
+          sameSet(current.candidates, scope.candidates) && sameSet(current.members, members) &&
+          scope.sources.every((source, index) => source === current.sources[index])
+      }
       if (axis !== 'vertical') return true
-      const current = paddingMembers(selected)
-      return current.length === sharedMembers.length &&
-        sharedMembers.every(node => current.includes(node)) &&
+      const current = paddingScope(selected, axis)
+      return !current.template && sameSet(current.members, sharedMembers) &&
         (!shared || selected.getAttribute(ui.sharedPadding.attribute) === sharedPadding)
     }
+    if (scope.blocked) throw Error('These padding sides do not share one verified scope. Edit the sides separately.')
     if (!sameMembers()) throw Error('The shared rows changed. Try the edit again.')
     if (options?.spacingToken && members.every(node => properties.every(property =>
       node.style.getPropertyValue(property) === requested && ui.spacingVariableMatches(node, property, options.spacingToken.name),
     ))) return
     const entries = []
     const targets = new Map([selected, ...members.filter(peer => peer !== selected)].map(node => [node, {
-      target: ui.describePreviewTarget(node), sourceContext: ui.describeSourceContext(node),
+      target: ui.describePreviewTarget(node),
+      sourceContext: !template || node === selected ? ui.describeSourceContext(node) : undefined,
     }]))
     const evidence = ++evidenceVersion
     let records, captureEnabled
     try {
       for (const [node, { target }] of targets) {
+        const sides = new Map()
+        if (template) pending.set(node, sides)
         for (const property of properties) {
           if (!canEdit(node, property)) throw Error('The selected padding cannot be edited.')
           const entry = await apply(node, property, requested, isCurrent, options)
           entry.liveTarget = target
           entries.push(entry)
+          if (template) sides.set(property, entry)
+          if (template && entry.before !== entries[properties.indexOf(property)].before) {
+            throw Error('The shared padding changed. Try the edit again.')
+          }
         }
       }
-      records = await Promise.all(entries.map(async entry => ({
+      const journalEntries = template ? entries.slice(0, properties.length) : entries
+      records = await Promise.all(journalEntries.map(async entry => ({
         ...await editRecord(entry, entry.liveTarget, {
-          editRoute, sourceContext: targets.get(entry.node).sourceContext, tokenOptions: options,
+          editRoute, sourceContext: targets.get(entry.node).sourceContext, tokenOptions: options, template,
+          templateSourceFingerprint: template
+            ? await ui.templateSourceFingerprint(scope.sources[properties.indexOf(entry.property)]) : undefined,
         }),
         sharedPadding,
       })))
@@ -680,10 +747,10 @@
       if (currentRoute === editRoute) window.phaseAInspectorReady = loadRoute()
       return
     }
+    if (attached) for (const entry of entries) temporary.delete(entry)
     records.forEach((record, index) => {
-      const entry = entries[index]
-      if (attached) temporary.delete(entry)
-      recovery.remember({ ...record, group: records[0].id }, attached ? entry : undefined)
+      const peers = template && attached ? entries.slice(2).filter(entry => entry.property === record.property) : []
+      recovery.remember({ ...record, group: records[0].id }, attached ? entries[index] : undefined, peers)
     })
     if (attached && captureEnabled) {
       ui.captureEditEvidence?.(selected, panel, records[0], () => evidence === evidenceVersion &&
@@ -692,9 +759,10 @@
     recoveryRequested ||= !attached
     reportRecovery()
   }
-  async function editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template }) {
+  async function editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template, templateSourceFingerprint }) {
     const capturedState = template ? undefined : readFrameState()
     const frameState = capturedState && /^[a-f0-9]{64}$/.test(capturedState) ? capturedState : undefined
+    if (target.anchor?.kind === 'section' && !sectionPreviewTargets) target = ui.describePreviewTarget(entry.node, false)
     const journalTarget = target.anchor && (!scopedPreviewTargets ||
       (target.anchor.kind === 'landmark' && !landmarkPreviewTargets))
       ? { tag: target.tag, id: target.id, slot: target.slot, key: target.key }
@@ -704,6 +772,7 @@
       requested: entry.requested, observed: entry.observed, ...tokenOptions,
       restore: template || (capturedState !== 'unverified' && ui.findPreviewTarget(journalTarget, entry.node) === entry.node) ? 'unique' : 'ambiguous',
       viewport: { width: innerWidth, height: innerHeight }, frameState, ...(template ? { template } : {}),
+      ...(templateSourceFingerprint ? { templateSourceFingerprint } : {}),
       intent: 'feature-template', sourceContext,
     }
   }
@@ -962,7 +1031,10 @@
     savedRoute = snapshot.route
     scopedPreviewTargets = snapshot.scopedPreviewTargets === true
     landmarkPreviewTargets = snapshot.landmarkPreviewTargets === true
+    sectionPreviewTargets = snapshot.sectionPreviewTargets === true
     templatePreviews = snapshot.templatePreviews === true
+    templateSourcePreviews = snapshot.templateSourcePreviews === true
+    templatePaddingPreviews = snapshot.templatePaddingPreviews === true
     projectWideRevert = snapshot.projectWideRevert === true
     if (Array.isArray(snapshot.pending)) pendingRows = snapshot.pending
   }
@@ -982,7 +1054,10 @@
     journalRevision = null
     scopedPreviewTargets = false
     landmarkPreviewTargets = false
+    sectionPreviewTargets = false
     templatePreviews = false
+    templateSourcePreviews = false
+    templatePaddingPreviews = false
     projectWideRevert = false
     colorCatalog = null
     spacingCatalog = null
@@ -1054,13 +1129,25 @@
     if (!records.length) return
     onRouteChange()
     selection.refresh()
-    const scopeChanged = records.some(record => record.type === 'childList' ||
-      [ui.sharedPadding.attribute, 'data-inspector-target', 'hidden'].includes(record.attributeName))
     const selected = selection.current
-    if (scopeChanged && !busy && !loadingRoute && selected?.parentElement &&
-      (selected.hasAttribute(ui.sharedPadding.attribute) || fields.querySelector('button.li-padding-scope')) &&
-      records.some(record => record.target === selected || record.target === selected.parentElement ||
-        record.target.parentElement === selected.parentElement)) renderFields({ keepPopup: true })
+    if (!busy && !loadingRoute && selected?.parentElement) {
+      const template = templatePaddingPreviews && ui.templatePreview.of(selected)
+      const marker = ui.templatePreview.attribute
+      const matchesTemplate = node => ui.templatePreview.of(node) === template
+      const templateChanged = template && records.some(record => {
+        if (record.type === 'attributes') return matchesTemplate(record.target) || paddingOutlineMembers.includes(record.target)
+        if (record.type !== 'childList') return false
+        const selector = '[' + marker + '="' + CSS.escape(template) + '"]'
+        return [...record.addedNodes, ...record.removedNodes].some(node =>
+          node instanceof Element && (node.matches(selector) || node.querySelector(selector)))
+      })
+      const legacyChanged = (selected.hasAttribute(ui.sharedPadding.attribute) || fields.querySelector('button.li-padding-scope')) &&
+        records.some(record => (record.type === 'childList' ||
+          [ui.sharedPadding.attribute, marker, 'data-inspector-target', 'hidden'].includes(record.attributeName)) &&
+          (record.target === selected || record.target === selected.parentElement ||
+            record.target.parentElement === selected.parentElement))
+      if (templateChanged || legacyChanged) renderFields({ keepPopup: true })
+    }
     const styleChanges = records.filter(record => ['style', 'class', 'data-theme'].includes(record.attributeName))
     const node = selection.current
     if (isCanvasExpanded?.() && colorCatalog && styleChanges.some(record =>

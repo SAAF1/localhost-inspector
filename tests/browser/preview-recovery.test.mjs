@@ -475,3 +475,74 @@ test('an older helper stores a scoped candidate as session-only', async () => {
     assert.equal(await h.css('font-size', 'main h1'), '30px')
   } finally { await h.close() }
 })
+
+test('section context recovers matching copy only within its original independently named section', async () => {
+  const h = await createHarness()
+  try {
+    await h.app.evaluate(() => {
+      const main = document.body.appendChild(document.createElement('main'))
+      main.id = 'app'
+      for (const title of ['River conditions', 'Trail access']) {
+        const section = main.appendChild(document.createElement('section'))
+        section.innerHTML = '<header><h2></h2></header><div><h3>Current outlook</h3><p>Updated this morning</p></div>'
+        section.querySelector('h2').textContent = title
+      }
+    })
+    const original = 'main section:first-child p'
+    const peer = 'main section:last-child p'
+    const go = async path => {
+      await h.app.evaluate(path => history.pushState(null, '', path), path)
+      await h.app.evaluate(() => window.phaseAInspectorReady)
+    }
+    const base = await h.css('font-size', original)
+    await h.open()
+    await h.select(original)
+    await h.enter('Font size', 29)
+    await h.settled()
+    const [edit] = await h.journal()
+    assert.equal(edit.restore, 'unique')
+    assert.deepEqual(edit.target.anchor, { kind: 'section', value: 'section', path: 'div>p' })
+    assert.doesNotMatch(JSON.stringify(edit), /River conditions|Trail access|Updated this morning/i)
+    await go('/other')
+    await h.app.locator('main').evaluate(main => main.replaceWith(main.cloneNode(true)))
+    await go('/')
+    assert.equal(await h.css('font-size', original), '29px')
+    assert.equal(await h.css('font-size', peer), base)
+
+    // An identically named region is ambiguous, even when its copy and classes agree.
+    await h.app.locator('main section:last-child h2').evaluate(heading => { heading.textContent = 'River conditions' })
+    await h.app.waitForFunction(expected => [...document.querySelectorAll('main p')].every(p => getComputedStyle(p).fontSize === expected), base)
+    await h.app.locator('main section:last-child h2').evaluate(heading => { heading.textContent = 'Trail access' })
+    await h.app.waitForFunction(() => getComputedStyle(document.querySelector('main p')).fontSize === '29px')
+
+    await h.app.locator(original).evaluate(p => document.body.append(p))
+    await h.app.waitForFunction(expected => getComputedStyle(document.body.lastElementChild).fontSize === expected, base)
+    assert.equal(await h.css('font-size', peer), base)
+    await go('/other')
+    await h.app.locator('main section:first-child').evaluate(section => section.remove())
+    await go('/')
+    assert.equal(await h.css('font-size', peer), base)
+  } finally { await h.close() }
+})
+
+test('section recovery refuses self-labelled headings and unkeyed record sections; older helpers keep their prior anchors', async () => {
+  for (const legacySectionHelper of [false, true]) {
+    const h = await createHarness({ legacySectionHelper })
+    try {
+      await h.app.evaluate(() => {
+        document.body.insertAdjacentHTML('beforeend',
+          '<section><h2>Account setup</h2><p>Get started today</p></section>' +
+          '<ul><li><section><h2>Order totals</h2><p>Total due</p></section></li></ul>')
+      })
+      await h.open()
+      for (const selector of ['body > section p', 'body > section h2', 'li section p']) {
+        await h.select(selector)
+        await h.enter('Font size', 27)
+        await h.settled()
+      }
+      const edits = await h.journal()
+      assert.deepEqual(edits.map(edit => edit.restore), [legacySectionHelper ? 'ambiguous' : 'unique', 'ambiguous', 'ambiguous'])
+      assert.equal(edits[0].target.anchor?.kind, legacySectionHelper ? undefined : 'section')
+    } finally { await h.close() }
+  }
+})

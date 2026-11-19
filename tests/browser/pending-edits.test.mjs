@@ -113,7 +113,7 @@ test('compact pending review works in Localhost and Canvas, and zoom changes the
   } finally { await h.close() }
 })
 
-test('clicking a pending edit centers its Canvas frame even when its element cannot be restored', async () => {
+test('clicking a pending edit centers its Canvas frame at 90% even when its element cannot be restored', async () => {
   const journal = [
     { ...otherEdit, id: 'home-edit', route: '/', restore: 'ambiguous' },
     { ...otherEdit, restore: 'ambiguous', requested: '6px' },
@@ -129,15 +129,24 @@ test('clicking a pending edit centers its Canvas frame even when its element can
     await h.showEdits()
     const viewport = h.page.locator('#viewport')
     const frame = h.page.locator('#app-preview')
+    const dock = h.page.locator('#localhost-inspector-dock')
+    const zoom = h.page.getByRole('combobox', { name: 'Canvas zoom' })
+    const assertCentered = async () => {
+      const [bounds, canvas, inspector] = await Promise.all([frame.boundingBox(), viewport.boundingBox(), dock.boundingBox()])
+      assert.ok(Math.abs(bounds.x + bounds.width / 2 - (canvas.x + (canvas.width - inspector.width) / 2)) <= 1)
+    }
     await viewport.dispatchEvent('wheel', { deltaX: 1600, deltaY: 900, bubbles: true, cancelable: true })
     assert.ok((await frame.boundingBox()).x < -1000)
     await h.host.getByRole('button', { name: /0px → 4px/ }).click()
     await h.host.locator('#pending-status').getByText('Couldn’t locate the element for this edit.', { exact: true }).waitFor()
-    assert.ok((await frame.boundingBox()).x > 0)
+    assert.equal(await zoom.locator('option:checked').textContent(), '90%')
+    await assertCentered()
+    await zoom.selectOption('0.5')
     await h.host.getByRole('button', { name: /0px → 6px/ }).click()
     await h.page.locator('[data-frame="users"][aria-pressed="true"]').waitFor()
     assert.equal(await frame.getAttribute('src'), '/users')
-    assert.ok((await frame.boundingBox()).x > 0)
+    await h.page.waitForFunction(() => document.querySelector('#zoom-preset').selectedOptions[0]?.textContent === '90%')
+    await assertCentered()
     assert.equal(await h.page.getByRole('button', { name: 'Back to localhost' }).isVisible(), true)
   } finally { await h.close() }
 })

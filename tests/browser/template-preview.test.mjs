@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createHarness } from './harness.mjs'
 
 test('one saved template edit follows new uses and route changes and undoes as one operation', async () => {
-  const h = await createHarness({ pendingEdits: true })
+  const h = await createHarness({ pendingEdits: true, appStyles: 'td > span { font-size: 14px }' })
   try {
     const render = async ids => {
       await h.app.evaluate(ids => {
@@ -16,7 +16,6 @@ test('one saved template edit follows new uses and route changes and undoes as o
           for (const template of ['orders/status', 'orders/priority']) {
             const label = document.createElement('span')
             label.dataset.inspectorTemplate = template
-            label.style.fontSize = '14px'
             label.textContent = 'Ready'
             row.insertCell().append(label)
           }
@@ -103,5 +102,126 @@ test('a rendered record change defeats a lookalike without disabling ordinary re
     const [edit] = await h.journal()
     assert.match(edit.target.contextFingerprint, /^[a-f0-9]{64}$/)
     assert.equal(edit.target.context, undefined)
+  } finally { await h.close() }
+})
+
+test('equal-valued CSS overrides remain separate at save and when templates remount', async () => {
+  const h = await createHarness({ pendingEdits: true, appStyles: '.status { font-size: 14px } .status.overdue { font-size: 14px } .status.archived { font-size: 13px }' })
+  try {
+    const render = () => h.app.evaluate(() => {
+      const main = document.querySelector('main') ?? document.body.appendChild(document.createElement('main'))
+      main.innerHTML = '<span class="status">Ready</span><span class="status overdue">Ready</span><span class="status">Ready</span>'
+      for (const label of main.children) label.dataset.inspectorTemplate = 'orders/status'
+    })
+    const sizes = () => h.app.locator('.status').evaluateAll(nodes => nodes.map(node => getComputedStyle(node).fontSize))
+    await render()
+    await h.open()
+    await h.select('.status:first-child')
+    await h.enter('Font size', 22)
+    await h.settled()
+    assert.deepEqual(await sizes(), ['22px', '14px', '22px'])
+    assert.equal(await h.host.locator('#status').innerText(), '')
+    await h.select('.status.overdue')
+    await h.enter('Font size', 24)
+    await h.settled()
+    assert.deepEqual(await sizes(), ['22px', '24px', '22px'])
+    const [base, overdue] = await h.journal()
+    assert.equal(base.template, 'orders/status')
+    assert.equal(overdue.template, base.template)
+    assert.match(base.templateSourceFingerprint, /^[0-9a-f]{64}$/)
+    assert.match(overdue.templateSourceFingerprint, /^[0-9a-f]{64}$/)
+    assert.notEqual(base.templateSourceFingerprint, overdue.templateSourceFingerprint)
+    await h.app.evaluate(() => history.pushState(null, '', '/paid'))
+    await render()
+    await h.app.evaluate(() => window.phaseAInspectorReady)
+    await h.app.waitForFunction(() => [...document.querySelectorAll('.status')].every(node => node.style.fontSize))
+    assert.deepEqual(await sizes(), ['22px', '24px', '22px'])
+    await h.previewAction('Show original')
+    assert.deepEqual(await sizes(), ['14px', '14px', '14px'])
+    await h.previewAction('Show previews')
+    assert.deepEqual(await sizes(), ['22px', '24px', '22px'])
+    await h.previewAction('Undo last preview')
+    assert.deepEqual(await sizes(), ['22px', '14px', '22px'])
+    await h.app.locator('.status').first().evaluate(node => node.classList.add('overdue'))
+    await h.app.waitForFunction(() => !document.querySelector('.status').style.fontSize)
+    assert.deepEqual(await sizes(), ['14px', '14px', '22px'])
+    await h.app.locator('.status').last().evaluate(node => node.classList.add('archived'))
+    await h.app.waitForFunction(() => getComputedStyle(document.querySelector('.archived')).fontSize === '13px')
+  } finally { await h.close() }
+})
+
+test('inherited CSS stays occurrence-only when a peer has an equal-valued parent override', async () => {
+  const h = await createHarness({ appStyles: '.order { font-size: 14px } .order.overdue { font-size: 14px }' })
+  try {
+    await h.app.evaluate(() => document.body.insertAdjacentHTML('beforeend', `
+      <main><div class="order"><span data-inspector-target="order:a/status" data-inspector-template="orders/status">Ready</span></div>
+      <div class="order overdue"><span data-inspector-target="order:b/status" data-inspector-template="orders/status">Ready</span></div></main>`))
+    await h.open()
+    await h.select('[data-inspector-target="order:a/status"]')
+    await h.enter('Font size', 22)
+    await h.settled()
+    const [edit] = await h.journal()
+    assert.equal(edit.template, undefined)
+    assert.equal(await h.css('font-size', '.order:not(.overdue) span'), '22px')
+    assert.equal(await h.css('font-size', '.order.overdue span'), '14px')
+  } finally { await h.close() }
+})
+
+test('rendered inline values on a shared template retain only the selected preview', async () => {
+  const h = await createHarness({ pendingEdits: true })
+  try {
+    const render = () => h.app.evaluate(() => {
+      const root = document.querySelector('main') ?? document.body.appendChild(document.createElement('main'))
+      const sizes = { ordinary: 14, overdue: 14 }
+      root.replaceChildren(...['ordinary', 'overdue', 'ordinary'].map((variant, index) => {
+        const node = document.createElement('span')
+        node.dataset.inspectorTemplate = 'billing/amount'
+        node.dataset.inspectorTarget = 'invoice-' + index
+        node.style.fontSize = sizes[variant] + 'px'
+        node.textContent = 'Amount'
+        return node
+      }))
+    })
+    const selector = '[data-inspector-template="billing/amount"]'
+    const sizes = () => h.app.locator(selector).evaluateAll(nodes => nodes.map(node => getComputedStyle(node).fontSize))
+    await render()
+    await h.open()
+    await h.select('[data-inspector-target="invoice-0"]')
+    await h.enter('Font size', 22)
+    await h.settled()
+    assert.deepEqual(await sizes(), ['22px', '14px', '14px'])
+    const [edit] = await h.journal()
+    assert.equal(edit.template, undefined)
+    assert.equal(edit.target.key, 'invoice-0')
+    assert.match(await h.host.locator('#status').innerText(), /selected element/i)
+    await render()
+    await h.app.waitForFunction(() => document.querySelector('[data-inspector-target="invoice-0"]').style.fontSize === '22px')
+    assert.deepEqual(await sizes(), ['22px', '14px', '14px'])
+    await h.previewAction('Undo last preview')
+    await h.settled()
+    assert.deepEqual(await sizes(), ['14px', '14px', '14px'])
+    assert.deepEqual(await h.journal(), [])
+  } finally { await h.close() }
+})
+
+test('a saved template edit without a declaration owner stays removable when a default-valued peer remains', async () => {
+  const edit = {
+    id: 'old-template', route: '/', property: 'opacity', before: '1', requested: '0.5', observed: '0.5',
+    target: { tag: 'span', id: null, slot: null, key: null }, template: 'item/amount', restore: 'unique',
+  }
+  const h = await createHarness({ pendingEdits: true, journal: [edit] })
+  try {
+    await h.app.evaluate(() => {
+      document.body.insertAdjacentHTML('beforeend', '<span data-inspector-template="item/amount">Amount</span>')
+    })
+    await h.open()
+    await h.showEdits()
+    await h.host.locator('.li-pending-open').click()
+    assert.match(await h.host.locator('#pending-status').textContent(), /locate/)
+    assert.equal(await h.css('opacity', '[data-inspector-template]'), '1')
+    assert.deepEqual(await h.journal(), [edit])
+    await h.previewAction('Undo last preview')
+    await h.settled()
+    assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })

@@ -301,8 +301,9 @@ const targetFingerprint = value => typeof value === 'string' && /^[a-f0-9]{64}$/
 function validScopedTarget(target) {
   const { anchor, id, key, tag, textFingerprint, regionFingerprint, classFingerprint } = target
   if (anchor === undefined) return true
-  return !id && !key && anchor && ['id', 'key', 'main', 'landmark'].includes(anchor.kind) &&
+  return !id && !key && anchor && ['id', 'key', 'main', 'landmark', 'section'].includes(anchor.kind) &&
     (anchor.kind !== 'main' || anchor.value === 'main') &&
+    (anchor.kind !== 'section' || (anchor.value === 'section' && /^(h[1-6]|p)$/.test(tag))) &&
     (anchor.kind !== 'landmark' || ['navigation', 'complementary'].includes(anchor.value)) &&
     typeof anchor.value === 'string' && anchor.value.length > 0 && validTargetKey(anchor.value) &&
     typeof anchor.path === 'string' && /^[a-z][a-z0-9-]{0,39}(>[a-z][a-z0-9-]{0,39}){0,7}$/.test(anchor.path) &&
@@ -365,6 +366,7 @@ function editFrom(record, catalog, group, pendingTextStyle) {
       (record.template !== undefined && (group || pending || record.frameState !== undefined ||
         record.restore !== 'unique' || record.intent !== featureTemplateScope ||
         typeof record.template !== 'string' || !/^[a-z0-9][a-z0-9._:/-]{0,119}$/i.test(record.template))) ||
+      (record.templateSourceFingerprint !== undefined && (!record.template || !targetFingerprint(record.templateSourceFingerprint))) ||
       [target.textFingerprint, target.regionFingerprint, target.classFingerprint, target.contextFingerprint].some(value =>
         value !== undefined && !targetFingerprint(value))) {
     throw Error('Invalid edit record')
@@ -383,6 +385,7 @@ function editFrom(record, catalog, group, pendingTextStyle) {
   return {
     id, route: journalRoute(route), property, requested, observed, before, restore,
     target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,
+    templateSourceFingerprint: record.templateSourceFingerprint,
     colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,
   }
 }
@@ -397,7 +400,7 @@ function groupedPaddingEdits(records, catalog, journal, shared) {
   const [firstSide, secondSide] = horizontal ? ['padding-left', 'padding-right'] : ['padding-top', 'padding-bottom']
   const keys = new Set()
   const ids = new Set(edits.map(edit => edit.id))
-  if ((shared ? typeof name !== 'string' || !/^[a-z0-9_-]{1,80}$/i.test(name) : name !== undefined) ||
+  if ((shared ? first.template || typeof name !== 'string' || !/^[a-z0-9_-]{1,80}$/i.test(name) : name !== undefined) ||
       ids.size !== edits.length || journal.edits.some(edit => ids.has(edit.id))) {
     throw Error('Invalid grouped padding operation')
   }
@@ -406,7 +409,7 @@ function groupedPaddingEdits(records, catalog, journal, shared) {
     const { key, tag } = top.target
     if ((shared && (!key || keys.has(key))) || tag !== first.target.tag || top.property !== firstSide ||
       bottom.property !== secondSide || JSON.stringify(top.target) !== JSON.stringify(bottom.target) ||
-      [top, bottom].some((entry, offset) => entry.template || entry.route !== first.route || entry.requested !== first.requested ||
+      [top, bottom].some((entry, offset) => entry.template !== first.template || entry.route !== first.route || entry.requested !== first.requested ||
         Boolean(entry.spacingToken) !== Boolean(first.spacingToken) ||
         (shared && entry.restore !== 'unique') || entry.intent !== featureTemplateScope || records[index + offset].sharedPadding !== name)) {
       throw Error('Invalid grouped padding operation')
@@ -522,7 +525,8 @@ async function handle(message) {
     if (!validRoute(message.route)) throw Error('Expected a route')
     const route = journalRoute(message.route)
     const buttonSize = await readButtonSize(binding).catch(() => null)
-    return { revision: journal.revision, route, scopedPreviewTargets: true, landmarkPreviewTargets: true, templatePreviews: true, projectWideRevert: true,
+    return { revision: journal.revision, route, scopedPreviewTargets: true, landmarkPreviewTargets: true, sectionPreviewTargets: true, templatePreviews: true,
+      templateSourcePreviews: true, templatePaddingPreviews: true, projectWideRevert: true,
       edits: journal.edits.filter(edit => edit.route === route || edit.template), pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
   }
   if (message.type === 'saveEvidence') {

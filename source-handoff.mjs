@@ -37,6 +37,7 @@ const instructions = [
   'For each pending operation, trace the rendered target through the actual render path, imports, wrappers, styles and bindings. Paths and browser context are leads. Bounds are [x, y, width, height] in CSS pixels inside the live app viewport. Use them to compare candidates at the recorded viewport, never as stable identity. Ancestors run nearest first and may include a standard accessibility role declared in markup. Treat a matching role or slot as a clue and confirm the render path. tableCellPosition is the 1-based DOM cell position and tableRowCellCount is the number of DOM cells in that row at capture. Trace the source column visibility, ordering and spans before treating those observations as a column match.',
   'If target.classFingerprint is present, compare candidate elements on clean renders. It is the SHA-256 hex digest of JSON.stringify(Array.from(element.classList).sort()). A match identifies the observed class tokens only. Confirm the actual rule or component and its consumers in source.',
   'Prove the narrowest existing feature-template owner and its real consumers. A click identifies an example rendered use. Apply to the shared template, including its legitimate uses after a reorder. Preserve neighboring lookalikes and unrelated features. Never introduce a one-off instance override or redefine a global token to achieve a local binding.',
+  'A templateSourceFingerprint identifies the CSS declaration used to scope a browser preview. A shared template can contain separately styled variants. Check the actual declaration and preserve any overriding variants when applying the change.',
   'Before writing, report any real consumers outside the demonstrated preview. If the user has not already authorized that wider scope, leave the operation pending for review. A no-effect browser preview (such as padding on a native table row) is insufficient to infer an edit to another element or property.',
   'Apply the exact declaration or named binding. affectedProperties lists the write scope, including both axes for gap. Preserve the other declarations, responsive states, theme relationships and behavior. Computed before and observed values are viewer context, not the authored source or proof that a named binding exists.',
   'Use the saved order and keep grouped changes together. Compare later records against earlier previews of the same owner. Resolve possible overlap across occurrences or routes before writing. Preserve an established independent change when another operation is blocked or unresolved.',
@@ -51,12 +52,12 @@ function affectedProperties(property) {
   return property === 'gap' ? ['row-gap', 'column-gap'] : [property]
 }
 
-function operationChanges({ id, route, target, sourceContext, template, viewport, property, requested, before, observed, restore,
+function operationChanges({ id, route, target, sourceContext, template, templateSourceFingerprint, viewport, property, requested, before, observed, restore,
   colorToken, spacingToken, textStyleToken, pendingColor, pendingTextStyle, pendingTextStyleName }) {
   const { tag, id: elementId, slot, key, classFingerprint } = target
   return {
     id, route, viewport, target: { tag, id: elementId, slot, key, classFingerprint },
-    sourceContext: sourceContextFrom(sourceContext), previewRestore: restore, ...(template ? { template } : {}),
+    sourceContext: sourceContextFrom(sourceContext), previewRestore: restore, ...(template ? { template, templateSourceFingerprint } : {}),
     property, affectedProperties: affectedProperties(property), requested, before, observed,
     colorToken, spacingToken, textStyleToken, pendingColor, pendingTextStyle, pendingTextStyleName,
   }

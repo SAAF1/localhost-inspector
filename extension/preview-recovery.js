@@ -26,38 +26,73 @@
     return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('')
   }
 
+  const templateSources = new Map()
+  function sourceFingerprint(source) {
+    if (!templateSources.has(source)) {
+      const cached = {}
+      cached.ready = fingerprint(source).then(value => { cached.value = value; return value })
+      templateSources.set(source, cached)
+    }
+    return templateSources.get(source)
+  }
+  ui.templateSourceFingerprint = source => typeof source === 'string' ? sourceFingerprint(source).ready : undefined
+
   function explicitRole(node) {
     const role = node.getAttribute('role')?.trim().split(/\s+/, 1)[0]
     return role && role.length <= 20 ? role : undefined
   }
 
-  function scopedAnchor(node, text) {
+  const repeated = 'tr, li, article, [role="row"], [role="listitem"], [role="option"], [role="article"]'
+  const headings = 'h1, h2, h3, h4, h5, h6'
+
+  function sectionName(section) {
+    if (!section) return ''
+    const label = normalize(section.getAttribute('aria-label'))
+    if (label) return label
+    const owned = Array.from(section.querySelectorAll(headings)).filter(heading =>
+      heading.closest('section') === section && !heading.closest(repeated))
+    const level = Math.min(...owned.map(heading => Number(heading.localName[1])))
+    const titles = owned.filter(heading => Number(heading.localName[1]) === level)
+    return titles.length === 1 ? normalize(titles[0].textContent) : ''
+  }
+
+  function scopedAnchor(node, text, useSection = true) {
     // A repeated item needs its own authored identifier, even on a page
     // that currently has just one item.
-    const repeated = 'tr, li, article, [role="row"], [role="listitem"], [role="option"], [role="article"]'
     if (!text) return null
     const semantic = node.matches('h1, h2, h3, h4, h5, h6, p, button, a, label, [role], [aria-label]')
     if (!semantic && node.childElementCount) return null
     const path = []
+    let sectionAnchor
     for (let child = node; child.parentElement && path.length < 8; child = child.parentElement) {
       if (child.matches(repeated) || !/^[a-z][a-z0-9-]{0,39}$/.test(child.localName)) return null
       path.unshift(child.localName)
       const parent = child.parentElement
       const key = targetKey(parent)
       if (key) return { kind: 'key', value: key, path: path.join('>') }
-      if (semantic && parent.id && parent.id.length <= 120) return { kind: 'id', value: parent.id, path: path.join('>') }
+      if (semantic && parent.id && parent.id.length <= 120) return sectionAnchor ?? { kind: 'id', value: parent.id, path: path.join('>') }
+      if (useSection && parent.localName === 'section' && parent === node.closest('section') &&
+          node.matches(headings + ', p') && !node.closest(repeated)) {
+        const name = sectionName(parent)
+        if (name && name !== normalize(node.textContent)) {
+          sectionAnchor = { kind: 'section', value: 'section', path: path.join('>') }
+        }
+      }
       if (semantic) {
         const landmark = Object.keys(landmarks).find(name => parent.matches(landmarks[name]))
-        if (landmark) return { kind: landmark === 'main' ? 'main' : 'landmark', value: landmark, path: path.join('>') }
+        if (landmark) return sectionAnchor ?? { kind: landmark === 'main' ? 'main' : 'landmark', value: landmark, path: path.join('>') }
       }
     }
-    return null
+    return sectionAnchor ?? null
   }
 
   const sameAnchor = (a, b) => Boolean(a && b && a.kind === b.kind && a.value === b.value && a.path === b.path)
 
-  function regionIdentity(node) {
+  function regionIdentity(node, anchor) {
     const regions = []
+    if (anchor?.kind === 'section') {
+      regions.push({ section: sectionName(node.closest('section')), text: normalize(node.textContent) })
+    }
     let parent = node.parentElement
     for (let depth = 0; parent && depth < 6; depth++, parent = parent.parentElement) {
       const key = targetKey(parent)
@@ -84,16 +119,16 @@
     return JSON.stringify(evidence)
   }
 
-  function describe(node) {
+  function describe(node, useSection = true) {
     const key = targetKey(node)
     const id = node.id || null
     const text = labelOf(node)
-    const anchor = !key && !id ? scopedAnchor(node, text) : null
+    const anchor = !key && !id ? scopedAnchor(node, text, useSection) : null
     const guarded = !key && (id || anchor)
     return {
       tag: node.localName, id, key, slot: node.getAttribute('data-slot'), text,
       ...(anchor ? { anchor } : {}),
-      region: guarded ? regionIdentity(node) : undefined,
+      region: guarded ? regionIdentity(node, anchor) : undefined,
       classes: guarded ? classIdentity(node) : undefined,
       context: guarded ? dataContext(node) : undefined,
     }
@@ -104,8 +139,8 @@
         node.getAttribute('data-slot') !== target.slot) return false
     const key = targetKey(node)
     if (target.key || key) return key === target.key
-    if ((node.id || null) !== target.id || (target.region !== undefined && target.region !== regionIdentity(node))) return false
-    if (target.anchor && !sameAnchor(target.anchor, scopedAnchor(node, labelOf(node)))) return false
+    if ((node.id || null) !== target.id || (target.region !== undefined && target.region !== regionIdentity(node, target.anchor))) return false
+    if (target.anchor && !sameAnchor(target.anchor, scopedAnchor(node, labelOf(node), target.anchor.kind === 'section'))) return false
     if (target.classes !== undefined && target.classes !== classIdentity(node)) return false
     if (target.context !== undefined && target.context !== dataContext(node)) return false
     // A live ID-bearing node can outlast changes to its descendants. A new
@@ -114,10 +149,22 @@
       labelOf(node) === target.text
   }
 
-  function candidatesFor(target) {
+  function candidatesFor(target, exemplar) {
     if (target.anchor && !target.key && !target.id) {
       const { kind, value, path } = target.anchor
       if (!/^[a-z][a-z0-9-]{0,39}(>[a-z][a-z0-9-]{0,39}){0,7}$/.test(path)) return []
+      if (kind === 'section') {
+        const eligible = new Map()
+        const wanted = exemplar && sectionName(exemplar.closest('section'))
+        for (const root of document.querySelectorAll('section')) {
+          const name = sectionName(root)
+          if (name && (!exemplar || name === wanted)) eligible.set(name, eligible.has(name) ? null : root)
+        }
+        return Array.from(eligible.values()).flatMap(root => root
+          ? Array.from(root.querySelectorAll(':scope>' + path)).filter(node =>
+            node.closest('section') === root && node.getAttribute('data-slot') === target.slot)
+          : [])
+      }
       const selector = kind === 'main' || kind === 'landmark' ? (Object.hasOwn(landmarks, value) && landmarks[value]) :
         kind === 'key' ? '[' + keyAttribute + '="' + CSS.escape(value) + '"]' : '#' + CSS.escape(value)
       if (!selector) return []
@@ -134,7 +181,7 @@
   }
 
   function findTarget(target, liveNode) {
-    const candidates = candidatesFor(target)
+    const candidates = candidatesFor(target, liveNode)
     const label = target.anchor && (target.text || (liveNode && labelOf(liveNode)))
     const matches = label ? candidates.filter(node => labelOf(node) === label) : candidates
     if (matches.length !== 1) return null
@@ -164,6 +211,12 @@
 
   async function resolveSavedNode(edit, isCurrent) {
     const { target } = edit
+    if (target.anchor?.kind === 'section') {
+      const candidates = candidatesFor(target)
+      const matches = await Promise.all(candidates.map(node =>
+        verifySavedNode(edit, node, describe(node), isCurrent)))
+      return matches.filter(Boolean).length === 1 ? candidates[matches.indexOf(true)] : null
+    }
     let node = findTarget(target)
     if (!node && target.anchor && target.textFingerprint) {
       const labels = new Set(candidatesFor(target).map(labelOf))
@@ -171,7 +224,7 @@
       const match = checks.find(([, digest]) => digest === target.textFingerprint)
       if (match) node = findTarget({ ...target, text: match[0] })
     }
-    return node && await verifySavedNode(edit, node, describe(node), isCurrent) ? node : null
+    return node && await verifySavedNode(edit, node, describe(node, false), isCurrent) ? node : null
   }
 
   ui.describeSourceContext = node => {
@@ -213,10 +266,18 @@
   ui.matchesPreviewTarget = matchesTarget
   ui.ownsPreviewDeclaration = ownsDeclaration
   ui.isPreviewContextAttribute = contextAttribute
-  ui.templatePreview = { attribute: templateAttribute, of: templateOf }
+  const templateMatches = (edit, node) => node.isConnected && templateOf(node) === edit.template &&
+    node.localName === edit.target.tag && node.getAttribute('data-slot') === edit.target.slot
+  const templateNodes = edit => Array.from(document.querySelectorAll(
+    '[' + templateAttribute + '="' + CSS.escape(edit.template) + '"]',
+  )).filter(node => node instanceof HTMLElement && templateMatches(edit, node) &&
+    node.getClientRects().length && getComputedStyle(node).visibility === 'visible')
+  ui.templatePreview = { attribute: templateAttribute, of: templateOf, nodes: templateNodes }
   ui.createPreviewRecovery = ({ apply, remove, canEdit, removeButtonSize, readFrameState }) => {
     const saved = new Map()
     const attached = new Map()
+    const inlineStacks = new WeakMap()
+    const templateIndex = new Map()
     const conflicts = new Set()
     let templateConflicts = new WeakMap()
     let original = new Map()
@@ -225,25 +286,54 @@
     const hasScopedEdits = () => Array.from(saved.values()).some(edit => edit.frameState)
     const currentState = () => hasScopedEdits() ? readFrameState() : undefined
     const editId = (id, entry) => entry.templateEditId ?? id
-    const templateLayers = id => Array.from(attached).filter(([, entry]) => entry.templateEditId === id)
-    const templateMatches = (edit, node) => node.isConnected && templateOf(node) === edit.template &&
-      node.localName === edit.target.tag && node.getAttribute('data-slot') === edit.target.slot
-    const templateNodes = edit => Array.from(document.querySelectorAll(
-      '[' + templateAttribute + '="' + CSS.escape(edit.template) + '"]',
-    )).filter(node => node instanceof HTMLElement && templateMatches(edit, node) &&
-      node.getClientRects().length && getComputedStyle(node).visibility === 'visible')
+    const templateLayers = id => Array.from(templateIndex.get(id)?.values() ?? [])
     const conflicted = (edit, node) => templateConflicts.get(node)?.has(edit.property)
+
+    function templateSource(node, property, pendingLayer) {
+      return ui.authoredTemplateSource(node, property, current => {
+        const layers = inlineStacks.get(current)?.get(property)
+        const pending = pendingLayer?.node === current ? pendingLayer : undefined
+        const first = layers?.[0] ?? pending
+        if (first && ownsDeclaration(pending ?? layers.at(-1))) return { value: first.prior, priority: first.priorPriority }
+      })
+    }
+
+    function sameTemplateSource(edit, node, pendingLayer) {
+      const source = templateSource(node, edit.property, pendingLayer)
+      if (source === null || (source === undefined) !== (edit.templateSourceFingerprint === undefined)) return false
+      if (source === undefined) return true
+      const { value } = sourceFingerprint(source)
+      return value === undefined ? undefined : value === edit.templateSourceFingerprint
+    }
+
+    function attach(id, entry) {
+      attached.set(id, entry)
+      if (!inlineStacks.has(entry.node)) inlineStacks.set(entry.node, new Map())
+      const stacks = inlineStacks.get(entry.node)
+      if (!stacks.has(entry.property)) stacks.set(entry.property, [])
+      stacks.get(entry.property).push(entry)
+    }
 
     function attachTemplate(edit, entry) {
       entry.templateEditId = edit.id
-      attached.set(Symbol(), entry)
+      const key = Symbol()
+      attach(key, entry)
+      if (!templateIndex.has(edit.id)) templateIndex.set(edit.id, new Map())
+      templateIndex.get(edit.id).set(entry.node, [key, entry])
     }
 
-    function detach(id) {
+    function detach(id, preserveDeclaration = false) {
       const entry = attached.get(id)
       if (!entry) return
-      if (entry.property !== 'button-size') remove(entry)
+      if (entry.property !== 'button-size' && !preserveDeclaration) remove(entry)
       attached.delete(id)
+      const stack = inlineStacks.get(entry.node).get(entry.property)
+      stack.splice(stack.indexOf(entry), 1)
+      if (entry.templateEditId) {
+        const nodes = templateIndex.get(entry.templateEditId)
+        nodes.delete(entry.node)
+        if (!nodes.size) templateIndex.delete(entry.templateEditId)
+      }
     }
 
     function topEntries() {
@@ -275,20 +365,44 @@
     }
 
     function reconcileConflicts(entries = topEntries()) {
-      for (const entry of entries) {
-        if (entry.property === 'button-size' || !lostPreview(entry)) continue
-        const ownsInline = ownsDeclaration(entry)
-        for (const [id, layer] of Array.from(attached).reverse()) {
-          if (layer.node !== entry.node || layer.property !== entry.property) continue
-          // When the app took ownership of the declaration, even a value equal
-          // to an earlier preview layer belongs to the app now.
-          if (ownsInline) detach(id)
-          else attached.delete(id)
-          if (layer.templateEditId) {
-            if (!templateConflicts.has(layer.node)) templateConflicts.set(layer.node, new Set())
-            templateConflicts.get(layer.node).add(layer.property)
-          } else conflicts.add(id)
+      const lost = entries.filter(entry => entry.property !== 'button-size' && lostPreview(entry))
+      if (!lost.length) return
+      const suppressed = new Map()
+      const appOwned = new Map()
+      const mark = (index, node, property, from) => {
+        if (!index.has(node)) index.set(node, new Map())
+        const properties = index.get(node)
+        properties.set(property, Math.min(properties.get(property) ?? Infinity, from))
+      }
+      for (const entry of lost) {
+        mark(suppressed, entry.node, entry.property, 0)
+        // When the app took ownership, even a value equal to an earlier
+        // preview layer belongs to the app now.
+        if (!ownsDeclaration(entry)) mark(appOwned, entry.node, entry.property, 0)
+      }
+      const pairs = new Map()
+      for (const edits of operations().values()) {
+        if (edits[0].template && edits.length === 2) {
+          pairs.set(edits[0].id, edits[1].id)
+          pairs.set(edits[1].id, edits[0].id)
         }
+      }
+      const layers = Array.from(attached)
+      const positions = new Map(layers.map(([id], index) => [id, index]))
+      for (const [, layer] of layers) {
+        if (suppressed.get(layer.node)?.get(layer.property) !== 0) continue
+        const pair = templateIndex.get(pairs.get(layer.templateEditId))?.get(layer.node)
+        if (pair) mark(suppressed, layer.node, pair[1].property, positions.get(pair[0]))
+      }
+      // Unwind newer layers before removing the other side of a broken pair.
+      for (let index = layers.length - 1; index >= 0; index--) {
+        const [id, layer] = layers[index]
+        if (index < (suppressed.get(layer.node)?.get(layer.property) ?? Infinity)) continue
+        detach(id, appOwned.get(layer.node)?.has(layer.property))
+        if (layer.templateEditId) {
+          if (!templateConflicts.has(layer.node)) templateConflicts.set(layer.node, new Set())
+          templateConflicts.get(layer.node).add(layer.property)
+        } else conflicts.add(id)
       }
     }
 
@@ -315,7 +429,7 @@
     }
 
     function isAttached(edit, entry) {
-      if (edit?.template) return templateMatches(edit, entry.node)
+      if (edit?.template) return templateMatches(edit, entry.node) && sameTemplateSource(edit, entry.node) === true
       return Boolean(edit && matchesTarget(entry.node, entry.liveTarget) &&
         (edit.restore !== 'unique' || findTarget(edit.target, entry.node) === entry.node))
     }
@@ -324,9 +438,11 @@
       reconcileConflicts()
       const group = saved.get(id)?.group
       const ids = group ? Array.from(saved.values()).filter(edit => edit.group === group).map(edit => edit.id) : [id]
-      for (const member of ids.reverse()) {
-        detach(member)
-        for (const [layer] of templateLayers(member).reverse()) detach(layer)
+      const removed = new Set(ids)
+      for (const [key, entry] of Array.from(attached).reverse()) {
+        if (removed.has(editId(key, entry))) detach(key)
+      }
+      for (const member of ids) {
         saved.delete(member)
         original.delete(member)
         conflicts.delete(member)
@@ -355,7 +471,9 @@
       for (const [id, entry] of Array.from(attached).reverse()) {
         if (entry.property === 'button-size') continue
         const edit = saved.get(editId(id, entry))
-        if (!inState(edit, state) || invalid.has(edit?.group) || !isAttached(edit, entry)) detach(id)
+        const pairedTemplateChanged = edit?.template && edit.group && groups.get(edit.group)?.some(member =>
+          sameTemplateSource(member, entry.node) !== true)
+        if (!inState(edit, state) || invalid.has(edit?.group) || !isAttached(edit, entry) || pairedTemplateChanged) detach(id)
       }
     }
 
@@ -363,20 +481,40 @@
       return Array.from(saved.values()).flatMap(edit => edit.pendingTextStyle ? [edit.pendingTextStyle] : [])
     }
 
-    async function restoreTemplate(edit, isCurrent) {
-      const existing = new Set(templateLayers(edit.id).map(([, entry]) => entry.node))
-      for (const node of templateNodes(edit)) {
+    function templateCanRestore(edits, node, layers) {
+      return edits.every((edit, index) => !layers[index] && !conflicted(edit, node) && canEdit(node, edit.property) &&
+        sameTemplateSource(edit, node) !== false && getComputedStyle(node).getPropertyValue(edit.property) === edit.before)
+    }
+
+    function templateEntries(edits, node) {
+      return edits.map(edit => templateIndex.get(edit.id)?.get(node))
+    }
+
+    async function restoreTemplate(edits, isCurrent) {
+      const first = edits[0]
+      const nodes = templateNodes(first).filter(node => templateCanRestore(edits, node, templateEntries(edits, node)))
+      await Promise.all(nodes.flatMap(node => edits.map(edit => ui.templateSourceFingerprint(templateSource(node, edit.property)))))
+      const matching = nodes.filter(node => edits.every(edit => sameTemplateSource(edit, node)))
+      for (const node of matching) {
         if (!isCurrent()) return
-        if (existing.has(node) || conflicted(edit, node) || !canEdit(node, edit.property) ||
-            getComputedStyle(node).getPropertyValue(edit.property) !== edit.before) continue
-        const current = () => isCurrent() && templateMatches(edit, node)
+        const current = () => isCurrent() && templateMatches(first, node)
+        const applied = []
         try {
-          const entry = await apply(node, edit, current)
-          if (!entry) continue
-          if (current()) attachTemplate(edit, entry)
-          else remove(entry)
+          for (const edit of edits) {
+            if (!current() || !sameTemplateSource(edit, node) || !canEdit(node, edit.property) ||
+                getComputedStyle(node).getPropertyValue(edit.property) !== edit.before) break
+            const entry = await apply(node, edit, current)
+            if (!entry) break
+            applied.push(entry)
+          }
         } catch {
           // A peer can have its own layout constraints. Keep the saved intent.
+        }
+        if (applied.length === edits.length && current() && applied.every((entry, index) =>
+          entry.before === edits[index].before && ownsDeclaration(entry) && sameTemplateSource(edits[index], node, entry))) {
+          applied.forEach((entry, index) => attachTemplate(edits[index], entry))
+        } else {
+          for (const entry of applied.reverse()) remove(entry)
         }
       }
     }
@@ -391,7 +529,7 @@
       for (const edits of groups.values()) {
         if (!isCurrent()) return
         if (edits[0].template) {
-          await restoreTemplate(edits[0], isCurrent)
+          await restoreTemplate(edits, isCurrent)
           continue
         }
         if (!inState(edits[0], state) || !sharedGroupValid(edits)) continue
@@ -444,7 +582,7 @@
           }
           continue
         }
-        for (const [id, entry] of applied) attached.set(id, entry)
+        for (const [id, entry] of applied) attach(id, entry)
         reconcileConflicts(applied.map(([, entry]) => entry))
       }
     }
@@ -466,6 +604,7 @@
         )
       },
       pendingTextStyles,
+      templateSource,
       pendingTextStyleFor(node) {
         const entries = topEntries().filter(entry => entry.node === node && ui.textStyleProperties.includes(entry.property))
         const pending = entries[0]?.pendingTextStyle
@@ -486,7 +625,17 @@
       async locateSavedNode(id, isCurrent) {
         const edit = saved.get(id)
         if (!edit || (edit.frameState && !inState(edit, readFrameState()))) return null
-        if (edit.template) return this.previewNode(id) ?? templateNodes(edit)[0] ?? null
+        if (edit.template) {
+          const attached = this.previewNode(id)
+          if (attached) return attached
+          for (const node of templateNodes(edit)) {
+            const source = templateSource(node, edit.property)
+            if (source !== null) await ui.templateSourceFingerprint(source)
+            if (!isCurrent() || saved.get(id) !== edit) return null
+            if (sameTemplateSource(edit, node)) return node
+          }
+          return null
+        }
         const targetCurrent = () => isCurrent() && (!edit.frameState || inState(edit, readFrameState()))
         const entry = attached.get(id)
         if (entry && isAttached(edit, entry)) return entry.node
@@ -517,26 +666,25 @@
       get hasUnattached() {
         const state = currentState()
         return Array.from(saved.values()).some(edit => edit.template
-          ? templateNodes(edit).some(node => !templateLayers(edit.id).some(([, entry]) => entry.node === node))
+          ? templateNodes(edit).some(node => sameTemplateSource(edit, node) !== false && !templateIndex.get(edit.id)?.has(node))
           : inState(edit, state) && !attached.has(edit.id))
       },
       get hasConflicts() { return conflicts.size > 0 },
       get lastSavedId() {
-        return Array.from(saved.values()).findLast(edit => edit.route === savedRoute || (edit.template && templateNodes(edit).length))?.id
+        return Array.from(saved.values()).findLast(edit => edit.route === savedRoute ||
+          (edit.template && templateNodes(edit).some(node => sameTemplateSource(edit, node) !== false)))?.id
       },
       get needsRestore() {
         if (hasStyleConflict()) return true
         const state = currentState()
         return Array.from(operations().values()).some(edits => {
           if (!sharedGroupValid(edits)) return edits.some(edit => attached.has(edit.id))
+          if (edits[0].template) {
+            return edits.some(edit => templateLayers(edit.id).some(([, entry]) =>
+              !isAttached(edit, entry) || edits.some(member => conflicted(member, entry.node)))) ||
+              templateNodes(edits[0]).some(node => templateCanRestore(edits, node, templateEntries(edits, node)))
+          }
           return edits.some(edit => {
-            if (edit.template) {
-              const entries = templateLayers(edit.id)
-              return entries.some(([, entry]) => !isAttached(edit, entry)) ||
-                templateNodes(edit).some(node => !conflicted(edit, node) && canEdit(node, edit.property) &&
-                  !entries.some(([, entry]) => entry.node === node) &&
-                  getComputedStyle(node).getPropertyValue(edit.property) === edit.before)
-            }
             const entry = attached.get(edit.id)
             if (!inState(edit, state)) return Boolean(entry)
             if (entry) return entry.property !== 'button-size' && !isAttached(edit, entry)
@@ -549,12 +697,12 @@
         const ids = new Set(records.filter(record => record.attributeName === 'class').map(record => record.target.id).filter(Boolean))
         return ids.size > 0 && Array.from(saved.values()).some(edit => edit.target.classFingerprint && ids.has(edit.target.id))
       },
-      remember(edit, entry) {
+      remember(edit, entry, peers = []) {
         saved.set(edit.id, edit)
         if (!entry) return
-        if (edit.template) attachTemplate(edit, entry)
-        else attached.set(edit.id, entry)
-        reconcileConflicts([entry])
+        if (edit.template) for (const member of [entry, ...peers]) attachTemplate(edit, member)
+        else attach(edit.id, entry)
+        reconcileConflicts([entry, ...peers])
       },
       forget,
       hasUnverifiedDependentPreview(id) {
@@ -563,11 +711,12 @@
         const members = new Set(group.map(edit => edit.id))
         const next = []
         for (const [member, edit] of [...saved].reverse()) {
-          const entry = attached.get(member)
-          if (!entry) continue
-          if (!members.has(member)) next.push({ edit, entry })
-          else if (next.some(candidate => candidate.entry.node === entry.node && candidate.edit.property === edit.property &&
-            (edit.restore !== 'unique' || candidate.edit.restore !== 'unique'))) return true
+          const entries = edit.template ? templateLayers(member).map(([, entry]) => entry) : [attached.get(member)].filter(Boolean)
+          if (!members.has(member)) {
+            for (const entry of entries) next.push({ edit, entry })
+          } else if (entries.some(entry => next.some(candidate => candidate.entry.node === entry.node &&
+            candidate.edit.property === edit.property && (Boolean(edit.template) !== Boolean(candidate.edit.template) ||
+              edit.restore !== 'unique' || candidate.edit.restore !== 'unique')))) return true
         }
         return false
       },
@@ -576,7 +725,9 @@
         if (saved.get(id)?.template && rebased.length) {
           const edit = saved.get(id)
           for (const [layer, entry] of [...attached].reverse()) {
-            if (saved.get(entry.templateEditId)?.template === edit.template && entry.property === edit.property) detach(layer)
+            const peer = saved.get(entry.templateEditId)
+            if (peer?.template === edit.template && peer.templateSourceFingerprint === edit.templateSourceFingerprint &&
+                entry.property === edit.property) detach(layer)
           }
         }
         const removed = attached.get(id)

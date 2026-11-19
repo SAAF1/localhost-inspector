@@ -27,7 +27,11 @@ export function pendingEdits(edits) {
 function sameOccurrence(a, b) {
   const left = a.target
   const right = b.target
-  if (a.template && b.template) return a.template === b.template && left.tag === right.tag && left.slot === right.slot
+  if (a.template && b.template) {
+    if (a.templateSourceFingerprint && b.templateSourceFingerprint &&
+        a.templateSourceFingerprint !== b.templateSourceFingerprint) return false
+    return a.template === b.template && left.tag === right.tag && left.slot === right.slot
+  }
   if (a.route !== b.route || left.tag !== right.tag) return false
   if (a.frameState && b.frameState && a.frameState !== b.frameState) return false
   if (left.slot !== right.slot) return false
@@ -63,7 +67,7 @@ export function removePendingEdit(edits, id) {
     const possible = later.filter(entry => sameOccurrence(edit, entry) && entry.property === edit.property)
     const guarded = next => edit.target.id || (edit.target.anchor && next.target.anchor)
     const sameVerifiedTarget = next => edit.template || next.template
-      ? Boolean(edit.template && edit.template === next.template)
+      ? Boolean(edit.template && edit.template === next.template && edit.templateSourceFingerprint === next.templateSourceFingerprint)
       : edit.frameState === next.frameState && Boolean(edit.target.key ||
       (guarded(next) && edit.target.regionFingerprint &&
         ['regionFingerprint', 'classFingerprint', 'textFingerprint', 'contextFingerprint'].every(key => edit.target[key] === next.target[key])))

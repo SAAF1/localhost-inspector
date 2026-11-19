@@ -106,7 +106,7 @@ export async function createHarness(options = {}) {
         const pending = async () => settings.pendingEdits
           ? await window.summarizeFixtureJournal(window.__journal.filter(edit => !edit.undone))
           : undefined
-        if (type === 'load') return { revision: window.__revision, route: message.route, scopedPreviewTargets: !settings.legacyPreviewHelper, landmarkPreviewTargets: !settings.legacyPreviewHelper, templatePreviews: !settings.legacyPreviewHelper, projectWideRevert: !settings.legacyPreviewHelper, buttonSizeKey: settings.buttonSizeKey, pending: await pending(), edits: structuredClone(window.__journal.filter(edit => !edit.undone && (edit.route === message.route || edit.template))) }
+        if (type === 'load') return { revision: window.__revision, route: message.route, scopedPreviewTargets: !settings.legacyPreviewHelper, landmarkPreviewTargets: !settings.legacyPreviewHelper, sectionPreviewTargets: !settings.legacyPreviewHelper && !settings.legacySectionHelper, templatePreviews: !settings.legacyPreviewHelper, templateSourcePreviews: !settings.legacyPreviewHelper && !settings.legacyTemplateSourceHelper, templatePaddingPreviews: !settings.legacyPreviewHelper, projectWideRevert: !settings.legacyPreviewHelper, buttonSizeKey: settings.buttonSizeKey, pending: await pending(), edits: structuredClone(window.__journal.filter(edit => !edit.undone && (edit.route === message.route || edit.template))) }
         if (['save', 'saveTextStyle', 'saveButtonSize', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
           window.__saveCount++
           if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
