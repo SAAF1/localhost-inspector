@@ -14,13 +14,27 @@ export function pendingEdits(edits) {
     const pair = properties => properties.every(name => group.some(edit => edit.property === name))
     const label = pendingTextStyle?.name ?? textStyleToken?.name ?? spacingToken?.name ?? colorToken?.name
     return {
-      id, route, frameState, ...(template ? { template } : {}),
+      id, route, frameState, ...(template ? { template } : {}), ...(group[0].previewHidden ? { previewHidden: true } : {}),
       sessionOnly: group.some(edit => edit.restore !== 'unique'), target: { id: target.id, tag: target.tag, slot: target.slot },
       property: pendingTextStyle || textStyleToken ? 'text-style' :
         pair(['padding-top', 'padding-bottom']) ? 'vertical-padding' :
         pair(['padding-left', 'padding-right']) ? 'horizontal-padding' : property,
       before, requested: label ?? requested,
     }
+  })
+}
+
+export function setPreviewVisibility(edits, id, hidden) {
+  if (typeof hidden !== 'boolean') throw Error('Expected preview visibility')
+  const members = operations(edits).get(id)
+  if (!members) throw Error('Edit was not found')
+  if (members.every(edit => Boolean(edit.previewHidden) === hidden)) return edits
+  return edits.map(edit => {
+    if ((edit.group ?? edit.id) !== id) return edit
+    const updated = { ...edit }
+    if (hidden) updated.previewHidden = true
+    else delete updated.previewHidden
+    return updated
   })
 }
 
@@ -82,6 +96,13 @@ export function removePendingEdit(edits, id) {
     }
     if (next.before !== edit.observed || !literal(edit) || !literal(next) || edit.restore !== 'unique' || next.restore !== 'unique') {
       throw Error('A newer edit on this element may use this value. Remove the newer edit first.')
+    }
+    // A hidden intermediate preview lets two later edits use this same baseline.
+    // Rebasing just the first one would strand the other after a reload.
+    const branch = possible.slice(possible.indexOf(next))
+    if (branch.some((entry, index) => index > 0 && entry.before === edit.observed &&
+        entry.before !== branch[index - 1].observed)) {
+      throw Error('Multiple newer edits may use this value. Remove the newer edits first.')
     }
     rebase.set(next.id, edit.before)
   }

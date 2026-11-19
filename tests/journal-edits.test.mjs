@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { removePendingEdit } from '../journal-edits.mjs'
+import { pendingEdits, removePendingEdit, setPreviewVisibility } from '../journal-edits.mjs'
+import { buildSourceHandoff } from '../source-handoff.mjs'
 
 const change = (id, before, requested, target) => ({
   id, route: '/orders', property: 'gap', before, requested, observed: requested, target, restore: 'unique',
@@ -70,4 +71,31 @@ test('removing a template edit only rebases later edits to the same CSS declarat
   assert.throws(() => removePendingEdit([normal, newerFormat], normal.id), /can’t tell whether a newer edit/)
   const legacy = { ...special, templateSourceFingerprint: undefined }
   assert.throws(() => removePendingEdit([normal, legacy], normal.id), /can’t tell whether a newer edit/)
+})
+
+test('hiding a grouped operation keeps both sides saved for handoff and leaves other previews visible', () => {
+  const target = { tag: 'td', key: 'price' }
+  const edits = ['padding-left', 'padding-right', 'gap'].map((property, i) => ({
+    ...change(String(i), '4px', '12px', target), property, intent: 'feature-template', ...(i < 2 ? { group: '0' } : {}),
+  }))
+  const hidden = setPreviewVisibility(edits, '0', true)
+  assert.deepEqual(hidden.map(edit => edit.previewHidden), [true, true, undefined])
+  assert.deepEqual(pendingEdits(hidden).map(edit => edit.previewHidden), [true, undefined])
+  assert.deepEqual(buildSourceHandoff({}, { edits: hidden }).operations, buildSourceHandoff({}, { edits }).operations)
+  assert.equal(setPreviewVisibility(hidden, '0', true), hidden)
+  assert.deepEqual(setPreviewVisibility(hidden, '0', false), edits)
+  assert.throws(() => setPreviewVisibility(hidden, 'missing', false), /not found/)
+  assert.throws(() => setPreviewVisibility(hidden, '0', 'false'), /visibility/)
+})
+
+test('removing a baseline shared by two branches cannot strand a later preview', () => {
+  const target = { tag: 'div', key: 'item' }
+  const first = change('first', '0px', '8px', target)
+  const middle = change('middle', '8px', '16px', target)
+  const later = change('later', '8px', '24px', target)
+  for (const previewHidden of [true, false]) {
+    assert.throws(() => removePendingEdit([first, { ...middle, previewHidden }, later], first.id), /Multiple newer edits/)
+  }
+  const returned = change('returned', '16px', '8px', target)
+  assert.deepEqual(removePendingEdit([first, middle, returned, later], first.id).rebased, [{ id: 'middle', before: '0px' }])
 })

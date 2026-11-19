@@ -6,7 +6,7 @@ import { access, mkdir, readFile, realpath, rename, stat, writeFile } from 'node
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { completeHandoff } from './complete-handoff.mjs'
-import { pendingEdits, removePendingEdit } from './journal-edits.mjs'
+import { pendingEdits, removePendingEdit, setPreviewVisibility } from './journal-edits.mjs'
 import { buildSourceHandoff, featureTemplateScope, sourceContextFrom } from './source-handoff.mjs'
 import { addVisualEvidence, maxEvidenceLength, removeVisualEvidence, saveVisualEvidence } from './visual-evidence.mjs'
 
@@ -527,7 +527,7 @@ async function handle(message) {
     const route = journalRoute(message.route)
     const buttonSize = await readButtonSize(binding).catch(() => null)
     return { revision: journal.revision, route, scopedPreviewTargets: true, landmarkPreviewTargets: true, sectionPreviewTargets: true, templatePreviews: true,
-      templateSourcePreviews: true, templatePaddingPreviews: true, projectWideRevert: true,
+      templateSourcePreviews: true, templatePaddingPreviews: true, projectWideRevert: true, previewVisibility: true,
       edits: journal.edits.filter(edit => edit.route === route || edit.template), pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
   }
   if (message.type === 'saveEvidence') {
@@ -576,6 +576,10 @@ async function handle(message) {
     const first = message.records?.[0]
     const catalog = first?.textStyleToken || first?.pendingTextStyle || first?.pendingTextStyleName ? await readCatalog(binding, 'text-styles') : null
     journal.edits.push(...await textStyleEdits(message.records, catalog, journal))
+  } else if (message.type === 'setPreviewVisibility') {
+    const edits = setPreviewVisibility(journal.edits, message.id, message.hidden)
+    if (edits === journal.edits) return { file, revision: journal.revision, pending: pendingEdits(edits) }
+    journal.edits = edits
   } else if (message.type === 'removeEdit') {
     const result = removePendingEdit(journal.edits, message.id)
     journal.edits = result.edits

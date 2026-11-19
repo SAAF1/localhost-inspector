@@ -63,6 +63,7 @@
   let templatePreviews = false
   let templateSourcePreviews = false
   let templatePaddingPreviews = false
+  let previewVisibility = false
   let projectWideRevert = false
   let refreshing = false
   let editNavigation = 0
@@ -72,12 +73,13 @@
     locate: id => recovery.previewNode(id),
     openEdit: goToEdit,
     removeEdit: id => run(() => removeJournalEdit(id)),
+    setPreviewVisibility: (id, hidden) => run(() => toggleSavedPreview(id, hidden)),
     refresh: refreshJournal,
     highlight: id => selection.previewRelated(id ? () => recovery.previewNode(id) : null),
   })
 
   function syncPending() {
-    editsUI.update(pendingRows, savedRoute)
+    editsUI.update(pendingRows, savedRoute, previewVisibility)
   }
 
   async function goToEdit(edit) {
@@ -162,7 +164,7 @@
         getComputedStyle(node).visibility !== 'visible') return false
     node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
     selection.select(node)
-    if (!comparing && !recovery.previewNode(id)) {
+    if (!comparing && !pendingRows.find(edit => edit.id === id)?.previewHidden && !recovery.previewNode(id)) {
       const baseline = recovery.changedBaseline(id, node)
       status(baseline ? 'The app now uses ' + baseline.value + ' for ' + baseline.label + '. Your edit is still saved.' :
         'Found the element. The saved preview couldn’t be applied here.', true)
@@ -197,9 +199,24 @@
       if (busy || !isCurrentRoute(path, version) || journalRevision !== startedRevision || snapshot?.revision === journalRevision) return
       if (!validSnapshot(snapshot)) throw Error('Invalid journal snapshot')
       if (startedRevision !== null && recovery.matchesSnapshot(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template))) {
-        acceptSnapshot(snapshot)
-        journalRevision = snapshot.revision
-        syncPending()
+        const changes = new Map()
+        for (const edit of snapshot.edits) {
+          const id = edit.group ?? edit.id
+          if (recovery.hasOperation(id) && recovery.isPreviewHidden(id) !== Boolean(edit.previewHidden)) {
+            changes.set(id, Boolean(edit.previewHidden))
+          }
+        }
+        const accept = () => {
+          if (!isCurrentRoute(path, version)) return
+          acceptSnapshot(snapshot)
+          journalRevision = snapshot.revision
+        }
+        if (changes.size) {
+          await run(() => applyPreviewVisibility(changes, path, version, accept))
+        } else {
+          accept()
+          syncPending()
+        }
         return
       }
       if (recovery.hasAttachedButtonSize) {
@@ -215,6 +232,25 @@
     } catch {
       if (isCurrentRoute(path, version)) status('Could not refresh pending edits from the local helper.', true)
     } finally { refreshing = false }
+  }
+
+  async function applyPreviewVisibility(changes, path, version, persist) {
+    const local = [...changes.keys()].some(id => recovery.hasOperation(id))
+    const buttons = local && !comparing ? recovery.buttonEntries() : []
+    if (buttons.length) await rewindButtonSizes(buttons, path, version, persist)
+    else await persist()
+    const current = () => isCurrentRoute(path, version)
+    if (!current()) return
+    if (local) await recovery.setPreviewHidden(changes, current, comparing)
+    if (current()) reportRecovery()
+  }
+
+  async function toggleSavedPreview(id, hidden) {
+    if (comparing || !previewVisibility) return
+    const path = currentRoute
+    const version = activeRouteVersion
+    await applyPreviewVisibility(new Map([[id, hidden]]), path, version,
+      () => write({ type: 'setPreviewVisibility', id, hidden }, path, version))
   }
 
   async function removeJournalEdit(id) {
@@ -1035,6 +1071,7 @@
     templatePreviews = snapshot.templatePreviews === true
     templateSourcePreviews = snapshot.templateSourcePreviews === true
     templatePaddingPreviews = snapshot.templatePaddingPreviews === true
+    previewVisibility = snapshot.previewVisibility === true
     projectWideRevert = snapshot.projectWideRevert === true
     if (Array.isArray(snapshot.pending)) pendingRows = snapshot.pending
   }
@@ -1058,6 +1095,7 @@
     templatePreviews = false
     templateSourcePreviews = false
     templatePaddingPreviews = false
+    previewVisibility = false
     projectWideRevert = false
     colorCatalog = null
     spacingCatalog = null

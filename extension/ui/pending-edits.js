@@ -18,7 +18,7 @@
     return names.map(humanize).join(' / ') || 'Home'
   }
 
-  ui.createPendingEdits = ({ host, root, panel, get, locate, openEdit, removeEdit, refresh, highlight }) => {
+  ui.createPendingEdits = ({ host, root, panel, get, locate, openEdit, removeEdit, setPreviewVisibility, refresh, highlight }) => {
     const design = get('design-tab')
     const edits = get('edits-tab')
     const launcher = get('pending-launcher')
@@ -34,6 +34,7 @@
     let recent = false
     let selectedId
     let disabled = false
+    let canToggleVisibility = false
     let priorFocus
 
     function close() {
@@ -123,7 +124,8 @@
             (node?.matches('button, a, label, h1, h2, h3') ? node.textContent.trim() : '')
           const target = edit.target
           const name = observed?.slice(0, 64) || humanize(target.slot || target.id || ({ div: 'Container', span: 'Text', tr: 'Row', td: 'Cell' }[target.tag] ?? target.tag ?? 'Element'))
-          const detail = (properties[edit.property] ?? humanize(edit.property)) + '  ' + edit.before + ' → ' + edit.requested +
+          const property = properties[edit.property] ?? humanize(edit.property)
+          const detail = property + '  ' + edit.before + ' → ' + edit.requested +
             (edit.template ? ' · Whole template' : '')
           open.append(ui.element('span', 'li-pending-name', name), ui.element('span', 'li-pending-detail',
             recent ? pageName(edit.route) + ' · ' + detail : detail))
@@ -141,7 +143,12 @@
           remove.disabled = disabled
           remove.setAttribute('aria-label', 'Remove ' + name + ' edit')
           remove.onclick = () => removeEdit(edit.id)
-          row.append(open, remove)
+          const eye = ui.visibilityAction(name + ' ' + property.toLowerCase() + ' preview', !edit.previewHidden,
+            visible => setPreviewVisibility(edit.id, !visible))
+          eye.dataset.editId = edit.id
+          eye.disabled = disabled || !canToggleVisibility
+          if (!canToggleVisibility) ui.setTooltip(eye, 'Update the local helper to toggle this preview')
+          row.append(open, eye, remove)
           section.append(row)
         }
         list.append(section)
@@ -210,15 +217,18 @@
       markSelected,
       showEdits: () => selectTab(true),
       showDesign: () => { if (current || floating) selectTab(false) },
-      update(next, route) {
+      update(next, route, visibilityAvailable = canToggleVisibility) {
         if (Array.isArray(next)) records = next
+        canToggleVisibility = visibilityAvailable
         currentRoute = route
         if (current || floating || edits.textContent !== (records.length ? 'Edits ' + records.length : 'Edits')) sync()
       },
       setDisabled(value) {
         if (disabled === value) return
         disabled = value
-        for (const button of list.querySelectorAll('.li-pending-row > .li-icon-button')) button.disabled = disabled
+        for (const button of list.querySelectorAll('.li-pending-row > .li-icon-button')) {
+          button.disabled = disabled || (!canToggleVisibility && button.classList.contains('li-visibility-action'))
+        }
       },
       syncVisibility() {
         if (!panel.hidden && floating) close()

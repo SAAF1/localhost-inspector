@@ -7,7 +7,7 @@ import { injectedFiles, project } from '../../scripts/check-modules.mjs'
 
 import { dockFlowInspector } from '../../extension/flow-attachment.js'
 import { serveWorkspaceAsset } from '../../scripts/flow/workspace-assets.mjs'
-import { pendingEdits, removePendingEdit } from '../../journal-edits.mjs'
+import { pendingEdits, removePendingEdit, setPreviewVisibility } from '../../journal-edits.mjs'
 import { fixture } from './fixture.mjs'
 import { connectPreviewDock, servePreviewDock } from '../../scripts/preview-dock.mjs'
 
@@ -58,6 +58,7 @@ export async function createHarness(options = {}) {
     if (options.canvas && options.dock) await app.evaluate(dockFlowInspector)
     else if (options.dock) await app.evaluate(connectPreviewDock)
     if (options.pendingEdits) {
+      await page.exposeFunction('setFixtureVisibility', setPreviewVisibility)
       await page.exposeFunction('summarizeFixtureJournal', pendingEdits)
       await page.exposeFunction('removeFixtureEdit', (journal, id) => {
         try { return removePendingEdit(journal, id) }
@@ -106,7 +107,7 @@ export async function createHarness(options = {}) {
         const pending = async () => settings.pendingEdits
           ? await window.summarizeFixtureJournal(window.__journal.filter(edit => !edit.undone))
           : undefined
-        if (type === 'load') return { revision: window.__revision, route: message.route, scopedPreviewTargets: !settings.legacyPreviewHelper, landmarkPreviewTargets: !settings.legacyPreviewHelper, sectionPreviewTargets: !settings.legacyPreviewHelper && !settings.legacySectionHelper, templatePreviews: !settings.legacyPreviewHelper, templateSourcePreviews: !settings.legacyPreviewHelper && !settings.legacyTemplateSourceHelper, templatePaddingPreviews: !settings.legacyPreviewHelper, projectWideRevert: !settings.legacyPreviewHelper, buttonSizeKey: settings.buttonSizeKey, pending: await pending(), edits: structuredClone(window.__journal.filter(edit => !edit.undone && (edit.route === message.route || edit.template))) }
+        if (type === 'load') return { revision: window.__revision, route: message.route, scopedPreviewTargets: !settings.legacyPreviewHelper, landmarkPreviewTargets: !settings.legacyPreviewHelper, sectionPreviewTargets: !settings.legacyPreviewHelper && !settings.legacySectionHelper, templatePreviews: !settings.legacyPreviewHelper, templateSourcePreviews: !settings.legacyPreviewHelper && !settings.legacyTemplateSourceHelper, templatePaddingPreviews: !settings.legacyPreviewHelper, previewVisibility: !settings.legacyPreviewHelper, projectWideRevert: !settings.legacyPreviewHelper, buttonSizeKey: settings.buttonSizeKey, pending: await pending(), edits: structuredClone(window.__journal.filter(edit => !edit.undone && (edit.route === message.route || edit.template))) }
         if (['save', 'saveTextStyle', 'saveButtonSize', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
           window.__saveCount++
           if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
@@ -136,6 +137,7 @@ export async function createHarness(options = {}) {
           window.__journal = window.__journal.filter(edit => edit !== entry && !(entry.group && edit.group === entry.group))
         }
         let rebased
+        if (type === 'setPreviewVisibility') window.__journal = await window.setFixtureVisibility(window.__journal, message.id, message.hidden)
         if (type === 'removeEdit') {
           const result = await window.removeFixtureEdit(window.__journal, message.id)
           if (result.error) throw Object.assign(Error(result.error), { code: 'WRITE_REJECTED' })

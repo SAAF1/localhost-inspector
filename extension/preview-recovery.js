@@ -281,7 +281,7 @@
     const templateIndex = new Map()
     const conflicts = new Set()
     let templateConflicts = new WeakMap()
-    let original = new Map()
+    const original = new Map()
     let savedRoute
     const inState = (edit, state) => !edit?.frameState || edit.frameState === state
     const hasScopedEdits = () => Array.from(saved.values()).some(edit => edit.frameState)
@@ -429,6 +429,7 @@
       savedRoute = route
       saved.clear()
       for (const edit of edits) saved.set(edit.id, edit)
+      for (const id of original.keys()) if (!saved.has(id)) original.delete(id)
       for (const id of conflicts) {
         if (!saved.has(id)) conflicts.delete(id)
       }
@@ -487,9 +488,47 @@
       return Array.from(saved.values()).flatMap(edit => edit.pendingTextStyle ? [edit.pendingTextStyle] : [])
     }
 
+    function sameReplayTarget(earlier, edit, node) {
+      if (earlier.template || edit.template) {
+        return earlier.template === edit.template && earlier.templateSourceFingerprint === edit.templateSourceFingerprint &&
+          earlier.target.tag === edit.target.tag && earlier.target.slot === edit.target.slot
+      }
+      if (earlier.route !== edit.route || earlier.frameState !== edit.frameState) return false
+      const live = original.get(earlier.id)
+      if (live?.node.isConnected) return live.node === node && matchesTarget(node, live.target)
+      return earlier.restore === 'unique' && edit.restore === 'unique' &&
+        JSON.stringify(earlier.target) === JSON.stringify(edit.target)
+    }
+
+    // Hiding 8 → 12 must still allow a later 12 → 16 on that exact setting.
+    // Conversely, an edit made at 8 while 12 was hidden must still win when
+    // 12 is shown again. Only extend the chain from a verified live baseline.
+    function matchesBaseline(edit, node, actual, expected) {
+      if (actual === expected) return true
+      const reachable = new Set([actual])
+      const stack = inlineStacks.get(node)?.get(edit.property)
+      const top = stack?.at(-1)
+      const owned = top && (edit.property === 'button-size'
+        ? ui.buttonSize.currentSize(node, edit.target.key) === top.requested : ownsDeclaration(top))
+      let earlierTop = !top
+      for (const earlier of saved.values()) {
+        if (earlier.id === edit.id) break
+        if (earlier.property !== edit.property) continue
+        const entry = earlier.template ? templateIndex.get(earlier.id)?.get(node)?.[1] : attached.get(earlier.id)
+        if (owned && entry?.node === node) {
+          reachable.add(entry.before)
+          if (entry === top) earlierTop = true
+        }
+        if (earlier.previewHidden && reachable.has(earlier.before) && sameReplayTarget(earlier, edit, node)) {
+          reachable.add(earlier.observed)
+        }
+      }
+      return earlierTop && reachable.has(expected)
+    }
+
     function templateCanRestore(edits, node, layers) {
       return edits.every((edit, index) => !layers[index] && !conflicted(edit, node) && canEdit(node, edit.property) &&
-        sameTemplateSource(edit, node) !== false && getComputedStyle(node).getPropertyValue(edit.property) === edit.before)
+        sameTemplateSource(edit, node) !== false && matchesBaseline(edit, node, getComputedStyle(node).getPropertyValue(edit.property), edit.before))
     }
 
     function templateEntries(edits, node) {
@@ -508,10 +547,13 @@
         if (!isCurrent()) return
         const current = () => isCurrent() && templateMatches(first, node)
         const applied = []
+        const baselines = []
         try {
           for (const edit of edits) {
+            const before = getComputedStyle(node).getPropertyValue(edit.property)
             if (!current() || !sameTemplateSource(edit, node) || !canEdit(node, edit.property) ||
-                getComputedStyle(node).getPropertyValue(edit.property) !== edit.before) break
+                !matchesBaseline(edit, node, before, edit.before)) break
+            baselines.push(before)
             const entry = await apply(node, edit, current)
             if (!entry) break
             applied.push(entry)
@@ -520,7 +562,7 @@
           // A peer can have its own layout constraints. Keep the saved intent.
         }
         if (applied.length === edits.length && current() && applied.every((entry, index) =>
-          entry.before === edits[index].before && ownsDeclaration(entry) && sameTemplateSource(edits[index], node, entry))) {
+          entry.before === baselines[index] && ownsDeclaration(entry) && sameTemplateSource(edits[index], node, entry))) {
           applied.forEach((entry, index) => attachTemplate(edits[index], entry))
         } else {
           for (const entry of applied.reverse()) remove(entry)
@@ -530,13 +572,14 @@
 
     async function restore(isCurrent, fromOriginal = false) {
       const exactNodes = fromOriginal ? original : new Map()
-      if (fromOriginal) original = new Map()
+      // Retain exact references for hidden session-only edits across comparison.
       const groups = operations()
       const state = currentState()
       prune(groups, state)
       const definitions = new Map(pendingTextStyles().map(style => [style.name, style]))
       for (const edits of groups.values()) {
         if (!isCurrent()) return
+        if (edits[0].previewHidden) continue
         if (edits[0].template) {
           await restoreTemplate(edits, isCurrent)
           continue
@@ -564,11 +607,13 @@
             const before = edit.restore === 'session'
               ? ui.buttonSize.currentSize(node, edit.target.key)
               : getComputedStyle(node).getPropertyValue(edit.property)
-            if (!canEdit(node, edit.property) || before !== (exactMatch ? exact.before : edit.before)) {
+            if (!canEdit(node, edit.property) || !matchesBaseline(edit, node, before, exactMatch ? exact.before : edit.before)) {
               complete = false
               break
             }
-            const entry = await apply(node, pendingTextStyle ? { ...edit, pendingTextStyle } : edit, groupCurrent)
+            const replay = edit.property === 'button-size' ? { ...edit, before } :
+              pendingTextStyle ? { ...edit, pendingTextStyle } : edit
+            const entry = await apply(node, replay, groupCurrent)
             if (!entry || !groupCurrent() || !matchesTarget(node, identity, true) || !isAttached(edit, entry)) {
               if (entry?.property === 'button-size') await removeButtonSize(entry).catch(() => false)
               else if (entry) remove(entry)
@@ -591,7 +636,10 @@
           }
           continue
         }
-        for (const [id, entry] of applied) attach(id, entry)
+        for (const [id, entry] of applied) {
+          attach(id, entry)
+          original.delete(id)
+        }
         reconcileConflicts(applied.map(([, entry]) => entry))
       }
     }
@@ -674,11 +722,11 @@
       },
       get hasUnattached() {
         const state = currentState()
-        return Array.from(saved.values()).some(edit => edit.template
+        return Array.from(saved.values()).some(edit => !edit.previewHidden && (edit.template
           ? templateNodes(edit).some(node => sameTemplateSource(edit, node) !== false && !templateIndex.get(edit.id)?.has(node))
-          : inState(edit, state) && !attached.has(edit.id))
+          : inState(edit, state) && !attached.has(edit.id)))
       },
-      get hasConflicts() { return conflicts.size > 0 },
+      get hasConflicts() { return [...conflicts].some(id => !saved.get(id)?.previewHidden) },
       get lastSavedId() {
         return Array.from(saved.values()).findLast(edit => edit.route === savedRoute ||
           (edit.template && templateNodes(edit).some(node => sameTemplateSource(edit, node) !== false)))?.id
@@ -687,6 +735,7 @@
         if (hasStyleConflict()) return true
         const state = currentState()
         return Array.from(operations().values()).some(edits => {
+          if (edits[0].previewHidden) return false
           if (!sharedGroupValid(edits)) return edits.some(edit => attached.has(edit.id))
           if (edits[0].template) {
             return edits.some(edit => templateLayers(edit.id).some(([, entry]) =>
@@ -754,9 +803,18 @@
         }
         if (rebased.length) await restore(isCurrent)
       },
+      hasOperation(id) { return saved.has(id) },
+      isPreviewHidden(id) { return saved.get(id)?.previewHidden === true },
+      async setPreviewHidden(changes, isCurrent, comparing = false) {
+        const changed = [...saved.values()].filter(edit => changes.has(edit.group ?? edit.id) &&
+          Boolean(edit.previewHidden) !== changes.get(edit.group ?? edit.id))
+        if (!changed.length) return
+        if (!comparing) this.showOriginal()
+        for (const edit of changed) saved.set(edit.id, { ...edit, previewHidden: changes.get(edit.group ?? edit.id) })
+        if (!comparing) await restore(isCurrent, true)
+      },
       showOriginal() {
         reconcileConflicts()
-        original = new Map()
         for (const [id, entry] of Array.from(attached).reverse()) {
           detach(id)
           if (entry.templateEditId) continue
