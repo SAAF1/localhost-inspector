@@ -120,7 +120,7 @@
     const actions = ui.row()
     actions.classList.add('li-panel-actions')
     actions.setAttribute('role', 'group')
-    actions.setAttribute('aria-label', 'Preview actions for this page')
+    actions.setAttribute('aria-label', 'Preview actions')
     for (const [id, label, icon] of [
       ['undo', 'Undo last preview', 'undoPreview'],
       ['clear', 'Show original', 'comparePreview'],

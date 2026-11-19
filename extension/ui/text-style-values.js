@@ -69,7 +69,7 @@
   ui.textStyleName = (node, catalog) => {
     if (!catalog) return null
     const name = catalog.names.find(name => properties.every(property =>
-      node.style.getPropertyValue(property) === ui.textStyleReference(name, property),
+      ui.authoredProperty(node, property) === ui.textStyleReference(name, property),
     ))
     const values = name && ui.textStyleValues(node, name)
     const computed = values && getComputedStyle(node)

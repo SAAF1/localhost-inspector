@@ -42,6 +42,36 @@ const go = async (h, path) => {
   await h.app.evaluate(() => window.phaseAInspectorReady)
 }
 
+test('stylesheet bindings identify named typography and palette values without mistaking equal literals for tokens', async () => {
+  const h = await createHarness({ ...setup, colorCatalog: { source, names: ['--ink'] } })
+  try {
+    await h.app.addStyleTag({ content: `
+      @layer base, utilities;
+      :root { --ink: #243654; --unit: 4px; }
+      @layer base { article { color: #222; padding: 0; } }
+      @layer utilities {
+        .copy { font-family: var(--text-body-font-family); font-weight: var(--text-body-font-weight);
+          font-size: var(--text-body-font-size); line-height: var(--text-body-line-height);
+          letter-spacing: var(--text-body-letter-spacing); color: var(--ink);
+          padding-inline: calc(var(--unit) * 3); }
+        .literal { color: #243654; font-size: 16px; }
+      }
+    ` })
+    await h.app.evaluate(() => document.body.insertAdjacentHTML('beforeend',
+      '<article id="copy" class="copy">Named style</article><article id="literal" class="copy literal" style="color:#243654;font-size:16px">Equal values</article>'))
+    await h.open()
+    await h.select('#copy')
+    assert.equal(await h.host.getByRole('textbox', { name: 'Font family' }).inputValue(), 'Georgia, serif')
+    await current(h, '--text-body').waitFor()
+    await button(h, 'Text color variable ink').waitFor()
+    assert.equal(await h.field('Horizontal padding').getAttribute('data-inspector-tooltip'), '--unit × 3')
+    await h.select('#literal')
+    await button(h, 'Apply text styles').waitFor()
+    assert.equal(await button(h, 'Text color variable ink').count(), 0)
+    assert.deepEqual(await h.journal(), [])
+  } finally { await h.close() }
+})
+
 test('text styles reuse the keyboard picker and replace, detach, compare and undo as a bundle', async () => {
   const h = await createHarness({ ...setup, dock: true })
   try {

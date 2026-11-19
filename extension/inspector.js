@@ -58,6 +58,7 @@
   let scopedPreviewTargets = false
   let landmarkPreviewTargets = false
   let templatePreviews = false
+  let projectWideRevert = false
   let refreshing = false
   let editNavigation = 0
   const editDestinationKey = 'localhost-inspector.pending-destination'
@@ -249,7 +250,8 @@
     const reset = get('reset')
     undo.disabled = writesUnavailable || comparing || !recovery.hasSaved
     compare.disabled = pageActionsUnavailable || (!comparing && !recovery.hasAttached)
-    reset.disabled = writesUnavailable || !recovery.hasSaved
+    const hasPendingEdits = pendingRows.length > 0 || recovery.hasSaved
+    reset.disabled = writesUnavailable || !hasPendingEdits || !projectWideRevert
     const pageBusy = pageActionsUnavailable ? 'Wait for the current page to finish updating' : ''
     const saveUnavailable = pageBusy || (journalRevision === null ? 'Reload to reconnect to saved edits' : '')
     const pendingReason = saveUnavailable || (!recovery.hasSaved ? 'No saved edits on this page' : '')
@@ -259,7 +261,8 @@
     const compareLabel = comparing ? 'Show previews' : 'Show original'
     compare.setAttribute('aria-label', compareLabel)
     ui.setTooltip(compare, pageBusy || (compare.disabled ? 'No live previews on this page to compare' : compareLabel))
-    ui.setTooltip(reset, pendingReason || 'Revert saved edits on this page')
+    ui.setTooltip(reset, saveUnavailable || (!hasPendingEdits ? 'No saved edits in this app' :
+      projectWideRevert ? 'Revert saved edits on all pages' : 'Restart the local helper with the updated Inspector to revert all edits'))
     get('comparison-mode').hidden = !comparing
     editsUI.setDisabled(writesUnavailable || comparing)
   }
@@ -923,10 +926,9 @@
     get(panel.hidden ? 'pending-order' : 'edits-tab').focus({ preventScroll: true })
     await run(async () => {
       const entries = recovery.buttonEntries()
-      const persist = () => write({ type: 'reset', route: requestedRoute, templateIds: recovery.activeTemplateIds() }, requestedRoute, version)
+      const persist = () => write({ type: 'resetAll' }, requestedRoute, version)
       if (entries.length) await rewindButtonSizes(entries, requestedRoute, version, persist)
       else await persist()
-      if (currentRoute !== requestedRoute || route() !== requestedRoute) return
       comparing = false
       if (isCurrentRoute(requestedRoute, version)) {
         recovery.clear()
@@ -961,6 +963,7 @@
     scopedPreviewTargets = snapshot.scopedPreviewTargets === true
     landmarkPreviewTargets = snapshot.landmarkPreviewTargets === true
     templatePreviews = snapshot.templatePreviews === true
+    projectWideRevert = snapshot.projectWideRevert === true
     if (Array.isArray(snapshot.pending)) pendingRows = snapshot.pending
   }
   async function loadSavedEdits(requestedRoute, version) {
@@ -980,6 +983,7 @@
     scopedPreviewTargets = false
     landmarkPreviewTargets = false
     templatePreviews = false
+    projectWideRevert = false
     colorCatalog = null
     spacingCatalog = null
     textStyleCatalog = null

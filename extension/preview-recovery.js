@@ -524,9 +524,6 @@
       get lastSavedId() {
         return Array.from(saved.values()).findLast(edit => edit.route === savedRoute || (edit.template && templateNodes(edit).length))?.id
       },
-      activeTemplateIds() {
-        return Array.from(saved.values()).filter(edit => edit.template && templateNodes(edit).length).map(edit => edit.id)
-      },
       get needsRestore() {
         if (hasStyleConflict()) return true
         const state = currentState()

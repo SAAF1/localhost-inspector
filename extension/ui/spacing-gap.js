@@ -2,7 +2,8 @@
   const ui = window.LocalhostInspector
   const length = /^(\d+(?:\.\d+)?|\.\d+)(px|rem)?$/i
   const namePattern = /^--[a-zA-Z_][a-zA-Z0-9_-]{0,79}$/
-  const reference = /^var\((--[a-zA-Z_][a-zA-Z0-9_-]{0,79})\)$/
+  const reference = /^var\(\s*(--[a-zA-Z_][a-zA-Z0-9_-]{0,79})\s*\)$/
+  const scaledReference = /^calc\(\s*var\(\s*(--[a-zA-Z_][a-zA-Z0-9_-]{0,79})\s*\)\s*\*\s*(\d+(?:\.\d+)?)\s*\)$/
 
   ui.spacingVariableValue = name => 'var(' + name + ')'
 
@@ -49,8 +50,9 @@
     const properties = settings.properties ?? [property]
     const canBind = () => properties.every(side => ui.supportsSpacingVariable(node, side))
     const eligible = spacingCatalog && canBind()
-    const name = reference.exec(node.style.getPropertyValue(properties[0]))?.[1]
-    const hasBinding = (side, id) => node.style.getPropertyValue(side) === ui.spacingVariableValue(id) &&
+    const authored = properties.map(side => ui.authoredProperty(node, side) ?? '')
+    const name = reference.exec(authored[0])?.[1]
+    const hasBinding = (side, id) => reference.exec(ui.authoredProperty(node, side) ?? '')?.[1] === id &&
       ui.spacingVariableMatches(node, side, id)
     const bound = eligible && spacingCatalog.names.includes(name) && properties.every(side => hasBinding(side, name))
     const open = anchor => {
@@ -81,8 +83,20 @@
         choose: (choice, anchor) => choice === 'variable' ? open(anchor) : menu.choose(choice),
       },
     } : settings)
-    if (!eligible) return field
     const input = field.querySelector('input')
+    if (!bound && authored.every(value => value === authored[0])) {
+      const scaled = scaledReference.exec(authored[0])
+      if (scaled && properties.every(side => {
+        const base = ui.resolveSpacingLength(node, scaled[1])
+        const actual = getComputedStyle(node).getPropertyValue(side)
+        return base !== null && actual.endsWith('px') &&
+          Math.abs(parseFloat(actual) - base * Number(scaled[2])) < 0.0001
+      })) ui.setTooltip(input, scaled[1] + ' × ' + scaled[2])
+      else if (name && properties.every(side => ui.spacingVariableMatches(node, side, name))) {
+        ui.setTooltip(input, 'Source variable ' + name)
+      }
+    }
+    if (!eligible) return field
     const key = input.onkeydown
     input.onkeydown = event => {
       if (event.key !== '=' || event.isComposing || event.currentTarget.readOnly) return key(event)

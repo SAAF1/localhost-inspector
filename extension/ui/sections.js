@@ -22,7 +22,16 @@
     const textColor = ui.element('div', 'li-stack li-text-color')
     textColor.append(heading, binding.field)
     const fontFields = textStyle.field ? [textStyle.field] : manualTypographyFields(controls)
-    const section = ui.section('Typography', ...fontFields,
+    const family = ui.element('input')
+    family.id = 'control-font-family'
+    family.type = 'text'
+    family.readOnly = true
+    family.value = controls.value('font-family') ?? 'Mixed'
+    family.title = family.value
+    family.setAttribute('aria-label', 'Font family')
+    const familyField = ui.element('div', 'li-field')
+    familyField.append(family)
+    const section = ui.section('Typography', ui.stack('Font family', familyField), ...fontFields,
       ui.stack(alignment === null ? 'Alignment · Mixed' : 'Alignment', ui.row(segments, more)), textColor,
     )
     section.classList.add('li-type-section')

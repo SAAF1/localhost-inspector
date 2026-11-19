@@ -522,7 +522,7 @@ async function handle(message) {
     if (!validRoute(message.route)) throw Error('Expected a route')
     const route = journalRoute(message.route)
     const buttonSize = await readButtonSize(binding).catch(() => null)
-    return { revision: journal.revision, route, scopedPreviewTargets: true, landmarkPreviewTargets: true, templatePreviews: true,
+    return { revision: journal.revision, route, scopedPreviewTargets: true, landmarkPreviewTargets: true, templatePreviews: true, projectWideRevert: true,
       edits: journal.edits.filter(edit => edit.route === route || edit.template), pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
   }
   if (message.type === 'saveEvidence') {
@@ -582,6 +582,9 @@ async function handle(message) {
     const matches = member => member === edit || (edit.group && member.group === edit.group)
     removed = journal.edits.filter(matches)
     journal.edits = journal.edits.filter(member => !matches(member))
+  } else if (message.type === 'resetAll') {
+    removed = journal.edits
+    journal.edits = []
   } else if (message.type === 'reset') {
     if (!validRoute(message.route)) throw Error('Expected a route')
     const route = journalRoute(message.route)

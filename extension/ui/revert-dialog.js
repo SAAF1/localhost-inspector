@@ -4,7 +4,7 @@
     const dialog = ui.element('dialog', 'li-revert-dialog')
     const title = ui.element('h2', '', 'Revert all previews?')
     title.id = 'revert-title'
-    const detail = ui.element('p', '', 'This removes all saved Inspector previews on this page.')
+    const detail = ui.element('p', '', 'This removes all pending edits and previews across every page in this app.')
     detail.id = 'revert-description'
     dialog.setAttribute('aria-labelledby', title.id)
     dialog.setAttribute('aria-describedby', detail.id)

@@ -87,7 +87,7 @@ test('compact pending review works in Localhost and Canvas, and zoom changes the
     await launcher.click()
     const pending = h.host.getByRole('region', { name: 'Pending edits', exact: true })
     assert.equal(await pending.getByText('1 pending edit', { exact: true }).count(), 0)
-    const actions = pending.getByRole('group', { name: 'Preview actions for this page' })
+    const actions = pending.getByRole('group', { name: 'Preview actions' })
     await actions.getByRole('button', { name: 'Show original' }).click()
     await h.settled()
     assert.equal(await h.css('border-radius'), '0px')

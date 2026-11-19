@@ -39,7 +39,7 @@
   }
 
   function reference(node, property) {
-    return /^var\((--[a-zA-Z_][a-zA-Z0-9_-]{0,79})\)$/.exec(node.style.getPropertyValue(property))?.[1]
+    return /^var\(\s*(--[a-zA-Z_][a-zA-Z0-9_-]{0,79})\s*\)$/.exec(ui.authoredProperty(node, property) ?? '')?.[1]
   }
   function sameValue(values) {
     return values.every(value => value === values[0]) ? values[0] : null
@@ -68,6 +68,9 @@
         applied = { id: name, name: name.slice(2), value: sameValue(values) }
       }
     }
+    if (!applied && name && targets.every(target =>
+      ui.resolveColorVariable(target, name) === getComputedStyle(target).getPropertyValue(property),
+    )) ui.setTooltip(literal.querySelector('input'), 'Source variable ' + name)
     const mixed = targets.length > 1 && (name === null || (applied && applied.value === null))
     if (mixed) {
       const input = literal.querySelector('input')

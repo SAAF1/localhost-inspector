@@ -21,13 +21,13 @@ test('panel chrome keeps selection guidance and page actions truthful', async ()
     assert.equal(await guidance.isVisible(), true)
     assert.equal(await undo.isVisible(), false)
     await h.showEdits()
-    assert.deepEqual(await h.host.getByRole('group', { name: 'Preview actions for this page' })
+    assert.deepEqual(await h.host.getByRole('group', { name: 'Preview actions' })
       .getByRole('button').evaluateAll(buttons => buttons.map(button => button.id)), ['undo', 'clear', 'reset'])
     assert.equal(await undo.isDisabled(), true)
     assert.equal(await compare.isDisabled(), true)
     assert.equal(await reset.isDisabled(), true)
     assert.equal(await undo.getAttribute('data-inspector-tooltip'), 'No saved edits on this page')
-    assert.equal(await reset.getAttribute('data-inspector-tooltip'), 'No saved edits on this page')
+    assert.equal(await reset.getAttribute('data-inspector-tooltip'), 'No saved edits in this app')
     assert.equal(await compare.getAttribute('data-inspector-tooltip'), 'No live previews on this page to compare')
     assert.equal(await h.host.locator('#status').innerText(), '')
     await h.host.getByRole('tab', { name: 'Design' }).click()
@@ -61,9 +61,10 @@ test('panel chrome keeps selection guidance and page actions truthful', async ()
   } finally { await h.close() }
 })
 
-test('Revert all asks first and clears the current page including unrestored previews', async () => {
+test('Revert all asks first and clears every page including unrestored previews', async () => {
   const h = await createHarness({
     dock: true,
+    pendingEdits: true,
     journal: [savedEdit('a', '/', '18px'), savedEdit('unrestored', '/', '16px', 'ambiguous'), savedEdit('b', '/other', '20px')],
   })
   try {
@@ -73,6 +74,7 @@ test('Revert all asks first and clears the current page including unrestored pre
     const dialog = h.host.getByRole('dialog', { name: 'Revert all previews?' })
     const cancel = dialog.getByRole('button', { name: 'Cancel' })
     await trigger.click()
+    assert.match(await dialog.innerText(), /every page in this app/)
     assert.equal(await cancel.evaluate(el => el === el.getRootNode().activeElement), true)
     assert.equal(await h.css('font-size'), '18px')
     assert.equal((await h.journal()).some(edit => edit.undone), false)
@@ -90,12 +92,38 @@ test('Revert all asks first and clears the current page including unrestored pre
     await h.settled()
     assert.equal(await h.css('font-size'), '12px')
     assert.equal(await h.host.locator('#status').innerText(), '')
-    assert.deepEqual((await h.journal()).map(edit => edit.id), ['b'])
+    assert.deepEqual(await h.journal(), [])
+    assert.equal(await h.host.getByText('No pending edits').isVisible(), true)
     assert.equal(await trigger.isDisabled(), true)
   } finally { await h.close() }
 })
 
-test('stale and pending Revert all stay bound to the page where they started', async () => {
+test('Revert all is available on a page with no local previews', async () => {
+  const h = await createHarness({ pendingEdits: true, journal: [savedEdit('other', '/other', '20px')] })
+  try {
+    await h.open()
+    await h.showEdits()
+    assert.equal(await h.host.locator('#undo').isDisabled(), true)
+    await h.host.getByRole('button', { name: 'Revert all previews' }).click()
+    await h.host.getByRole('dialog').getByRole('button', { name: 'Revert all', exact: true }).click()
+    await h.host.getByText('No pending edits').waitFor()
+    assert.deepEqual(await h.journal(), [])
+  } finally { await h.close() }
+})
+
+test('an older helper explains why app-wide Revert all is unavailable', async () => {
+  const h = await createHarness({ legacyPreviewHelper: true, pendingEdits: true, journal: [savedEdit('a', '/', '18px')] })
+  try {
+    await h.open()
+    await h.showEdits()
+    const trigger = h.host.getByRole('button', { name: 'Revert all previews' })
+    assert.equal(await trigger.isDisabled(), true)
+    assert.match(await trigger.getAttribute('data-inspector-tooltip'), /Restart the local helper/)
+    assert.equal(await h.host.locator('#undo').isEnabled(), true)
+  } finally { await h.close() }
+})
+
+test('navigation dismisses an unconfirmed revert and refreshes the current page after a confirmed revert', async () => {
   for (const returnToStart of [false, true]) {
     const h = await createHarness({
       holdReset: true,
@@ -128,9 +156,9 @@ test('stale and pending Revert all stay bound to the page where they started', a
         assert.equal(await h.css('font-size'), '18px', 'The revisit loaded its pre-revert preview')
       }
       await h.app.evaluate(() => window.__releaseReset())
+      await h.app.waitForFunction(() => getComputedStyle(document.getElementById('target')).fontSize === '12px')
       await h.settled()
-      assert.equal(await h.css('font-size'), returnToStart ? '12px' : '20px')
-      assert.deepEqual((await h.journal()).map(edit => edit.id), ['b'])
+      assert.deepEqual(await h.journal(), [])
     } finally { await h.close() }
   }
 })
