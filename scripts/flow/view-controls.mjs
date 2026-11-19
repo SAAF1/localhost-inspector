@@ -6,21 +6,33 @@ export function connectViewControls({ apply, read, presets }) {
   const inspector = toolbar.querySelector('#inspector-toggle')
   const trigger = toolbar.querySelector('#frame-view-toggle')
   const menu = toolbar.querySelector('#frame-view-menu')
+  const pending = toolbar.querySelector('#pending-toggle')
+  const zoom = toolbar.querySelector('#zoom-control')
 
   function syncInspector() {
     inspector.hidden = !dock.firstElementChild
     inspector.disabled = dock.inert
     const open = dock.hasAttribute('data-inspector-open')
+    const host = dock.firstElementChild
+    const count = Number(host?.dataset.pendingCount) || 0
+    pending.hidden = open || !count || dock.inert
+    pending.querySelector('span').textContent = count
+    pending.setAttribute('aria-label', 'Pending edits, ' + count)
+    pending.setAttribute('aria-expanded', String(Boolean(host?.hasAttribute('data-pending-open'))))
+    zoom.hidden = !open || dock.inert || !document.body.hasAttribute('data-expanded')
     inspector.setAttribute('aria-expanded', String(open))
     const floating = dock.hasAttribute('data-inspector-floating') && document.body.hasAttribute('data-expanded')
-    inspector.title = floating ? 'Dock Inspector' : open ? 'Collapse Inspector' : 'Open Inspector'
-    inspector.setAttribute('aria-label', inspector.title)
+    inspector.setAttribute('aria-label', floating ? 'Dock Inspector' : open ? 'Collapse Inspector' : 'Open Inspector')
     if (open) document.documentElement.style.setProperty('--li-workspace-panel-width', dock.offsetWidth + 'px')
   }
   const inspectorObserver = new MutationObserver(syncInspector)
-  inspectorObserver.observe(dock, { childList: true, attributes: true })
+  inspectorObserver.observe(dock, {
+    subtree: true, childList: true, attributes: true,
+    attributeFilter: ['inert', 'data-inspector-open', 'data-inspector-floating', 'data-pending-count', 'data-pending-open'],
+  })
   inspectorObserver.observe(document.body, { attributes: true, attributeFilter: ['data-expanded'] })
   syncInspector()
+  pending.addEventListener('click', () => dock.firstElementChild?.dispatchEvent(new Event('toggle-pending-edits')))
   inspector.addEventListener('click', () => dock.firstElementChild?.dispatchEvent(new Event('toggle-workspace-inspector')))
 
   function close(focus = false) {
@@ -110,9 +122,55 @@ export function connectViewControls({ apply, read, presets }) {
   document.addEventListener('pointerdown', event => {
     if (!menu.hidden && !menu.contains(event.target) && !trigger.contains(event.target)) close()
   }, true)
-  return function sync(show, busy) {
+  return function sync(show, busy, showBusy) {
     trigger.hidden = !show
     trigger.setAttribute('aria-disabled', String(busy))
+    trigger.toggleAttribute('data-busy', showBusy)
     if (!show || busy) close()
   }
+}
+
+const preferenceKey = 'localhost-inspector.canvas-background'
+const variablePattern = /^--[a-zA-Z_][a-zA-Z0-9_-]{0,79}$/
+
+export function connectCanvasBackground(dock, viewport) {
+  const fallback = getComputedStyle(document.documentElement).backgroundColor
+  const defaults = { color: fallback, opacity: 100, visible: true }
+  let paint = defaults
+
+  function valid(value) {
+    return typeof value?.color === 'string' && value.color.length <= 100 &&
+      CSS.supports('color', value.color) && !/^(?:var\(|currentcolor|inherit|initial|unset|revert)/i.test(value.color) &&
+      Number.isFinite(value.opacity) && value.opacity >= 0 && value.opacity <= 100 &&
+      typeof value.visible === 'boolean' &&
+      (value.variable === undefined || (typeof value.variable === 'string' && variablePattern.test(value.variable)))
+  }
+
+  function apply() {
+    dock.dataset.canvasBackground = JSON.stringify(paint)
+    const background = paint.visible
+      ? 'color-mix(in srgb, ' + paint.color + ' ' + paint.opacity + '%, ' + fallback + ')'
+      : fallback
+    viewport.style.setProperty('--canvas-page-background', background)
+    viewport.toggleAttribute('data-canvas-colored', paint.visible && paint.opacity > 0 && paint.color !== fallback)
+  }
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(preferenceKey))
+    if (valid(stored)) paint = stored
+  } catch { /* A blocked or invalid preference leaves the default usable. */ }
+  apply()
+
+  dock.addEventListener('set-inspector-canvas-background', event => {
+    if (event.target !== dock.firstElementChild || typeof event.detail !== 'string') return
+    let candidate
+    try { candidate = JSON.parse(event.detail) }
+    catch { return }
+    if (!valid(candidate)) return
+    const { color, opacity, visible, variable } = candidate
+    paint = { color, opacity, visible, variable }
+    apply()
+    try { localStorage.setItem(preferenceKey, JSON.stringify(paint)) }
+    catch { /* Keep the current workspace color when storage is unavailable. */ }
+  }, true)
 }

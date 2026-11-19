@@ -24,6 +24,9 @@ test('Inspector tooltips wait about one second and dismiss when hover or focus l
 
       await h.open(); await h.select()
       await h.page.keyboard.press('Tab')
+      const design = h.host.getByRole('tab', { name: 'Design', exact: true })
+      assert.equal(await design.evaluate(node => node === node.getRootNode().activeElement), true)
+      await h.page.keyboard.press('Tab')
       const parent = h.host.getByRole('button', { name: 'Select parent element' })
       assert.equal(await parent.evaluate(node => node === node.getRootNode().activeElement), true)
       await h.page.clock.runFor(1100)
@@ -61,6 +64,7 @@ test('opening an Inspector menu or confirmation cancels a pending tooltip', asyn
     assert.equal(await tooltip.isVisible(), false)
     await h.page.keyboard.press('Escape')
 
+    await h.showEdits()
     const reset = h.host.getByRole('button', { name: 'Revert all previews' })
     await reset.hover()
     await h.page.clock.runFor(350)

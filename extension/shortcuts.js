@@ -3,7 +3,6 @@
   ui.bindInspectorShortcuts = ({ root, panel, selection, undo, parent }) => {
     const mac = /Mac|iPhone|iPad/i.test(navigator.platform)
     undo.setAttribute('aria-keyshortcuts', mac ? 'Meta+Z' : 'Control+Z')
-    ui.setTooltip(undo, 'Undo last preview (' + (mac ? '⌘Z' : 'Ctrl+Z') + ')')
     parent.setAttribute('aria-keyshortcuts', 'Shift+Enter')
     ui.setTooltip(parent, 'Select parent element (Shift+Enter)')
 

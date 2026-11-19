@@ -13,27 +13,93 @@
     return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('')
   }
 
-  const describe = node => ({
-    tag: node.localName,
-    id: node.id || null,
-    slot: node.getAttribute('data-slot'),
-    text: normalize(node.innerText).slice(0, 100),
-    key: targetKey(node),
-  })
+  function explicitRole(node) {
+    const role = node.getAttribute('role')?.trim().split(/\s+/, 1)[0]
+    return role && role.length <= 20 ? role : undefined
+  }
+
+  function scopedAnchor(node, text) {
+    // A repeated item needs its own authored identifier, even on a page
+    // that currently has just one item.
+    const repeated = 'tr, li, [role="row"], [role="listitem"], [role="option"]'
+    if (!text) return null
+    const semantic = node.matches('h1, h2, h3, h4, h5, h6, p, button, a, label, [role], [aria-label]')
+    if (!semantic && node.childElementCount) return null
+    const path = []
+    for (let child = node; child.parentElement && path.length < 8; child = child.parentElement) {
+      if (child.matches(repeated) || !/^[a-z][a-z0-9-]{0,39}$/.test(child.localName)) return null
+      path.unshift(child.localName)
+      const parent = child.parentElement
+      const key = targetKey(parent)
+      if (key) return { kind: 'key', value: key, path: path.join('>') }
+      if (semantic && parent.id && parent.id.length <= 120) return { kind: 'id', value: parent.id, path: path.join('>') }
+      if (semantic && parent.matches('main, [role="main"]')) {
+        return { kind: 'main', value: 'main', path: path.join('>') }
+      }
+    }
+    return null
+  }
+
+  const sameAnchor = (a, b) => Boolean(a && b && a.kind === b.kind && a.value === b.value && a.path === b.path)
+
+  function regionIdentity(node) {
+    const regions = []
+    let parent = node.parentElement
+    for (let depth = 0; parent && depth < 6; depth++, parent = parent.parentElement) {
+      const key = targetKey(parent)
+      const id = !key && parent.id && parent.id.length <= 120 ? parent.id : undefined
+      const role = explicitRole(parent)
+      if (key || id || role) regions.push({ tag: parent.localName, key: key ?? undefined, id, role })
+    }
+    return JSON.stringify(regions)
+  }
+
+  function classIdentity(node) {
+    return JSON.stringify(Array.from(node.classList).sort())
+  }
+
+  function describe(node) {
+    const key = targetKey(node)
+    const id = node.id || null
+    const text = normalize(node.innerText || node.getAttribute('aria-label')).slice(0, 100)
+    const anchor = !key && !id ? scopedAnchor(node, text) : null
+    const guarded = !key && (id || anchor)
+    return {
+      tag: node.localName, id, key, slot: node.getAttribute('data-slot'), text,
+      ...(anchor ? { anchor } : {}),
+      region: guarded ? regionIdentity(node) : undefined,
+      classes: guarded ? classIdentity(node) : undefined,
+    }
+  }
 
   function matchesTarget(node, target, rebind = false) {
     if (!node?.isConnected || !target || node.localName !== target.tag ||
         node.getAttribute('data-slot') !== target.slot) return false
     const key = targetKey(node)
     if (target.key || key) return key === target.key
-    if ((node.id || null) !== target.id) return false
+    if ((node.id || null) !== target.id || (target.region !== undefined && target.region !== regionIdentity(node))) return false
+    if (target.anchor && !sameAnchor(target.anchor, scopedAnchor(node, normalize(node.innerText || node.getAttribute('aria-label'))))) return false
+    if (target.classes !== undefined && target.classes !== classIdentity(node)) return false
     // A live ID-bearing node can outlast changes to its descendants. A new
     // node found through a legacy ID still needs the recorded text guard.
     return (!rebind && Boolean(target.id)) || !target.text ||
-      normalize(node.innerText).slice(0, 100) === target.text
+      normalize(node.innerText || node.getAttribute('aria-label')).slice(0, 100) === target.text
   }
 
   function findTarget(target, liveNode) {
+    if (target.anchor && !target.key && !target.id) {
+      const { kind, value, path } = target.anchor
+      if (!/^[a-z][a-z0-9-]{0,39}(>[a-z][a-z0-9-]{0,39}){0,7}$/.test(path)) return null
+      const selector = kind === 'main' ? 'main, [role="main"]' :
+        kind === 'key' ? '[' + keyAttribute + '="' + CSS.escape(value) + '"]' : '#' + CSS.escape(value)
+      const roots = document.querySelectorAll(selector)
+      if (roots.length !== 1) return null
+      const candidates = [...roots[0].querySelectorAll(':scope>' + path)]
+        .filter(node => node.getAttribute('data-slot') === target.slot)
+      if (candidates.length !== 1) return null
+      const [node] = candidates
+      return matchesTarget(node, target, node !== liveNode) ? node : null
+    }
     if (!target.key && !target.id) return null
     const selector = target.key
       ? '[' + keyAttribute + '="' + CSS.escape(target.key) + '"]'
@@ -49,10 +115,29 @@
       node.style.getPropertyPriority(property) === ''
   }
 
+  async function verifySavedNode(edit, node, identity, isCurrent) {
+    const { key, anchor, textFingerprint, regionFingerprint, classFingerprint } = edit.target
+    if (anchor && (!textFingerprint || !regionFingerprint || !classFingerprint)) return false
+    if (!key && (textFingerprint || regionFingerprint || classFingerprint)) {
+      const [text, region, classes] = await Promise.all([
+        textFingerprint && fingerprint(identity.text),
+        regionFingerprint && fingerprint(identity.region ?? ''),
+        classFingerprint && fingerprint(identity.classes ?? ''),
+      ])
+      if (text !== textFingerprint || region !== regionFingerprint || classes !== classFingerprint) return false
+    }
+    return isCurrent() && findTarget(edit.target) === node && matchesTarget(node, identity, true)
+  }
+
   ui.describeSourceContext = node => {
     const ancestors = []
     for (let parent = node.parentElement; parent && ancestors.length < 6; parent = parent.parentElement) {
-      ancestors.push({ tag: parent.localName, slot: parent.getAttribute('data-slot') })
+      const role = explicitRole(parent)
+      ancestors.push({
+        tag: parent.localName,
+        slot: parent.getAttribute('data-slot'),
+        ...(role ? { role } : {}),
+      })
     }
     const childTags = []
     for (let child = node.firstElementChild; child && childTags.length < 4; child = child.nextElementSibling) {
@@ -72,9 +157,11 @@
   }
 
   ui.describePreviewTarget = describe
-  ui.previewTargetForJournal = async ({ text, ...target }) => ({
+  ui.previewTargetForJournal = async ({ text, region, classes, ...target }) => ({
     ...target,
-    ...(!target.key && target.id && text ? { textFingerprint: await fingerprint(text) } : {}),
+    ...(!target.key && (target.id || target.anchor) && text ? { textFingerprint: await fingerprint(text) } : {}),
+    ...(region !== undefined ? { regionFingerprint: await fingerprint(region) } : {}),
+    ...(classes !== undefined ? { classFingerprint: await fingerprint(classes) } : {}),
   })
   ui.findPreviewTarget = findTarget
   ui.matchesPreviewTarget = matchesTarget
@@ -160,6 +247,18 @@
         (edit.restore !== 'unique' || findTarget(edit.target, entry.node) === entry.node))
     }
 
+    function forget(id) {
+      reconcileConflicts()
+      const group = saved.get(id)?.group
+      const ids = group ? Array.from(saved.values()).filter(edit => edit.group === group).map(edit => edit.id) : [id]
+      for (const member of ids.reverse()) {
+        detach(member)
+        saved.delete(member)
+        original.delete(member)
+        conflicts.delete(member)
+      }
+    }
+
     function operations() {
       const groups = new Map()
       for (const edit of saved.values()) {
@@ -211,22 +310,25 @@
           }
           const exactMatch = matchesTarget(exact?.node, exact?.target)
           const node = exactMatch ? exact.node : (edit.restore === 'unique' ? findTarget(edit.target) : null)
-          if (conflicts.has(edit.id) || !node || !canEdit(node, edit.property) ||
-              (edit.restore === 'session' ? ui.buttonSize.currentSize(node, edit.target.key) : getComputedStyle(node).getPropertyValue(edit.property)) !== (exactMatch ? exact.before : edit.before)) {
+          if (conflicts.has(edit.id) || !node) {
             complete = false
             break
           }
           try {
-            if (!exactMatch && !edit.target.key && edit.target.textFingerprint) {
-              const text = normalize(node.innerText).slice(0, 100)
-              if (await fingerprint(text) !== edit.target.textFingerprint || !isCurrent() ||
-                  findTarget(edit.target) !== node || normalize(node.innerText).slice(0, 100) !== text) {
-                complete = false
-                break
-              }
+            const identity = describe(node)
+            if (!exactMatch && !await verifySavedNode(edit, node, identity, isCurrent)) {
+              complete = false
+              break
+            }
+            const before = edit.restore === 'session'
+              ? ui.buttonSize.currentSize(node, edit.target.key)
+              : getComputedStyle(node).getPropertyValue(edit.property)
+            if (!canEdit(node, edit.property) || before !== (exactMatch ? exact.before : edit.before)) {
+              complete = false
+              break
             }
             const entry = await apply(node, pendingTextStyle ? { ...edit, pendingTextStyle } : edit, isCurrent)
-            if (!entry || !isCurrent() || !isAttached(edit, entry)) {
+            if (!entry || !isCurrent() || !matchesTarget(node, identity, true) || !isAttached(edit, entry)) {
               if (entry?.property === 'button-size') await removeButtonSize(entry).catch(() => false)
               else if (entry) remove(entry)
               complete = false
@@ -280,6 +382,29 @@
       get hasAttachedButtonSize() {
         return Array.from(attached.values()).some(entry => entry.property === 'button-size')
       },
+      previewNode(id) {
+        const entry = attached.get(id)
+        return entry && isAttached(saved.get(id), entry) ? entry.node : null
+      },
+      async locateSavedNode(id, isCurrent) {
+        const edit = saved.get(id)
+        if (!edit) return null
+        const entry = attached.get(id)
+        if (entry && isAttached(edit, entry)) return entry.node
+        const exact = original.get(id)
+        if (exact && matchesTarget(exact.node, exact.target) &&
+            (edit.restore !== 'unique' || findTarget(edit.target, exact.node) === exact.node)) return exact.node
+        if (edit.restore !== 'unique') return null
+        const node = findTarget(edit.target)
+        if (!node || !await verifySavedNode(edit, node, describe(node), isCurrent)) return null
+        return saved.get(id) === edit ? node : null
+      },
+      matchesSnapshot(edits) {
+        return edits.length === saved.size && edits.every(edit => saved.get(edit.id)?.before === edit.before)
+      },
+      get hasSessionPreview() {
+        return [...attached.keys()].some(id => saved.get(id)?.restore !== 'unique')
+      },
       get hasSaved() { return saved.size > 0 },
       get hasUnattached() { return attached.size < saved.size },
       get hasConflicts() { return conflicts.size > 0 },
@@ -296,21 +421,47 @@
         })
       },
       hasStyleConflict,
+      hasTargetClassChange(records) {
+        const ids = new Set(records.filter(record => record.attributeName === 'class').map(record => record.target.id).filter(Boolean))
+        return ids.size > 0 && Array.from(saved.values()).some(edit => edit.target.classFingerprint && ids.has(edit.target.id))
+      },
       remember(edit, entry) {
         saved.set(edit.id, edit)
         if (!entry) return
         attached.set(edit.id, entry)
         reconcileConflicts([entry])
       },
-      forget(id) {
-        reconcileConflicts()
-        const group = saved.get(id)?.group
-        const ids = group ? Array.from(saved.values()).filter(edit => edit.group === group).map(edit => edit.id) : [id]
-        for (const member of ids.reverse()) {
-          detach(member)
-          saved.delete(member)
-          conflicts.delete(member)
+      forget,
+      hasUnverifiedDependentPreview(id) {
+        const group = operations().get(id)
+        if (!group) return false
+        const members = new Set(group.map(edit => edit.id))
+        const next = []
+        for (const [member, edit] of [...saved].reverse()) {
+          const entry = attached.get(member)
+          if (!entry) continue
+          if (!members.has(member)) next.push({ edit, entry })
+          else if (next.some(candidate => candidate.entry.node === entry.node && candidate.edit.property === edit.property &&
+            (edit.restore !== 'unique' || candidate.edit.restore !== 'unique'))) return true
         }
+        return false
+      },
+      async removeOperation(id, rebased, isCurrent) {
+        reconcileConflicts()
+        const removed = attached.get(id)
+        if (removed && rebased.length) {
+          // Unwind this declaration's later layers before removing its baseline.
+          const later = Array.from(attached).slice(Array.from(attached.keys()).indexOf(id) + 1)
+          for (const [member, entry] of later.reverse()) {
+            if (entry.node === removed.node && entry.property === removed.property) detach(member)
+          }
+        }
+        forget(id)
+        for (const { id: member, before } of rebased) {
+          const edit = saved.get(member)
+          if (edit) saved.set(member, { ...edit, before })
+        }
+        if (removed && rebased.length) await restore(isCurrent)
       },
       showOriginal() {
         reconcileConflicts()

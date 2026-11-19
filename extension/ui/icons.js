@@ -3,6 +3,8 @@
   const ui = window.LocalhostInspector = window.LocalhostInspector || {}
   const markup = {
   "launcherSliders": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><path d=\"M2 4h2m3 0h7M2 8h7m3 0h2M2 12h4m3 0h5\"/><circle cx=\"5.5\" cy=\"4\" r=\"1.5\"/><circle cx=\"10.5\" cy=\"8\" r=\"1.5\"/><circle cx=\"7.5\" cy=\"12\" r=\"1.5\"/></svg>",
+  "dockInspector": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 18 18\"><rect x=\"2.5\" y=\"3.5\" width=\"13\" height=\"11\" rx=\"2\"/><path d=\"M11.5 4v10\"/></svg>",
+  "editPencil": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><path d=\"m3 10 8-8 3 3-8 8-4 1zM10 3l3 3\"/></svg>",
   "selectParent": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><path d=\"M8 3H3.5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8\"/><rect x=\"5\" y=\"7\" width=\"4.5\" height=\"3.5\" rx=\".5\"/><path d=\"M12 6V2m-1.75 1.75L12 2l1.75 1.75\"/></svg>",
   "undoPreview": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><path d=\"m6 4-3 3 3 3M3 7h6a4 4 0 0 1 4 4v2\"/></svg>",
   "comparePreview": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><rect x=\"2.5\" y=\"2.5\" width=\"11\" height=\"11\" rx=\"1\"/><path d=\"M8 2.5v11\"/></svg>",
@@ -33,6 +35,8 @@
   "applyVariable": '<svg fill="none" viewBox="0 0 16 16"><path d="m8 2.25 5 2.9v5.7l-5 2.9-5-2.9v-5.7z" stroke="currentColor" stroke-linejoin="round"/><circle cx="8" cy="8" r="1" fill="currentColor"/></svg>',
   "numberVariable": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><rect x=\"2.5\" y=\"2.5\" width=\"11\" height=\"11\" rx=\"2\" stroke=\"currentColor\"/><path d=\"M6.5 5.5 6 10.5m4-5-.5 5M5 7h6m-6 2h6\" stroke=\"currentColor\" stroke-linecap=\"round\"/></svg>",
   "variables": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><g stroke=\"currentColor\"><circle cx=\"5\" cy=\"5\" r=\"1.75\"/><circle cx=\"11\" cy=\"5\" r=\"1.75\"/><circle cx=\"5\" cy=\"11\" r=\"1.75\"/><circle cx=\"11\" cy=\"11\" r=\"1.75\"/></g></svg>",
+  "eye": '<svg fill="none" viewBox="0 0 16 16" stroke="currentColor" stroke-linejoin="round"><path d="M2 8s2.1-4 6-4 6 4 6 4-2.1 4-6 4-6-4-6-4Z"/><circle cx="8" cy="8" r="1.5"/></svg>',
+  "eyeOff": '<svg fill="none" viewBox="0 0 16 16" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8a9 9 0 0 1 1.5-2m2-1.3A6 6 0 0 1 8 4c3.9 0 6 4 6 4a9 9 0 0 1-2.2 2.6M9.5 11.8A6 6 0 0 1 8 12c-3.9 0-6-4-6-4m1-5 10 10"/></svg>',
   "add": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" d=\"M8 3v10M3 8h10\"/></svg>",
   "close": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" d=\"m5.5 5.5 5 5m0-5-5 5\"/></svg>",
   "dismiss": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" d=\"M3 3l10 10m0-10L3 13\"/></svg>",

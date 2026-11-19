@@ -53,9 +53,9 @@
     const parent = ui.action('Select parent element', 'selectParent')
     parent.id = 'parent'
     parent.hidden = true
-    const collapse = ui.action('Collapse Inspector', 'chevronDown')
+    const collapse = ui.action('Collapse Inspector', 'dockInspector')
     collapse.id = 'close-inspector'
-    const headerActions = ui.row(parent, collapse)
+    const headerActions = ui.row(parent)
     headerActions.classList.add('li-panel-actions')
     header.append(headerActions)
 
@@ -74,12 +74,53 @@
     const status = ui.element('output', 'li-status')
     status.id = 'status'
     status.setAttribute('aria-live', 'polite')
-    const toolbar = ui.element('div', 'li-panel-toolbar')
+    const tabs = ui.element('div', 'li-inspector-tabs')
+    tabs.id = 'inspector-tabs'
+    tabs.setAttribute('role', 'tablist')
+    tabs.setAttribute('aria-label', 'Inspector view')
+    for (const [id, label, target] of [['design-tab', 'Design', 'design-view'], ['edits-tab', 'Edits', 'pending-view']]) {
+      const tab = ui.element('button', '', label)
+      tab.id = id
+      tab.type = 'button'
+      tab.setAttribute('role', 'tab')
+      tab.setAttribute('aria-controls', target)
+      tabs.append(tab)
+    }
+    const design = ui.element('div', 'li-design-view')
+    design.id = 'design-view'
+    design.setAttribute('role', 'tabpanel')
+    design.setAttribute('aria-labelledby', 'design-tab')
+    const selectedName = ui.element('span', 'li-selected-name')
+    selectedName.id = 'selected-name'
+    header.prepend(selectedName)
+    const pending = ui.element('div', 'li-pending-view')
+    pending.id = 'pending-view'
+    pending.hidden = true
+    const pendingHeader = ui.element('div', 'li-pending-header')
+    const order = ui.selectTrigger('Sort pending edits')
+    order.id = 'pending-order'
+    order.classList.add('li-pending-order')
+    pendingHeader.append(order)
+    const pendingList = ui.element('div', 'li-pending-list')
+    pendingList.id = 'pending-list'
+    const pendingStatus = ui.element('output', 'li-status')
+    pendingStatus.id = 'pending-status'
+    pendingStatus.setAttribute('aria-live', 'polite')
+    pending.append(pendingHeader, pendingStatus, pendingList)
+    const pendingLauncher = ui.element('button', 'li-pending-launcher')
+    pendingLauncher.id = 'pending-launcher'
+    pendingLauncher.type = 'button'
+    pendingLauncher.hidden = true
+    pendingLauncher.setAttribute('aria-controls', 'pending-view')
+    pendingLauncher.append(ui.icon('editPencil'), ui.element('span'), ui.icon('chevronDown'))
+    footer.id = 'inspector-footer'
     const comparison = ui.element('span', 'li-comparison-label', 'Original view')
     comparison.id = 'comparison-mode'
     comparison.hidden = true
     const actions = ui.row()
     actions.classList.add('li-panel-actions')
+    actions.setAttribute('role', 'group')
+    actions.setAttribute('aria-label', 'Preview actions for this page')
     for (const [id, label, icon] of [
       ['undo', 'Undo last preview', 'undoPreview'],
       ['clear', 'Show original', 'comparePreview'],
@@ -91,18 +132,21 @@
     }
     actions.querySelector('#clear').setAttribute('aria-pressed', 'false')
     actions.querySelector('#reset').setAttribute('aria-haspopup', 'dialog')
-    toolbar.append(comparison, actions)
-    footer.append(status, toolbar)
-    panel.append(header, properties, footer)
+    pendingHeader.prepend(actions)
+    pendingHeader.after(comparison)
+    footer.append(status)
+    design.append(header, properties)
+    panel.append(tabs, design, pending, footer, collapse)
     const related = ui.element('div')
     related.id = 'related-outlines'
     related.setAttribute('aria-hidden', 'true')
     outlineRoot.append(related, hoverOutline, outline)
-    root.append(entry, panel)
+    root.append(entry, pendingLauncher, panel)
     function setOpen(open, floating = false) {
       panel.hidden = !open
       entry.setAttribute('aria-expanded', String(open))
       entry.hidden = open
+      host.dispatchEvent(new Event('inspector-visibility'))
       dock?.toggleAttribute('data-inspector-open', open)
       if (workspaceToolbar) dock.toggleAttribute('data-inspector-floating', open && floating)
     }

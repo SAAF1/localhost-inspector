@@ -6,6 +6,7 @@ import { access, mkdir, readFile, realpath, rename, stat, writeFile } from 'node
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { completeHandoff } from './complete-handoff.mjs'
+import { pendingEdits, removePendingEdit } from './journal-edits.mjs'
 import { buildSourceHandoff, featureTemplateScope, sourceContextFrom } from './source-handoff.mjs'
 import { addVisualEvidence, maxEvidenceLength, removeVisualEvidence, saveVisualEvidence } from './visual-evidence.mjs'
 
@@ -296,8 +297,19 @@ function assertJournalBinding(journal, binding) {
   if (journal.binding?.id !== binding.id || journal.binding.source !== binding.source ||
       journal.binding.origin !== binding.origin) throw Error('Journal binding mismatch')
 }
-function journalTarget({ tag, id, slot, key, textFingerprint }) {
-  return { tag, id, slot, key, textFingerprint }
+const targetFingerprint = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+function validScopedTarget(target) {
+  const { anchor, id, key, tag, textFingerprint, regionFingerprint, classFingerprint } = target
+  if (anchor === undefined) return true
+  return !id && !key && anchor && ['id', 'key', 'main'].includes(anchor.kind) && (anchor.kind !== 'main' || anchor.value === 'main') &&
+    typeof anchor.value === 'string' && anchor.value.length > 0 && validTargetKey(anchor.value) &&
+    typeof anchor.path === 'string' && /^[a-z][a-z0-9-]{0,39}(>[a-z][a-z0-9-]{0,39}){0,7}$/.test(anchor.path) &&
+    anchor.path.split('>').at(-1) === tag &&
+    [textFingerprint, regionFingerprint, classFingerprint].every(targetFingerprint)
+}
+function journalTarget({ tag, id, slot, key, anchor, textFingerprint, regionFingerprint, classFingerprint }) {
+  return { tag, id, slot, key, ...(anchor ? { anchor: { kind: anchor.kind, value: anchor.value, path: anchor.path } } : {}),
+    textFingerprint, regionFingerprint, classFingerprint }
 }
 function migrateJournal(journal) {
   journal.edits = journal.edits.filter(edit => !edit.undone).map(edit => {
@@ -346,8 +358,10 @@ function editFrom(record, catalog, group, pendingTextStyle) {
       !(group ? validTextStyleValue(record.property, record.observed) : validValue(record.property, record.observed)) ||
       typeof record.before !== 'string' || record.before.length > 100 ||
       !['unique', 'ambiguous'].includes(record.restore) || !target || !/^[a-z][a-z0-9-]*$/.test(target.tag) ||
-      !validTargetKey(target.key) || [target.id, target.slot].some(value => value !== null && (typeof value !== 'string' || value.length > 120)) ||
-      (target.textFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(target.textFingerprint))) {
+      !validScopedTarget(target) || !validTargetKey(target.key) || [target.id, target.slot].some(value => value !== null && (typeof value !== 'string' || value.length > 120)) ||
+      (record.frameState !== undefined && !targetFingerprint(record.frameState)) ||
+      [target.textFingerprint, target.regionFingerprint, target.classFingerprint].some(value =>
+        value !== undefined && !targetFingerprint(value))) {
     throw Error('Invalid edit record')
   }
   const { id, route, property, requested, observed, before, restore } = record
@@ -363,7 +377,7 @@ function editFrom(record, catalog, group, pendingTextStyle) {
   const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
   return {
     id, route: journalRoute(route), property, requested, observed, before, restore,
-    target: journalTarget(target), viewport, colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,
+    target: journalTarget(target), viewport, frameState: record.frameState, colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,
   }
 }
 function groupedPaddingEdits(records, catalog, journal, shared) {
@@ -502,7 +516,7 @@ async function handle(message) {
     if (!validRoute(message.route)) throw Error('Expected a route')
     const route = journalRoute(message.route)
     const buttonSize = await readButtonSize(binding).catch(() => null)
-    return { revision: journal.revision, route, edits: journal.edits.filter(edit => edit.route === route), buttonSizeKey: buttonSize?.key }
+    return { revision: journal.revision, route, scopedPreviewTargets: true, edits: journal.edits.filter(edit => edit.route === route), pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
   }
   if (message.type === 'saveEvidence') {
     if (!validRoute(message.route)) return false
@@ -524,6 +538,7 @@ async function handle(message) {
     return { revision: journal.revision, completed, imageCleanupFailed, reloadInspector: true }
   }
   let removed = []
+  let rebased
   if (message.type === 'save') {
     const catalog = message.record?.spacingToken ? await readCatalog(binding, 'spacing') :
       message.record?.colorToken || message.record?.pendingColor ? await readCatalog(binding) : null
@@ -549,6 +564,11 @@ async function handle(message) {
     const first = message.records?.[0]
     const catalog = first?.textStyleToken || first?.pendingTextStyle || first?.pendingTextStyleName ? await readCatalog(binding, 'text-styles') : null
     journal.edits.push(...await textStyleEdits(message.records, catalog, journal))
+  } else if (message.type === 'removeEdit') {
+    const result = removePendingEdit(journal.edits, message.id)
+    journal.edits = result.edits
+    removed = result.removed
+    rebased = result.rebased
   } else if (message.type === 'undo') {
     const edit = journal.edits.find(e => e.id === message.id)
     if (!edit) throw Error('Edit was not found')
@@ -564,7 +584,7 @@ async function handle(message) {
   journal.revision++
   await atomic(file, journal)
   if (removed.length) await removeVisualEvidence(root, binding, removed.map(edit => edit.id))
-  return { file, revision: journal.revision,
+  return { file, revision: journal.revision, pending: pendingEdits(journal.edits), rebased,
     ...(binding.visualEvidence === true && ['save', 'saveTextStyle', 'saveSharedPadding', 'savePairedPadding'].includes(message.type) ? { visualEvidence: true } : {}),
   }
 }

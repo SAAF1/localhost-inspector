@@ -5,6 +5,7 @@ const assets = new Map([
   ['', ['workspace.html', 'text/html']],
   ['workspace.css', ['workspace.css', 'text/css']],
   ['workspace.mjs', ['workspace.mjs', 'text/javascript']],
+  ['tooltip.js', ['../../extension/ui/tooltip.js', 'text/javascript']],
   ['view-controls.mjs', ['view-controls.mjs', 'text/javascript']],
   ['frame-view.mjs', ['frame-view.mjs', 'text/javascript']],
   ['sharp-previews.mjs', ['sharp-previews.mjs', 'text/javascript']],

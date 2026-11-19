@@ -9,9 +9,9 @@ const edit = (id, fields = {}) => ({
 })
 
 test('handoff carries exact gap intent, visual evidence and grouping independently from preview recovery', () => {
-  const target = { tag: 'div', slot: null, text: 'private page content', textFingerprint: 'preview guard' }
+  const target = { tag: 'div', slot: null, text: 'private page content', textFingerprint: 'preview guard', classFingerprint: 'a'.repeat(64) }
   const sourceContext = {
-    ancestors: [{ tag: 'td', slot: 'table-cell', text: 'private row' }, { tag: 'tr', id: 'row-id' }],
+    ancestors: [{ tag: 'td', slot: 'table-cell', text: 'private row' }, { tag: 'tr', role: 'row', id: 'row-id' }],
     childTags: ['svg', 'span'], tableCellPosition: 4, tableRowCellCount: 6, bounds: [31, 84, 120, 24], rowIndex: 3,
   }
   const token = { source: 'theme.css', name: '--foreground' }
@@ -33,10 +33,11 @@ test('handoff carries exact gap intent, visual evidence and grouping independent
   const [change] = gap.changes
   assert.equal(change.previewRestore, 'ambiguous')
   assert.equal(change.property, 'gap')
+  assert.equal(change.target.classFingerprint, target.classFingerprint)
   assert.deepEqual(change.affectedProperties, ['row-gap', 'column-gap'])
   assert.equal(change.requested, '12px')
   assert.deepEqual(change.sourceContext, {
-    ancestors: [{ tag: 'td', slot: 'table-cell' }, { tag: 'tr', slot: undefined }],
+    ancestors: [{ tag: 'td', slot: 'table-cell' }, { tag: 'tr', slot: undefined, role: 'row' }],
     childTags: ['svg', 'span'], tableCellPosition: 4, tableRowCellCount: 6, bounds: [31, 84, 120, 24],
   })
   assert.deepEqual(font.changes.map(({ id, property }) => [id, property]),
@@ -68,7 +69,7 @@ test('legacy and opt-in Button proof remain blocked while divergent same-route o
 test('malformed and excessive browser metadata cannot expand source context', () => {
   assert.equal(sourceContextFrom({ ancestors: Array(7).fill({ tag: 'td' }) }), undefined)
   assert.equal(sourceContextFrom({ ancestors: [{ tag: 'some page content' }] }), undefined)
-  assert.deepEqual(sourceContextFrom({ ancestors: [{ tag: 'td', slot: 'unlikely page text' }], tableCellPosition: 4, tableRowCellCount: 3 }), {
+  assert.deepEqual(sourceContextFrom({ ancestors: [{ tag: 'td', slot: 'unlikely page text', role: 'private-role' }], tableCellPosition: 4, tableRowCellCount: 3 }), {
     ancestors: [{ tag: 'td', slot: undefined }], childTags: undefined,
   })
   assert.equal(sourceContextFrom({ ancestors: [], tableCellPosition: 4 }).tableCellPosition, undefined)

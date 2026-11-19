@@ -31,7 +31,7 @@ const values = h => h.app.locator(layer).evaluate(node => {
   const style = getComputedStyle(node)
   return [style.fontFamily, style.fontWeight, style.fontSize, style.lineHeight, style.letterSpacing, style.color, style.textAlign]
 })
-const undo = async h => { await button(h, 'Undo last preview').click(); await h.settled() }
+const undo = async h => { await h.previewAction('Undo last preview'); await h.settled() }
 const open = async h => { await h.open(); await h.select(layer); await button(h, 'Apply text styles').click() }
 const apply = async (h, name) => {
   await option(h, name).click()
@@ -66,9 +66,9 @@ test('text styles reuse the keyboard picker and replace, detach, compare and und
     assert.equal(await option(h, 'body').getAttribute('aria-selected'), 'true')
     await apply(h, '--text-title')
     assert.deepEqual((await values(h)).slice(0, 4), ['sans-serif', '700', '24px', 'normal'])
-    await button(h, 'Show original').click()
+    await h.previewAction('Show original')
     assert.deepEqual(await values(h), before)
-    await button(h, 'Show previews').click()
+    await h.previewAction('Show previews')
     await current(h, '--text-title').waitFor()
     const applied = await values(h)
     await h.host.getByRole('button', { name: 'Detach text style' }).focus()
@@ -249,9 +249,9 @@ test('creating a text style captures one layer, saves a named bundle, and undoes
     await undo(h)
     await chip.waitFor()
 
-    await button(h, 'Show original').click()
+    await h.previewAction('Show original')
     await chip.waitFor({ state: 'hidden' })
-    await button(h, 'Show previews').click()
+    await h.previewAction('Show previews')
     await chip.waitFor()
     await go(h, '/other')
     await go(h, '/')

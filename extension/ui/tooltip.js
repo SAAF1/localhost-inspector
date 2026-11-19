@@ -1,17 +1,18 @@
 (() => {
-  const ui = window.LocalhostInspector
+  const ui = window.LocalhostInspector ??= {}
   const delay = 1000
   const buttonFor = event => event.target.closest?.('button[data-inspector-tooltip]')
   const inside = (button, target) => target?.nodeType && button.contains(target)
   ui.setTooltip = (button, label) => { button.dataset.inspectorTooltip = label }
 
-  ui.bindTooltips = root => {
-    const tooltip = ui.element('div', 'li-tooltip')
+  ui.bindTooltips = (root, popupSelector = 'dialog[open], .li-menu') => {
+    const owner = root.ownerDocument
+    const tooltip = owner.createElement('div')
+    tooltip.className = 'li-tooltip'
     tooltip.id = 'inspector-tooltip'
     tooltip.hidden = true
     tooltip.setAttribute('role', 'tooltip')
     root.append(tooltip)
-    const owner = root.ownerDocument
     const viewport = owner.defaultView
     let anchor, timer, activeEvents
 
@@ -32,12 +33,12 @@
     ui.dismissTooltip = dismiss
 
     function show() {
-      const popup = root.querySelector('dialog[open], .li-menu')
+      const popup = root.querySelector(popupSelector)
       if (!anchor?.isConnected || anchor.closest('[hidden]') || (popup && !popup.contains(anchor))) {
         dismiss()
         return
       }
-      tooltip.textContent = anchor.dataset.inspectorTooltip
+      tooltip.textContent = anchor.dataset.inspectorTooltip || anchor.getAttribute('aria-label')
       tooltip.hidden = false
       const rect = anchor.getBoundingClientRect()
       const { width, height } = tooltip.getBoundingClientRect()

@@ -106,11 +106,11 @@ test('partial restoration leaves successfully restored edits available to Undo',
   try {
     await h.open()
     assert.equal(await h.css('font-size'), '18px')
-    assert.equal(await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).isEnabled(), true)
-    await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).click(); await h.settled()
+    assert.equal(await h.host.locator('#undo').isEnabled(), true)
+    await h.previewAction('Undo last preview'); await h.settled()
     assert.equal(await h.css('font-size'), '18px', 'Undo first retires the newer saved edit that could not attach')
     assert.deepEqual((await h.journal()).map(edit => edit.id), ['restored-font'])
-    await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).click(); await h.settled()
+    await h.previewAction('Undo last preview'); await h.settled()
     assert.equal(await h.css('font-size'), '12px')
     assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
@@ -135,7 +135,7 @@ test('paired padding saves atomically and never spills into a changed selection'
           ['target', 'padding-left'], ['target', 'padding-right'],
         ])
         assert.equal(new Set(edits.map(edit => edit.group)).size, 1)
-        await h.host.getByRole('button', { name: 'Undo last preview', exact: true }).click()
+        await h.previewAction('Undo last preview')
         await h.settled()
       } else {
         assert.match(await h.host.locator('#status').innerText(), /Simulated save failure/)

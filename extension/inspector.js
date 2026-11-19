@@ -10,6 +10,7 @@
       if (!selection.current && isFloating()) setOpen(false)
       renderSelection()
     },
+    inspect: () => editsUI.showDesign(),
     openPanel: () => setOpen(true, isCanvasExpanded?.()),
   })
   function renderSelection() {
@@ -52,6 +53,146 @@
   let confirmedButton = null
   let pendingButtonSize = false
   let buttonSizeRequiresReload = false
+  let pendingRows = []
+  let savedRoute
+  let scopedPreviewTargets = false
+  let refreshing = false
+  let editNavigation = 0
+  const editDestinationKey = 'localhost-inspector.pending-destination'
+  const editsUI = ui.createPendingEdits({
+    host, root, panel, get,
+    locate: id => recovery.previewNode(id),
+    openEdit: goToEdit,
+    removeEdit: id => run(() => removeJournalEdit(id)),
+    refresh: refreshJournal,
+    highlight: id => selection.previewRelated(id ? () => recovery.previewNode(id) : null),
+  })
+
+  function syncPending() {
+    editsUI.update(pendingRows, savedRoute)
+  }
+
+  async function goToEdit(edit) {
+    const navigation = ++editNavigation
+    status('')
+    if (edit.route === savedRoute) {
+      if (await selectEditTarget(edit.id, navigation)) {
+        if (panel.hidden) setOpen(true, isCanvasExpanded?.())
+        if (isCanvasExpanded?.()) openEditRoute(route())
+        selection.syncOutlines()
+        return true
+      }
+      if (navigation !== editNavigation || edit.route !== savedRoute) return false
+      if (isCanvasExpanded?.()) {
+        if (edit.frameState && rememberEditDestination(edit)) {
+          if (!openEditRoute(route(), edit.frameState)) return true
+          sessionStorage.removeItem(editDestinationKey)
+        }
+        openEditRoute(route())
+      }
+      status('Couldn’t locate the element for this edit.', true)
+      return false
+    }
+    const address = new URL(edit.route, location.origin)
+    if (address.origin !== location.origin || edit.route.includes('?')) {
+      status('Open the page in the app to locate this edit.', true)
+      return false
+    }
+    if (!rememberEditDestination(edit)) {
+      status('Open the page in the app to locate this edit.', true)
+      return false
+    }
+    if (openEditRoute(edit.route, edit.frameState)) location.assign(address.href)
+    return true
+  }
+
+  function rememberEditDestination({ id, route }) {
+    try {
+      sessionStorage.setItem(editDestinationKey, JSON.stringify({ id, route }))
+      return true
+    } catch { return false }
+  }
+
+  function openEditRoute(path, frameState) {
+    const detail = frameState ? JSON.stringify({ path, frameState }) : path
+    return host.dispatchEvent(new CustomEvent('open-inspector-edit-route', { cancelable: true, detail }))
+  }
+
+  async function selectEditTarget(id, navigation) {
+    const path = currentRoute
+    const version = activeRouteVersion
+    const isCurrent = () => navigation === editNavigation && isCurrentRoute(path, version)
+    const node = await recovery.locateSavedNode(id, isCurrent)
+    if (!node?.isConnected || !isCurrent() || !node.getClientRects().length ||
+        getComputedStyle(node).visibility !== 'visible') return false
+    node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
+    selection.select(node)
+    return true
+  }
+
+  async function pickDestination() {
+    let destination
+    try { destination = JSON.parse(sessionStorage.getItem(editDestinationKey)) }
+    catch { return }
+    if (destination?.route !== savedRoute) return
+    sessionStorage.removeItem(editDestinationKey)
+    if (!pendingRows.some(edit => edit.id === destination.id)) return
+    if (panel.hidden) setOpen(true, isCanvasExpanded?.())
+    editsUI.showEdits()
+    const navigation = ++editNavigation
+    if (await selectEditTarget(destination.id, navigation)) editsUI.markSelected(destination.id)
+    else if (navigation === editNavigation && destination.route === savedRoute) {
+      status('Opened the page. Couldn’t locate the element for this edit.', true)
+    }
+  }
+
+  async function refreshJournal() {
+    if (refreshing || busy || loadingRoute) return
+    const path = currentRoute
+    const version = activeRouteVersion
+    const startedRevision = journalRevision
+    refreshing = true
+    try {
+      const snapshot = await send({ type: 'load', route: path })
+      if (busy || !isCurrentRoute(path, version) || journalRevision !== startedRevision || snapshot?.revision === journalRevision) return
+      if (!validSnapshot(snapshot)) throw Error('Invalid journal snapshot')
+      if (startedRevision !== null && recovery.matchesSnapshot(snapshot.edits.filter(edit => edit.route === snapshot.route))) {
+        acceptSnapshot(snapshot)
+        journalRevision = snapshot.revision
+        syncPending()
+        return
+      }
+      if (recovery.hasAttachedButtonSize) {
+        pendingRows = Array.isArray(snapshot.pending) ? snapshot.pending : pendingRows
+        journalRevision = null
+        status('Saved edits changed. Reload the page to refresh the Button preview.', true)
+        syncPending()
+        renderActions()
+        return
+      }
+      window.phaseAInspectorReady = loadRoute()
+      await window.phaseAInspectorReady
+    } catch {
+      if (isCurrentRoute(path, version)) status('Could not refresh pending edits from the local helper.', true)
+    } finally { refreshing = false }
+  }
+
+  async function removeJournalEdit(id) {
+    if (comparing) return
+    if (recovery.hasUnverifiedDependentPreview(id)) {
+      throw Error('A newer live preview changes the same setting. Remove the newer edit first.')
+    }
+    const path = currentRoute
+    const version = activeRouteVersion
+    const entries = recovery.buttonEntries(id)
+    let result
+    const persist = async () => { result = await write({ type: 'removeEdit', id }, path, version) }
+    if (entries.length) await rewindButtonSizes(entries, path, version, persist)
+    else await persist()
+    if (!isCurrentRoute(path, version)) return
+    await recovery.removeOperation(id, result.rebased ?? [], () => isCurrentRoute(path, version))
+    if (isCurrentRoute(path, version)) reportRecovery()
+  }
 
   function canEdit(node, property) {
     return node.isConnected && !overlayFor(node) && (property === 'button-size'
@@ -69,15 +210,24 @@
     const parent = get('parent')
     parent.hidden = !selection.parent()
     parent.disabled = busy
-    get('undo').disabled = writesUnavailable || comparing || !recovery.hasSaved
+    const undo = get('undo')
     const compare = get('clear')
+    const reset = get('reset')
+    undo.disabled = writesUnavailable || comparing || !recovery.hasSaved
     compare.disabled = pageActionsUnavailable || (!comparing && !recovery.hasAttached)
+    reset.disabled = writesUnavailable || !recovery.hasSaved
+    const pageBusy = pageActionsUnavailable ? 'Wait for the current page to finish updating' : ''
+    const saveUnavailable = pageBusy || (journalRevision === null ? 'Reload to reconnect to saved edits' : '')
+    const pendingReason = saveUnavailable || (!recovery.hasSaved ? 'No saved edits on this page' : '')
+    const undoShortcut = undo.getAttribute('aria-keyshortcuts') === 'Meta+Z' ? '⌘Z' : 'Ctrl+Z'
+    ui.setTooltip(undo, pendingReason || (comparing ? 'Show previews to undo an edit' : 'Undo last preview (' + undoShortcut + ')'))
     compare.setAttribute('aria-pressed', String(comparing))
     const compareLabel = comparing ? 'Show previews' : 'Show original'
     compare.setAttribute('aria-label', compareLabel)
-    ui.setTooltip(compare, compareLabel)
+    ui.setTooltip(compare, pageBusy || (compare.disabled ? 'No live previews on this page to compare' : compareLabel))
+    ui.setTooltip(reset, pendingReason || 'Revert saved edits on this page')
     get('comparison-mode').hidden = !comparing
-    get('reset').disabled = writesUnavailable || !recovery.hasSaved
+    editsUI.setDisabled(writesUnavailable || comparing)
   }
   function renderFields({ keepPopup = false } = {}) {
     ui.dismissTooltip()
@@ -85,13 +235,28 @@
     renderActions()
     const node = selection.current
     const hasSelection = Boolean(node?.isConnected)
-    get('guidance').hidden = hasSelection
+    const canvasPaint = isCanvasExpanded?.() && ui.syncCanvasBackground(host, colorCatalog)
+    const canvasSection = !hasSelection && ui.canvasBackgroundSection({
+      host, colorCatalog, paint: canvasPaint, refresh: () => renderFields({ keepPopup: true }), status,
+    })
+    get('guidance').hidden = hasSelection || Boolean(canvasSection)
+    const name = get('selected-name')
+    name.hidden = !hasSelection
+    get('parent').parentElement.parentElement.toggleAttribute('data-no-selection', !hasSelection)
+    if (hasSelection) {
+      const label = node.getAttribute('aria-label') || (node.matches('a, button, h1, h2, h3, label') && node.textContent.trim()) ||
+        node.getAttribute('data-slot') || ({ div: 'Container', span: 'Text', tr: 'Row', td: 'Cell' }[node.localName] ?? node.localName)
+      name.textContent = label.charAt(0).toUpperCase() + label.slice(1)
+    }
     if (node !== renderedSelection) {
       scopeHovered = false
       renderedSelection = node
       fields.replaceChildren()
     }
-    if (!hasSelection) return
+    if (!hasSelection) {
+      ui.updateInspectorFields(fields, canvasSection ? [canvasSection] : [])
+      return
+    }
     if (overlayFor(node)) {
       ui.updateInspectorFields(fields, [ui.element('p', 'li-empty', 'Editing inside an open overlay is unavailable.')])
       return
@@ -244,6 +409,9 @@
     const notice = get('status')
     notice.textContent = message
     notice.toggleAttribute('data-error', error)
+    const pendingNotice = get('pending-status')
+    pendingNotice.textContent = error ? message : ''
+    pendingNotice.toggleAttribute('data-error', error)
   }
   const send = (message) => window.phaseABridge(message)
   async function write(message, path, version) {
@@ -251,7 +419,10 @@
     try {
       const result = await send({ ...message, expectedRevision: journalRevision })
       if (!Number.isSafeInteger(result?.revision)) throw Error('Reload the page with the updated local helper.')
-      if (isCurrentRoute(path, version)) journalRevision = result.revision
+      if (isCurrentRoute(path, version)) {
+        journalRevision = result.revision
+        if (Array.isArray(result.pending)) pendingRows = result.pending
+      }
       return result
     } catch (error) {
       if (error.code === 'WRITE_REJECTED') throw error
@@ -289,8 +460,9 @@
       recoveryRequested ||= recovery.hasStyleConflict()
       queueRecovery()
       const owner = panel.ownerDocument
-      if (focusedAction && !panel.hidden && !root.activeElement && owner.activeElement === owner.body) {
-        const focusTarget = focusedAction.disabled || focusedAction.hidden ? panel : focusedAction
+      const actionView = focusedAction?.closest('#pending-view') ?? panel
+      if (focusedAction && !actionView.hidden && !root.activeElement && owner.activeElement === owner.body) {
+        const focusTarget = focusedAction.disabled || focusedAction.hidden ? actionView : focusedAction
         focusTarget.focus({ preventScroll: true })
       }
     }
@@ -337,6 +509,9 @@
   entry.onclick = toggleInspector
   closeInspector.onclick = toggleInspector
   if (host.hasAttribute('data-workspace-toolbar')) {
+    new MutationObserver(() => renderFields()).observe(host.parentElement, {
+      attributes: true, attributeFilter: ['data-canvas-page'],
+    })
     host.addEventListener('toggle-workspace-inspector', () => toggleInspector(false))
     host.addEventListener('clear-workspace-selection', event => {
       if (root.querySelector('dialog[open]')) event.preventDefault()
@@ -478,11 +653,18 @@
     reportRecovery()
   }
   async function editRecord(entry, target, { editRoute, sourceContext, tokenOptions }) {
+    if (isCanvasExpanded?.()) host.dispatchEvent(new Event('capture-inspector-edit-state'))
+    const capturedState = host.dataset.editFrameState
+    delete host.dataset.editFrameState
+    const frameState = /^[a-f0-9]{64}$/.test(capturedState) ? capturedState : undefined
+    const journalTarget = target.anchor && !scopedPreviewTargets
+      ? { tag: target.tag, id: target.id, slot: target.slot, key: target.key }
+      : target
     return {
-      id: crypto.randomUUID(), route: editRoute, target: await ui.previewTargetForJournal(target), property: entry.property, before: entry.before,
+      id: crypto.randomUUID(), route: editRoute, target: await ui.previewTargetForJournal(journalTarget), property: entry.property, before: entry.before,
       requested: entry.requested, observed: entry.observed, ...tokenOptions,
-      restore: ui.findPreviewTarget(target, entry.node) === entry.node ? 'unique' : 'ambiguous',
-      viewport: { width: innerWidth, height: innerHeight },
+      restore: ui.findPreviewTarget(journalTarget, entry.node) === entry.node ? 'unique' : 'ambiguous',
+      viewport: { width: innerWidth, height: innerHeight }, frameState,
       intent: 'feature-template', sourceContext,
     }
   }
@@ -679,6 +861,7 @@
       if (!isCurrentRoute(path, version)) return
       comparing = true
       recovery.showOriginal()
+      syncPending()
     } else {
       comparing = false
       const requestedRoute = currentRoute
@@ -701,7 +884,7 @@
     const version = activeRouteVersion
     if (reset.disabled || !await revertDialog.confirm()) return
     if (!isCurrentRoute(requestedRoute, version) || reset.disabled) return
-    closeInspector.focus({ preventScroll: true })
+    get(panel.hidden ? 'pending-order' : 'edits-tab').focus({ preventScroll: true })
     await run(async () => {
       const entries = recovery.buttonEntries()
       const persist = () => write({ type: 'reset', route: requestedRoute }, requestedRoute, version)
@@ -709,33 +892,44 @@
       else await persist()
       if (currentRoute !== requestedRoute || route() !== requestedRoute) return
       comparing = false
-      if (isCurrentRoute(requestedRoute, version)) recovery.clear()
-      else {
+      if (isCurrentRoute(requestedRoute, version)) {
+        recovery.clear()
+        syncPending()
+      } else {
         window.phaseAInspectorReady = loadRoute()
         await window.phaseAInspectorReady
       }
     })
   }
   function reportRecovery() {
+    syncPending()
     const notice = get('status')
     if (notice.hasAttribute('data-error')) return
     const message = buttonSizeRequiresReload ? 'Reload the page to clear the previous Button Size preview.' :
       comparing ? '' : recovery.hasConflicts
       ? 'The app changed a previewed style. Your edit is still saved.'
-      : recovery.hasUnattached ? 'Some saved previews could not be restored.' : ''
+      : recovery.hasUnattached ? 'Some saved previews could not be restored.' :
+        recovery.hasSessionPreview ? 'Some previews last only while this page stays open.' : ''
     if (notice.textContent !== message) status(message)
   }
   async function restore(requestedRoute, version, fromOriginal = false) {
     await recovery.restore(() => isCurrentRoute(requestedRoute, version) && !comparing, fromOriginal)
     if (isCurrentRoute(requestedRoute, version)) reportRecovery()
   }
+  function validSnapshot(snapshot) {
+    return Number.isSafeInteger(snapshot?.revision) && Array.isArray(snapshot.edits) && typeof snapshot.route === 'string'
+  }
+  function acceptSnapshot(snapshot) {
+    buttonSizeKey = typeof snapshot.buttonSizeKey === 'string' ? snapshot.buttonSizeKey : null
+    savedRoute = snapshot.route
+    scopedPreviewTargets = snapshot.scopedPreviewTargets === true
+    if (Array.isArray(snapshot.pending)) pendingRows = snapshot.pending
+  }
   async function loadSavedEdits(requestedRoute, version) {
     const snapshot = await send({ type: 'load', route: requestedRoute })
     if (!isCurrentRoute(requestedRoute, version)) return null
-    if (!Number.isSafeInteger(snapshot?.revision) || !Array.isArray(snapshot.edits) || typeof snapshot.route !== 'string') {
-      throw Error('Restart the local helper with the updated Inspector.')
-    }
-    buttonSizeKey = typeof snapshot.buttonSizeKey === 'string' ? snapshot.buttonSizeKey : null
+    if (!validSnapshot(snapshot)) throw Error('Restart the local helper with the updated Inspector.')
+    acceptSnapshot(snapshot)
     recovery.load(snapshot.edits.filter(edit => edit.route === snapshot.route))
     return snapshot.revision
   }
@@ -745,6 +939,7 @@
     const version = ++activeRouteVersion
     loadingRoute = true
     journalRevision = null
+    scopedPreviewTargets = false
     colorCatalog = null
     spacingCatalog = null
     textStyleCatalog = null
@@ -774,8 +969,12 @@
     } finally {
       if (isCurrentRoute(requestedRoute, version)) {
         loadingRoute = false
-        renderSelection()
-        queueRecovery()
+        syncPending()
+        await pickDestination()
+        if (isCurrentRoute(requestedRoute, version)) {
+          renderSelection()
+          queueRecovery()
+        }
       }
     }
   }
@@ -814,6 +1013,11 @@
         record.target.parentElement === selected.parentElement)) renderFields({ keepPopup: true })
     const styleChanges = records.filter(record => ['style', 'class', 'data-theme'].includes(record.attributeName))
     const node = selection.current
+    if (isCanvasExpanded?.() && colorCatalog && styleChanges.some(record =>
+      record.target === document.documentElement || record.target === document.body)) {
+      if (fields.querySelector('.li-canvas-section')) renderFields({ keepPopup: true })
+      else ui.syncCanvasBackground(host, colorCatalog)
+    }
     if ((colorCatalog || spacingCatalog || textStyleCatalog) && !busy && !loadingRoute && node &&
       styleChanges.some(record => record.target.contains(node) || node.contains(record.target))) {
       const targets = [node, ...ui.textTargets(node)]
@@ -822,12 +1026,12 @@
       ))) renderFields({ keepPopup: true })
     }
     if (!recovery.hasSaved) return
-    recoveryRequested ||= styleChanges.length !== records.length ||
+    recoveryRequested ||= styleChanges.length !== records.length || recovery.hasTargetClassChange(styleChanges) ||
       (!busy && !loadingRoute && !comparing && recovery.hasStyleConflict(styleChanges))
     queueRecovery()
   }).observe(document.documentElement, {
     childList: true, subtree: true, characterData: true, attributes: true,
-    attributeFilter: ['id', 'data-slot', 'data-inspector-target', 'style', 'class', 'data-theme', 'hidden', ui.sharedPadding.attribute],
+    attributeFilter: ['id', 'data-slot', 'data-inspector-target', 'role', 'style', 'class', 'data-theme', 'hidden', ui.sharedPadding.attribute],
   })
   function refreshResponsiveSpacing() {
     const node = selection.current
@@ -839,8 +1043,14 @@
       style.getPropertyValue(property) !== pill.textContent + 'px',
     ))) renderFields({ keepPopup: true })
   }
+  window.addEventListener('focus', () => void refreshJournal())
   window.addEventListener('resize', refreshResponsiveSpacing)
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshResponsiveSpacing)
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    refreshResponsiveSpacing()
+    if (!isCanvasExpanded?.() || !colorCatalog) return
+    if (fields.querySelector('.li-canvas-section')) renderFields({ keepPopup: true })
+    else ui.syncCanvasBackground(host, colorCatalog)
+  })
   window.addEventListener('popstate', onRouteChange)
   window.addEventListener('hashchange', onRouteChange)
   window.navigation?.addEventListener('currententrychange', onRouteChange)

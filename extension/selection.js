@@ -1,6 +1,6 @@
 (() => {
   const ui = window.LocalhostInspector
-  ui.createSelection = ({ host, panel, get, onSelect, openPanel }) => {
+  ui.createSelection = ({ host, panel, get, onSelect, openPanel, inspect }) => {
     let selected
     let hovered
     let menuTarget
@@ -10,7 +10,7 @@
     let outlineFrame = null
     let showRelated = false
     function positionOutline(outline, node, inset = 0) {
-      outline.hidden = panel.hidden || !node?.isConnected
+      outline.hidden = !node?.isConnected
       if (outline.hidden) return
       const box = node.getBoundingClientRect()
       const geometry = {
@@ -23,7 +23,7 @@
       }
     }
     function syncOutline() {
-      positionOutline(get('outline'), selected)
+      positionOutline(get('outline'), panel.hidden ? null : selected)
       const layer = get('related-outlines')
       const peers = showRelated && !panel.hidden ? ui.sharedPadding.members(selected).filter(node => node !== selected) : []
       while (layer.childElementCount > peers.length) layer.lastElementChild.remove()
@@ -50,7 +50,7 @@
       const outline = get('hover-outline')
       outline.toggleAttribute('data-menu-preview', Boolean(target))
       const candidate = target ?? hovered
-      positionOutline(outline, candidate === selected ? null : candidate, target ? 2 : 0)
+      positionOutline(outline, candidate === selected && !panel.hidden ? null : candidate, target ? 2 : 0)
     }
     function syncOutlines() {
       syncOutline()
@@ -130,6 +130,7 @@
       if (!node) return
       event.preventDefault()
       event.stopImmediatePropagation()
+      inspect()
       if (panel.hidden) openPanel()
       select(node)
       panel.focus({ preventScroll: true })

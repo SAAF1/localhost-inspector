@@ -10,7 +10,7 @@ const options = {
 const action = (h, name) => h.host.getByRole('button', { name, exact: true })
 const picker = h => h.host.getByRole('dialog', { name: 'Variables', exact: true })
 const choose = (h, name) => picker(h).getByRole('option', { name, exact: true }).click()
-const undo = h => action(h, 'Undo last preview').click()
+const undo = h => h.previewAction('Undo last preview')
 const declared = (h, selector, property) =>
   h.app.locator(selector).evaluate((node, name) => node.style.getPropertyValue(name), property)
 
@@ -128,10 +128,9 @@ test('Create saves one pending Fill, keeps source variables out of the page, and
       source, label: 'Revenue surface', name: '--revenue-surface', value: 'rgba(51, 102, 153, 0.5)',
     })
     await picker(h).getByRole('combobox').press('Escape')
-    const compare = h.host.locator('#clear')
-    await compare.click()
+    await h.previewAction('Show original')
     assert.equal(await h.host.getByText('Preview · Source change pending').count(), 0)
-    await compare.click()
+    await h.previewAction('Show previews')
     await h.settled()
     assert.equal(await h.host.getByText('Preview · Source change pending').count(), 1)
     await undo(h)
@@ -215,7 +214,7 @@ test('pressing Enter and then opening Create saves a custom Fill only once', asy
     assert.equal((await h.journal()).length, 1)
     await h.host.getByRole('button', { name: 'Close variable form' }).click()
     await h.host.getByRole('button', { name: 'Close Variables' }).click()
-    await h.host.getByRole('button', { name: 'Undo last preview' }).click()
+    await h.previewAction('Undo last preview')
     await h.settled()
     assert.equal(await h.css('background-color'), 'rgb(255, 255, 255)')
   } finally { await h.close() }

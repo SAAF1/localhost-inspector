@@ -16,7 +16,7 @@ const chip = (h, name = 'secondary') => h.host.getByRole('button', { name: 'Fill
 const picker = h => h.host.getByRole('dialog', { name: 'Variables' })
 const option = (h, name) => picker(h).getByRole('option', { name, exact: true })
 const trigger = h => h.host.getByRole('button', { name: 'Fill variables' })
-const undo = h => h.host.getByRole('button', { name: 'Undo', exact: false }).click()
+const undo = h => h.previewAction('Undo last preview')
 
 test('a real Fill binding retains its named declaration across theme, replacement, detach and undo', async () => {
   const h = await createHarness({ ...options, dock: true })
@@ -37,11 +37,11 @@ test('a real Fill binding retains its named declaration across theme, replacemen
     assert.equal(await h.css('background-color'), 'oklch(0.3 0.1 240 / 0.6)')
     assert.equal(await declaration(h), 'var(--secondary)')
     const compare = h.host.locator('#clear')
-    await compare.click()
+    await h.previewAction('Show original')
     await h.settled()
     assert.equal(await h.css('background-color'), 'rgb(32, 32, 32)')
     assert.equal(await compare.getAttribute('aria-pressed'), 'true')
-    await compare.click()
+    await h.previewAction('Show previews')
     await h.settled()
     assert.equal(await declaration(h), 'var(--secondary)')
     await chip(h).click()

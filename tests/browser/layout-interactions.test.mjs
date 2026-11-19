@@ -180,7 +180,7 @@ test('Inspector shortcuts reuse Parent and Undo and leave editing and app contro
   try {
     await h.open()
     const parent = h.host.getByRole('button', { name: 'Select parent element' })
-    const undo = h.host.getByRole('button', { name: 'Undo last preview' })
+    const undo = h.host.locator('#undo')
     const shortcut = await undo.getAttribute('aria-keyshortcuts')
     const undoKeys = shortcut === 'Meta+Z' ? 'Meta+z' : 'Control+z'
     await h.select('#target > span:first-child')
@@ -211,6 +211,7 @@ test('Inspector shortcuts reuse Parent and Undo and leave editing and app contro
     await h.enter('Corner radius', 18); await h.settled()
     await h.enter('Corner radius', 19); await h.settled()
     await h.app.evaluate(() => { window.__settings.holdUndo = true })
+    await h.showEdits()
     await undo.click()
     await h.app.waitForFunction(() => typeof window.__releaseUndo === 'function')
     await h.app.evaluate(() => {

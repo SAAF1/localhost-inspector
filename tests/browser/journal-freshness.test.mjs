@@ -39,7 +39,7 @@ test('a pending preview leaves with its route and reconciles when that route ret
     await h.settled()
     assert.deepEqual((await h.journal()).map(edit => edit.route), ['/'])
 
-    await h.host.locator('#clear').click()
+    await h.previewAction('Show original')
     await h.settled()
     assert.equal(await h.host.locator('#clear').getAttribute('aria-pressed'), 'true')
     await go('/other')

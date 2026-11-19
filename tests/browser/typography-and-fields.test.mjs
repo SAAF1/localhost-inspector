@@ -85,7 +85,7 @@ test('a partial group save preserves the successful text target and offers Undo'
     assert.equal(await h.css('font-size', '#description'), '16px')
     assert.match(await h.host.locator('#status').innerText(), /First change saved.*Undo is available/)
     assert.equal((await h.journal()).length, 1)
-    await h.host.getByRole('button', { name: 'Undo last preview' }).click(); await h.settled()
+    await h.previewAction('Undo last preview'); await h.settled()
     assert.equal(await h.css('font-size', '#headline'), '24px')
   } finally { await h.close() }
 })

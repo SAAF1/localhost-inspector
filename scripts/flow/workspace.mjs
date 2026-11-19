@@ -1,17 +1,22 @@
+import './tooltip.js'
 import { frameLabelHeight, renderFrames } from './render-frames.mjs'
 import { flowRoute, observeSurfaces } from './page-state.mjs'
 import { findControl, matchesCheckpoint, openControl, waitFor } from './replay.mjs'
 import { contentOverflow, fitFrame, framePresets, sizeFrame } from './frame-view.mjs'
 import { createSharpPreviews } from './sharp-previews.mjs'
-import { connectViewControls } from './view-controls.mjs'
+import { connectCanvasBackground, connectViewControls } from './view-controls.mjs'
+
+window.LocalhostInspector.bindTooltips(document.querySelector('#workspace-toolbar'), '#frame-view-menu:not([hidden])')
 
 const map = document.querySelector('#map')
 let preview = document.querySelector('#app-preview')
 const viewport = document.querySelector('#viewport')
 const toggle = document.querySelector('#flow-toggle')
 const zoom = document.querySelector('#zoom')
+const zoomPreset = document.querySelector('#zoom-preset')
 const notice = document.querySelector('#notice')
 const dock = document.querySelector('#localhost-inspector-dock')
+connectCanvasBackground(dock, viewport)
 const data = await fetch('./map.json').then(response => response.json())
 if (data.origin !== location.origin) throw Error('This flow map belongs to a different app origin')
 const presets = framePresets(data.viewport)
@@ -32,6 +37,11 @@ const { cards, layout } = renderFrames(map, data, activate, viewOf, previewIndex
   anchor => changeView({ preset: 'desktop', anchor }))
 const updateSharpPreviews = createSharpPreviews(cards)
 const framesById = new Map(data.frames.map(frame => [frame.id, frame]))
+const frameStates = new Map(await Promise.all(data.frames.filter(frame => frame.steps.length).map(async frame => {
+  const state = new TextEncoder().encode(JSON.stringify([frame.steps, frame.checkpoint]))
+  const bytes = await crypto.subtle.digest('SHA-256', state)
+  return [frame.id, Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('')]
+})))
 const routeOf = frame => {
   try {
     const address = frame.contentWindow.location
@@ -42,6 +52,7 @@ const camera = { x: 34, y: 28, scale: .36 }
 let active
 let request = 0
 let pendingCard
+let pendingIndicatorTimer
 let candidate
 let preparation
 let warmTimer
@@ -56,7 +67,7 @@ let previewUpdate
 const syncView = connectViewControls({ apply: changeView, read: readView, presets })
 
 function refreshViewControls() {
-  syncView(expanded, resizing || Boolean(pendingCard))
+  syncView(expanded, resizing || Boolean(pendingCard), resizing || Boolean(pendingCard?.hasAttribute('data-loading')))
 }
 
 function readView() {
@@ -137,6 +148,11 @@ function schedulePreviewUpdate() {
 function position() {
   map.style.transform = 'translate(' + camera.x + 'px,' + camera.y + 'px) scale(' + camera.scale + ')'
   zoom.value = Math.round(camera.scale * 100) + '%'
+  if (zoomPreset.options[0].textContent !== zoom.value) {
+    zoomPreset.options[0].textContent = zoom.value
+  }
+  const preset = ['0.25', '0.5', '1'].includes(String(camera.scale)) ? String(camera.scale) : 'current'
+  if (zoomPreset.value !== preset) zoomPreset.value = preset
   schedulePreviewUpdate()
   if (!expanded || !active) return
   const card = cards.get(active)
@@ -148,6 +164,7 @@ function position() {
 function setFrameSelected(selected) {
   if (active) cards.get(active).button.setAttribute('aria-pressed', String(selected))
   preview.toggleAttribute('data-frame-selected', Boolean(active && selected))
+  dock.toggleAttribute('data-canvas-page', expanded && !(active && selected))
 }
 
 function setActive(id) {
@@ -168,16 +185,24 @@ function clearCanvasSelection() {
   setFrameSelected(false)
 }
 
-function center(id) {
+function center(id, width = viewport.clientWidth) {
   const card = cards.get(id)
-  camera.x = Math.round((viewport.clientWidth - card.width * camera.scale) / 2 - card.x * camera.scale)
+  camera.x = Math.round((width - card.width * camera.scale) / 2 - card.x * camera.scale)
   camera.y = Math.round((viewport.clientHeight - card.height * camera.scale) / 2 - card.y * camera.scale)
 }
 
 function setPending(card) {
+  clearTimeout(pendingIndicatorTimer)
   pendingCard?.removeAttribute('aria-busy')
+  pendingCard?.removeAttribute('data-loading')
   pendingCard = card
-  pendingCard?.setAttribute('aria-busy', 'true')
+  if (card) {
+    card.setAttribute('aria-busy', 'true')
+    pendingIndicatorTimer = setTimeout(() => {
+      card.setAttribute('data-loading', '')
+      refreshViewControls()
+    }, 250)
+  }
   refreshViewControls()
 }
 
@@ -347,8 +372,7 @@ toggle.addEventListener('click', () => {
   expanded = !expanded
   document.body.toggleAttribute('data-expanded', expanded)
   toggle.setAttribute('aria-pressed', String(expanded))
-  toggle.title = expanded ? 'Back to localhost' : 'Expand flow'
-  toggle.setAttribute('aria-label', toggle.title)
+  toggle.setAttribute('aria-label', expanded ? 'Back to localhost' : 'Expand flow')
   map.hidden = zoom.hidden = !expanded
   schedulePreviewUpdate()
   refreshViewControls()
@@ -361,17 +385,86 @@ toggle.addEventListener('click', () => {
     message('')
     preview.removeAttribute('style')
     dock.inert = false
+    dock.removeAttribute('data-canvas-page')
   }
 })
 
-function zoomAt(event, x, y) {
-  event.preventDefault()
-  const next = Math.min(1, Math.max(.12, camera.scale * Math.exp(-event.deltaY * .006)))
+function setZoom(scale, x, y) {
+  const next = Math.min(1, Math.max(.12, scale))
   camera.x = x - (x - camera.x) * next / camera.scale
   camera.y = y - (y - camera.y) * next / camera.scale
   camera.scale = next
   position()
 }
+
+function zoomAt(event, x, y) {
+  event.preventDefault()
+  setZoom(camera.scale * Math.exp(-event.deltaY * .006), x, y)
+}
+
+zoomPreset.addEventListener('change', () => {
+  const width = viewport.clientWidth - dock.offsetWidth
+  const height = viewport.clientHeight
+  if (zoomPreset.value === 'fit') {
+    const board = [...cards.values()]
+    if (!board.length) return
+    const left = Math.min(...board.map(card => card.x))
+    const top = Math.min(...board.map(card => card.y))
+    const right = Math.max(...board.map(card => card.x + card.width))
+    const bottom = Math.max(...board.map(card => card.y + card.height + frameLabelHeight))
+    camera.scale = Math.min(1, Math.max(.12, Math.min((width - 48) / (right - left), (height - 48) / (bottom - top))))
+    camera.x = (width - (left + right) * camera.scale) / 2
+    camera.y = (height - (top + bottom) * camera.scale) / 2
+    position()
+    return
+  }
+  setZoom(Number(zoomPreset.value), width / 2, height / 2)
+})
+
+dock.addEventListener('capture-inspector-edit-state', event => {
+  if (!expanded || event.target !== dock.firstElementChild) return
+  const state = frameStates.get(currentFrame()?.id)
+  if (state) event.target.dataset.editFrameState = state
+}, true)
+
+dock.addEventListener('open-inspector-edit-route', event => {
+  if (!expanded || event.target !== dock.firstElementChild || typeof event.detail !== 'string') return
+  let destinationRequest = { path: event.detail }
+  if (event.detail.startsWith('{')) {
+    try { destinationRequest = JSON.parse(event.detail) }
+    catch { return }
+  }
+  const { path, frameState } = destinationRequest ?? {}
+  if (typeof path !== 'string' || !path.startsWith('/')) return
+  const address = new URL(path, location.origin)
+  if (address.origin !== location.origin) return
+  const destination = flowRoute(address)
+  const matchingFrames = data.frames.filter(frame => frame.route === destination)
+  const stateMatches = frameState ? matchingFrames.filter(frame => frameStates.get(frame.id) === frameState) : []
+  const stateFrame = stateMatches.length === 1 ? stateMatches[0] : null
+  const alreadyOnPage = routeOf(preview) === destination
+  if (frameState && alreadyOnPage && (!stateFrame || currentFrame()?.id === stateFrame.id)) return
+  if (!frameState && active && alreadyOnPage) {
+    event.preventDefault()
+    clearHover()
+    if (candidate) cancelCandidate()
+    center(active, viewport.clientWidth - dock.offsetWidth)
+    position()
+    return
+  }
+  const frame = stateFrame ?? matchingFrames.find(frame => !frame.steps.length) ??
+    (matchingFrames.length === 1 ? matchingFrames[0] : null)
+  if (!frame) {
+    toggle.click()
+    return
+  }
+  event.preventDefault()
+  void activate(frame).then(() => {
+    if (active !== frame.id || !expanded) return
+    center(active, viewport.clientWidth - dock.offsetWidth)
+    position()
+  })
+}, true)
 
 function panByWheel(event) {
   event.preventDefault()

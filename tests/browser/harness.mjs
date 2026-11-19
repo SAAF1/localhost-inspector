@@ -7,6 +7,7 @@ import { injectedFiles, project } from '../../scripts/check-modules.mjs'
 
 import { dockFlowInspector } from '../../extension/flow-attachment.js'
 import { serveWorkspaceAsset } from '../../scripts/flow/workspace-assets.mjs'
+import { pendingEdits, removePendingEdit } from '../../journal-edits.mjs'
 import { fixture } from './fixture.mjs'
 import { connectPreviewDock, servePreviewDock } from '../../scripts/preview-dock.mjs'
 
@@ -48,7 +49,7 @@ export async function createHarness(options = {}) {
   let browser
   try {
     browser = await chromium.launch({ headless: true, ...(process.env.INSPECTOR_BROWSER ? { executablePath: process.env.INSPECTOR_BROWSER } : {}) })
-    const page = await browser.newPage({ viewport: { width: 1100, height: 1400 }, deviceScaleFactor: 2 })
+    const page = await browser.newPage({ viewport: { width: 1100, height: 1400 }, deviceScaleFactor: 2, hasTouch: options.hasTouch })
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
     await page.goto('http://127.0.0.1:' + server.address().port + (options.canvas ? '/__inspector-flow/' : '/'))
@@ -56,6 +57,13 @@ export async function createHarness(options = {}) {
     const app = options.dock ? page.frames().find(frame => frame.parentFrame() === page.mainFrame()) : page
     if (options.canvas && options.dock) await app.evaluate(dockFlowInspector)
     else if (options.dock) await app.evaluate(connectPreviewDock)
+    if (options.pendingEdits) {
+      await page.exposeFunction('summarizeFixtureJournal', pendingEdits)
+      await page.exposeFunction('removeFixtureEdit', (journal, id) => {
+        try { return removePendingEdit(journal, id) }
+        catch (error) { return { error: error.message } }
+      })
+    }
     await app.evaluate(settings => {
       // Existing tests use Playwright locators for the Inspector's internal controls.
       if (!settings.closedPanel) {
@@ -95,7 +103,10 @@ export async function createHarness(options = {}) {
           node.setAttribute('data-inspector-button-size', message.requested)
           return true
         }
-        if (type === 'load') return { revision: window.__revision, route: message.route, buttonSizeKey: settings.buttonSizeKey, edits: structuredClone(window.__journal.filter(edit => !edit.undone && edit.route === message.route)) }
+        const pending = async () => settings.pendingEdits
+          ? await window.summarizeFixtureJournal(window.__journal.filter(edit => !edit.undone))
+          : undefined
+        if (type === 'load') return { revision: window.__revision, route: message.route, scopedPreviewTargets: !settings.legacyPreviewHelper, buttonSizeKey: settings.buttonSizeKey, pending: await pending(), edits: structuredClone(window.__journal.filter(edit => !edit.undone && edit.route === message.route)) }
         if (['save', 'saveTextStyle', 'saveButtonSize', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
           window.__saveCount++
           if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
@@ -124,10 +135,17 @@ export async function createHarness(options = {}) {
           const entry = window.__journal.find(edit => edit.id === message.id)
           window.__journal = window.__journal.filter(edit => edit !== entry && !(entry.group && edit.group === entry.group))
         }
+        let rebased
+        if (type === 'removeEdit') {
+          const result = await window.removeFixtureEdit(window.__journal, message.id)
+          if (result.error) throw Object.assign(Error(result.error), { code: 'WRITE_REJECTED' })
+          window.__journal = result.edits
+          rebased = result.rebased
+        }
         if (type === 'reset') {
           window.__journal = window.__journal.filter(edit => edit.route !== message.route)
         }
-        return { revision: ++window.__revision }
+        return { revision: ++window.__revision, pending: await pending(), rebased }
       }
     }, options)
     if (options.appStyles) await app.addStyleTag({ content: options.appStyles })
@@ -138,6 +156,14 @@ export async function createHarness(options = {}) {
     await app.evaluate(() => window.LocalhostInspector.fontReady)
     const host = page.locator('#localhost-inspector')
     const open = async () => (options.canvas ? page.locator('#inspector-toggle') : host.locator('#entry')).click()
+    const showEdits = () => host.locator('#edits-tab').click()
+    const previewAction = async name => {
+      const design = host.locator('#design-tab')
+      const wasDesign = await design.getAttribute('aria-selected') === 'true'
+      if (wasDesign) await showEdits()
+      await host.getByRole('button', { name, exact: true }).click()
+      if (wasDesign) await design.click()
+    }
     const select = async (selector = 'body > #target') => app.locator(selector).click({ modifiers: ['Meta'], position: { x: 5, y: 5 } })
     const field = name => host.getByRole('spinbutton', { name, exact: true })
     const enter = async (name, value) => { await field(name).fill(String(value)); await field(name).press('Enter') }
@@ -148,7 +174,7 @@ export async function createHarness(options = {}) {
       try { await browser.close(); assert.deepEqual(errors, [], 'No uncaught browser errors') }
       finally { await new Promise(resolve => server.close(resolve)) }
     }
-    return { page, app, host, open, select, field, enter, journal, css, settled, close }
+    return { page, app, host, open, showEdits, previewAction, select, field, enter, journal, css, settled, close }
   } catch (error) {
     await browser?.close()
     await new Promise(resolve => server.close(resolve))

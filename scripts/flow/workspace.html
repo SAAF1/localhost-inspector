@@ -11,17 +11,31 @@
   <iframe id="app-preview" title="Active app frame"></iframe>
   <div id="localhost-inspector-dock" data-workspace-toolbar></div>
   <div id="workspace-toolbar" role="group" aria-label="Workspace controls">
-    <button id="flow-toggle" type="button" aria-label="Expand flow" title="Expand flow" disabled>
+    <button id="flow-toggle" type="button" aria-label="Expand flow" data-inspector-tooltip disabled>
       <svg class="flow-glyph" viewBox="0 0 18 18" aria-hidden="true"><rect x="6.5" y="2" width="5" height="4" rx="1"/><path d="M9 6v3m-4.5 3V9h9v3"/><rect x="2" y="12" width="5" height="4" rx="1"/><rect x="11" y="12" width="5" height="4" rx="1"/></svg>
       <svg class="desktop-glyph" viewBox="0 0 18 18" aria-hidden="true"><rect x="2.5" y="3" width="13" height="9" rx="1.5"/><path d="M9 12v3m-3 0h6"/></svg>
     </button>
-    <span class="workspace-divider" aria-hidden="true"></span>
-    <button id="inspector-toggle" type="button" aria-label="Open Inspector" aria-expanded="false" title="Open Inspector" hidden>
+    <button id="inspector-toggle" type="button" aria-label="Open Inspector" aria-expanded="false" data-inspector-tooltip hidden>
       <svg viewBox="0 0 18 18" aria-hidden="true"><rect x="2.5" y="3.5" width="13" height="11" rx="2"/><path d="M11.5 4v10"/></svg>
     </button>
-    <button id="frame-view-toggle" type="button" aria-label="Canvas view settings" title="Canvas view settings" aria-haspopup="menu" aria-expanded="false" aria-controls="frame-view-menu" hidden>
+    <button id="frame-view-toggle" type="button" aria-label="Canvas view settings" data-inspector-tooltip aria-haspopup="menu" aria-expanded="false" aria-controls="frame-view-menu" hidden>
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h2m3 0h7M2 8h7m3 0h2M2 12h4m3 0h5"/><circle cx="5.5" cy="4" r="1.5"/><circle cx="10.5" cy="8" r="1.5"/><circle cx="7.5" cy="12" r="1.5"/></svg>
     </button>
+    <button id="pending-toggle" type="button" aria-label="Pending edits" aria-expanded="false" hidden>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 10.8-.5 2.7 2.7-.5 7.2-7.2a1.55 1.55 0 0 0-2.2-2.2L3 10.8Zm6.3-6.3 2.2 2.2"/></svg>
+      <span></span>
+      <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
+    </button>
+    <label id="zoom-control" hidden>
+      <select id="zoom-preset" aria-label="Canvas zoom">
+        <option value="current" disabled></option>
+        <option value="fit">Fit to canvas</option>
+        <option value="0.25">25%</option>
+        <option value="0.5">50%</option>
+        <option value="1">100%</option>
+      </select>
+      <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
+    </label>
     <div id="frame-view-menu" role="menu" aria-label="Canvas view settings" hidden></div>
   </div>
   <output id="zoom" hidden></output>
