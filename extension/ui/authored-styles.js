@@ -25,36 +25,44 @@
       if (!layers.has(name)) layers.set(name, layers.size)
       return layers.get(name)
     }
-    function walk(items, layer, uncertain, source, path = []) {
+    function walk(items, layer, uncertain, source, path, ownerPath) {
+      const occurrences = new Map()
+      function childPath(kind, label) {
+        const key = JSON.stringify([kind, label])
+        const ordinal = occurrences.get(key) ?? 0
+        occurrences.set(key, ordinal + 1)
+        return [...ownerPath, [kind, label, ordinal]]
+      }
       for (const [index, rule] of Array.from(items).entries()) {
         const rulePath = [...path, index]
         const kind = rule.constructor.name
         if (kind === 'CSSLayerStatementRule') {
           for (const name of rule.nameList) rank(name)
         } else if (kind === 'CSSLayerBlockRule') {
-          walk(rule.cssRules, rank(rule.name || Symbol()), uncertain || layer !== null, source, [...rulePath, ['layer', rule.name]])
+          walk(rule.cssRules, rank(rule.name || Symbol()), uncertain || layer !== null, source, [...rulePath, ['layer', rule.name]], childPath(kind, rule.name))
         } else if (kind === 'CSSMediaRule') {
           if (doc.defaultView.matchMedia(rule.conditionText).matches) {
-            walk(rule.cssRules, layer, uncertain, source, [...rulePath, ['media', rule.conditionText]])
+            walk(rule.cssRules, layer, uncertain, source, [...rulePath, ['media', rule.conditionText]], childPath(kind, rule.conditionText))
           }
         } else if (kind === 'CSSSupportsRule') {
-          if (CSS.supports(rule.conditionText)) walk(rule.cssRules, layer, uncertain, source, [...rulePath, ['supports', rule.conditionText]])
+          if (CSS.supports(rule.conditionText)) walk(rule.cssRules, layer, uncertain, source, [...rulePath, ['supports', rule.conditionText]], childPath(kind, rule.conditionText))
         } else if (kind === 'CSSImportRule') {
+          const importPath = childPath(kind, [rule.href, rule.layerName, rule.media.mediaText, rule.supportsText])
           if (rule.styleSheet && doc.defaultView.matchMedia(rule.media.mediaText || 'all').matches &&
               (!rule.supportsText || CSS.supports(rule.supportsText))) {
             visit(rule.styleSheet, rule.layerName == null ? layer : rank(rule.layerName || Symbol()),
-              [source, rulePath, rule.styleSheet.href, rule.layerName, rule.media.mediaText, rule.supportsText])
+              [source, rulePath, rule.styleSheet.href, rule.layerName, rule.media.mediaText, rule.supportsText], importPath)
           }
         } else if (kind === 'CSSStyleRule') {
-          rules.push({ rule, layer, source, rulePath, uncertain: uncertain || Boolean(rule.cssRules?.length) })
+          rules.push({ rule, layer, source, rulePath, ownerPath: childPath(kind, rule.selectorText), uncertain: uncertain || Boolean(rule.cssRules?.length) })
         } else if (rule.cssRules && !['CSSKeyframesRule', 'CSSStartingStyleRule'].includes(kind)) {
-          walk(rule.cssRules, layer, true, source, rulePath)
+          walk(rule.cssRules, layer, true, source, rulePath, childPath(kind, null))
         }
       }
     }
-    function visit(sheet, layer, source) {
+    function visit(sheet, layer, source, ownerPath = [source]) {
       if (sheet.disabled || !doc.defaultView.matchMedia(sheet.media?.mediaText || 'all').matches) return
-      try { walk(sheet.cssRules, layer, false, source) }
+      try { walk(sheet.cssRules, layer, false, source, [], ownerPath) }
       catch { readable = false }
     }
     const duplicates = new Map()
@@ -127,7 +135,7 @@
     return winners[winner]
   }
 
-  function localDeclaration(node, property, forTemplate = false, originalInline) {
+  function localDeclaration(node, property, forTemplate = false, originalInline, positional = false) {
     const names = declarationNames(node, property)
     const shorthand = /^(?:font-|line-height$)/.test(property) ? 'font'
       : property === 'background-color' ? 'background' : property === 'border-color' ? 'border' : null
@@ -139,13 +147,13 @@
     if (inline?.important) return inlineValue()
     const entries = candidates(node)
     if (!entries || entries.some(({ rule }) => rule.cssRules?.length)) return !forTemplate && inline && !inline.uncertain ? inline.value : null
-    const values = entries.flatMap(({ rule, layer, uncertain, source, rulePath }) => {
+    const values = entries.flatMap(({ rule, layer, uncertain, source, rulePath, ownerPath }) => {
       const entry = declaration(rule.style, names, forTemplate)
       if (!entry && (!shorthand || !rule.style.getPropertyValue(shorthand))) return []
       if (!entry) return [{ important: rule.style.getPropertyPriority(shorthand) === 'important', uncertain: true }]
       const rank = layer ?? Number.POSITIVE_INFINITY
       return [{ value: entry.value, selector: rule.selectorText, important: entry.important,
-        rank: entry.important ? -rank : rank, uncertain: uncertain || entry.uncertain, source, rulePath }]
+        rank: entry.important ? -rank : rank, uncertain: uncertain || entry.uncertain, source, rulePath, ownerPath }]
     })
     const important = values.some(entry => entry.important)
     if (inline && !important) return inlineValue()
@@ -155,8 +163,9 @@
     const winners = values.filter(entry => entry.important === important && entry.rank === rank)
     if (forTemplate) {
       const winner = strongestRule(winners)
-      return winner && !/^(?:inherit|unset|revert|revert-layer|currentcolor)$/i.test(winner.value)
-        ? JSON.stringify([winner.source, winner.rulePath, winner.selector, winner.value, winner.important]) : null
+      if (!winner || /^(?:inherit|unset|revert|revert-layer|currentcolor)$/i.test(winner.value)) return null
+      const path = positional ? [winner.source, winner.rulePath] : [winner.ownerPath]
+      return JSON.stringify([...path, winner.selector, winner.value, winner.important])
     }
     if (winners.every(entry => entry.value === winners[0].value)) return winners[0].value
     const selectors = winners.map(entry => entry.selector)
@@ -179,9 +188,9 @@
 
   ui.authoredProperty = (node, property) => node.getRootNode() === node.ownerDocument
     ? propertySource(node, property) : node.style.getPropertyValue(property) || null
-  ui.authoredTemplateSource = (node, property, originalInline) => {
+  ui.authoredTemplateSource = (node, property, originalInline, positional) => {
     if (node.getRootNode() !== node.ownerDocument) return null
     // Only a declaration owned by this template part establishes a shared edit scope.
-    return localDeclaration(node, property, true, originalInline(node)) ?? null
+    return localDeclaration(node, property, true, originalInline(node), positional) ?? null
   }
 })()

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createHash } from 'node:crypto'
 import { createHarness } from './harness.mjs'
 
 test('one saved template edit follows new uses and route changes and undoes as one operation', async () => {
@@ -128,9 +129,13 @@ test('equal-valued CSS overrides remain separate at save and when templates remo
     const [base, overdue] = await h.journal()
     assert.equal(base.template, 'orders/status')
     assert.equal(overdue.template, base.template)
-    assert.match(base.templateSourceFingerprint, /^[0-9a-f]{64}$/)
-    assert.match(overdue.templateSourceFingerprint, /^[0-9a-f]{64}$/)
+    assert.match(base.templateSourceFingerprint, /^v2:[0-9a-f]{64}$/)
+    assert.match(overdue.templateSourceFingerprint, /^v2:[0-9a-f]{64}$/)
     assert.notEqual(base.templateSourceFingerprint, overdue.templateSourceFingerprint)
+    await h.app.evaluate(() => {
+      const sheet = [...document.styleSheets].find(sheet => [...sheet.cssRules].some(rule => rule.selectorText === '.status'))
+      sheet.insertRule('.unrelated { margin: 0 }', 0)
+    })
     await h.app.evaluate(() => history.pushState(null, '', '/paid'))
     await render()
     await h.app.evaluate(() => window.phaseAInspectorReady)
@@ -147,6 +152,25 @@ test('equal-valued CSS overrides remain separate at save and when templates remo
     assert.deepEqual(await sizes(), ['14px', '14px', '22px'])
     await h.app.locator('.status').last().evaluate(node => node.classList.add('archived'))
     await h.app.waitForFunction(() => getComputedStyle(document.querySelector('.archived')).fontSize === '13px')
+  } finally { await h.close() }
+})
+
+test('a positional stylesheet fingerprint saved by an older inspector still restores and undoes', async () => {
+  const source = JSON.stringify([['inline', '/', 1], [0], '.amount', '14px', false])
+  const edit = {
+    id: 'saved-amount', route: '/', property: 'font-size', before: '14px', requested: '22px', observed: '22px',
+    target: { tag: 'span', id: null, slot: null, key: null }, template: 'invoice/amount', restore: 'unique',
+    templateSourceFingerprint: createHash('sha256').update(source).digest('hex'),
+  }
+  const h = await createHarness({ pendingEdits: true, journal: [edit], appStyles: '.amount { font-size: 14px }',
+    flowPages: { '/': { body: '<span class="amount" data-inspector-template="invoice/amount">Total</span>' } } })
+  try {
+    await h.open()
+    assert.equal(await h.css('font-size', '.amount'), '22px')
+    await h.previewAction('Undo last preview')
+    await h.settled()
+    assert.equal(await h.css('font-size', '.amount'), '14px')
+    assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })
 

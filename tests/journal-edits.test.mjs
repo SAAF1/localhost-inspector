@@ -66,6 +66,8 @@ test('removing a template edit only rebases later edits to the same CSS declarat
   assert.deepEqual(removePendingEdit([normal, special, later], normal.id), {
     removed: [normal], rebased: [{ id: later.id, before: '8px' }], edits: [special, { ...later, before: '8px' }],
   })
+  const newerFormat = { ...special, templateSourceFingerprint: 'v2:' + 'b'.repeat(64) }
+  assert.throws(() => removePendingEdit([normal, newerFormat], normal.id), /can’t tell whether a newer edit/)
   const legacy = { ...special, templateSourceFingerprint: undefined }
   assert.throws(() => removePendingEdit([normal, legacy], normal.id), /can’t tell whether a newer edit/)
 })

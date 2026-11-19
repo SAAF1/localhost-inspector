@@ -29,6 +29,7 @@ function sameOccurrence(a, b) {
   const right = b.target
   if (a.template && b.template) {
     if (a.templateSourceFingerprint && b.templateSourceFingerprint &&
+        a.templateSourceFingerprint.startsWith('v2:') === b.templateSourceFingerprint.startsWith('v2:') &&
         a.templateSourceFingerprint !== b.templateSourceFingerprint) return false
     return a.template === b.template && left.tag === right.tag && left.slot === right.slot
   }

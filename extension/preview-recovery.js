@@ -35,7 +35,8 @@
     }
     return templateSources.get(source)
   }
-  ui.templateSourceFingerprint = source => typeof source === 'string' ? sourceFingerprint(source).ready : undefined
+  ui.templateSourceFingerprint = source => typeof source === 'string'
+    ? sourceFingerprint(source).ready.then(value => 'v2:' + value) : undefined
 
   function explicitRole(node) {
     const role = node.getAttribute('role')?.trim().split(/\s+/, 1)[0]
@@ -289,21 +290,26 @@
     const templateLayers = id => Array.from(templateIndex.get(id)?.values() ?? [])
     const conflicted = (edit, node) => templateConflicts.get(node)?.has(edit.property)
 
-    function templateSource(node, property, pendingLayer) {
+    function templateSource(node, property, pendingLayer, positional = false) {
       return ui.authoredTemplateSource(node, property, current => {
         const layers = inlineStacks.get(current)?.get(property)
         const pending = pendingLayer?.node === current ? pendingLayer : undefined
         const first = layers?.[0] ?? pending
         if (first && ownsDeclaration(pending ?? layers.at(-1))) return { value: first.prior, priority: first.priorPriority }
-      })
+      }, positional)
+    }
+
+    function savedTemplateSource(edit, node, pendingLayer) {
+      const positional = Boolean(edit.templateSourceFingerprint && !edit.templateSourceFingerprint.startsWith('v2:'))
+      return templateSource(node, edit.property, pendingLayer, positional)
     }
 
     function sameTemplateSource(edit, node, pendingLayer) {
-      const source = templateSource(node, edit.property, pendingLayer)
+      const source = savedTemplateSource(edit, node, pendingLayer)
       if (source === null || (source === undefined) !== (edit.templateSourceFingerprint === undefined)) return false
       if (source === undefined) return true
       const { value } = sourceFingerprint(source)
-      return value === undefined ? undefined : value === edit.templateSourceFingerprint
+      return value === undefined ? undefined : value === edit.templateSourceFingerprint?.replace(/^v2:/, '')
     }
 
     function attach(id, entry) {
@@ -493,7 +499,10 @@
     async function restoreTemplate(edits, isCurrent) {
       const first = edits[0]
       const nodes = templateNodes(first).filter(node => templateCanRestore(edits, node, templateEntries(edits, node)))
-      await Promise.all(nodes.flatMap(node => edits.map(edit => ui.templateSourceFingerprint(templateSource(node, edit.property)))))
+      await Promise.all(nodes.flatMap(node => edits.map(edit => {
+        const source = savedTemplateSource(edit, node)
+        return typeof source === 'string' ? sourceFingerprint(source).ready : undefined
+      })))
       const matching = nodes.filter(node => edits.every(edit => sameTemplateSource(edit, node)))
       for (const node of matching) {
         if (!isCurrent()) return
@@ -629,8 +638,8 @@
           const attached = this.previewNode(id)
           if (attached) return attached
           for (const node of templateNodes(edit)) {
-            const source = templateSource(node, edit.property)
-            if (source !== null) await ui.templateSourceFingerprint(source)
+            const source = savedTemplateSource(edit, node)
+            if (typeof source === 'string') await sourceFingerprint(source).ready
             if (!isCurrent() || saved.get(id) !== edit) return null
             if (sameTemplateSource(edit, node)) return node
           }

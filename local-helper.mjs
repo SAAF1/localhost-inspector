@@ -297,6 +297,7 @@ function assertJournalBinding(journal, binding) {
   if (journal.binding?.id !== binding.id || journal.binding.source !== binding.source ||
       journal.binding.origin !== binding.origin) throw Error('Journal binding mismatch')
 }
+const templateFingerprint = value => typeof value === 'string' && /^(?:v2:)?[a-f0-9]{64}$/.test(value)
 const targetFingerprint = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 function validScopedTarget(target) {
   const { anchor, id, key, tag, textFingerprint, regionFingerprint, classFingerprint } = target
@@ -366,7 +367,7 @@ function editFrom(record, catalog, group, pendingTextStyle) {
       (record.template !== undefined && (group || pending || record.frameState !== undefined ||
         record.restore !== 'unique' || record.intent !== featureTemplateScope ||
         typeof record.template !== 'string' || !/^[a-z0-9][a-z0-9._:/-]{0,119}$/i.test(record.template))) ||
-      (record.templateSourceFingerprint !== undefined && (!record.template || !targetFingerprint(record.templateSourceFingerprint))) ||
+      (record.templateSourceFingerprint !== undefined && (!record.template || !templateFingerprint(record.templateSourceFingerprint))) ||
       [target.textFingerprint, target.regionFingerprint, target.classFingerprint, target.contextFingerprint].some(value =>
         value !== undefined && !targetFingerprint(value))) {
     throw Error('Invalid edit record')
