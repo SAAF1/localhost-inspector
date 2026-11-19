@@ -181,7 +181,7 @@
     }
     .li-icon-button:not(:disabled):hover { background: var(--li-action-hover, var(--li-field)); }
     .li-icon-button:disabled { color: var(--li-disabled); }
-    .li-icon-button[aria-pressed="true"], .li-icon-button.li-selected {
+    .li-icon-button[aria-pressed="true"]:not(:where(.li-visibility-action)), .li-icon-button.li-selected {
       background: var(--li-control-selected-surface); color: var(--li-control-selected-icon);
     }
     .li-field-trigger {

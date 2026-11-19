@@ -36,6 +36,13 @@
     if (handler) button.onclick = handler
     return button
   }
+  ui.visibilityAction = (subject, visible, onChange) => {
+    const button = ui.action('Show ' + subject, visible ? 'eye' : 'eyeClosed', () => onChange(!visible))
+    button.classList.add('li-visibility-action')
+    button.setAttribute('aria-pressed', String(visible))
+    ui.setTooltip(button, (visible ? 'Hide ' : 'Show ') + subject)
+    return button
+  }
   ui.colorSwatch = value => {
     const swatch = ui.element('span', 'li-swatch')
     swatch.style.backgroundColor = value ?? ''

@@ -153,6 +153,7 @@ export function connectCanvasBackground(dock, viewport) {
       : fallback
     viewport.style.setProperty('--canvas-page-background', background)
     viewport.toggleAttribute('data-canvas-colored', paint.visible && paint.opacity > 0 && paint.color !== fallback)
+    viewport.toggleAttribute('data-canvas-background-hidden', !paint.visible)
   }
 
   try {

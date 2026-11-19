@@ -68,15 +68,14 @@
     const opacity = controls.numeric('opacity', 'Canvas background opacity', null, {
       displayValue: String(paint.opacity), submit: value => change({ opacity: value }),
     })
-    opacity.querySelector('input').max = '100'
+    const opacityInput = opacity.querySelector('input')
+    opacityInput.max = '100'
+    opacityInput.disabled = !paint.visible
     opacity.append(ui.caption('%'))
-    const visibility = ui.action('Show canvas background', paint.visible ? 'eye' : 'eyeOff',
-      () => change({ visible: !paint.visible }))
-    visibility.setAttribute('aria-pressed', String(paint.visible))
-    const row = ui.row(color, opacity, visibility)
-    row.classList.add('li-canvas-background-row')
-    const section = ui.section('Canvas', ui.stack('Background', row),
-      paint.variable && ui.caption('Style · ' + paint.variable.slice(2)))
+    const visibility = ui.visibilityAction('canvas background', paint.visible, visible => change({ visible }))
+    const paintFields = ui.row(color, opacity)
+    paintFields.classList.add('li-canvas-paint-fields')
+    const section = ui.section('Canvas', ui.row(paintFields, visibility))
     section.classList.add('li-canvas-section')
     if (colorCatalog) {
       const styles = ui.action('Canvas color styles', 'variables', event => open(event, 'libraries'))

@@ -82,6 +82,10 @@ body[data-expanded] #viewport:has(#localhost-inspector-dock[data-inspector-float
 .frame-view-divider { height: 1px; margin: 6px 0; background: #454545; }
 #viewport { position: relative; height: 100dvh; grid-template-rows: minmax(0, 1fr); overflow: clip; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
 body[data-expanded] #viewport { background-color: var(--canvas-page-background, transparent); }
+body[data-expanded] #viewport[data-canvas-background-hidden] {
+  background-image: conic-gradient(#f5f5f5 25%, #fff 0 50%, #f5f5f5 0 75%, #fff 0);
+  background-size: 16px 16px;
+}
 @supports (color: contrast-color(white)) {
   body[data-expanded] #viewport[data-canvas-colored] #map { color: contrast-color(var(--canvas-page-background)); }
 }
