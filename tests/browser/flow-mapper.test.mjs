@@ -43,6 +43,10 @@ test('mapper preserves URL states and waits for a delayed rendered branch', asyn
         <span id="details-button" hidden>Show details</span>
         <button id="show-details" aria-haspopup="dialog" aria-labelledby="details-button" onclick="setTimeout(() => document.getElementById('details').showModal(), 450)">⚙</button>
         <dialog id="details" aria-label="Delayed details">Loaded</dialog>
+        <div role="tablist">
+          <button role="tab" aria-selected="true" id="open-tab">Open</button>
+          <button role="tab" aria-selected="false" onclick="this.setAttribute('aria-selected', 'true'); document.getElementById('open-tab').setAttribute('aria-selected', 'false')">Paid</button>
+        </div>
         </main>`)
     }
   })
@@ -63,6 +67,9 @@ test('mapper preserves URL states and waits for a delayed rendered branch', asyn
     const delayed = frames.find(frame => frame.label === 'Show details')
     assert.deepEqual(delayed?.checkpoint, [{ role: 'dialog', label: 'Delayed details' }])
     assert.ok(connections.some(edge => edge.to === delayed.id && edge.observed))
+    const paid = frames.find(frame => frame.label === 'Paid')
+    assert.equal(paid?.route, '/')
+    assert.deepEqual(paid?.checkpoint, [{ role: 'selected-tab', label: 'Paid' }])
     const previews = JSON.parse(await readFile(join(output, 'previews.json'), 'utf8'))
     assert.ok(previews[delayed.id].desktop.fixed)
     assert.equal(previews[delayed.id].phone.unavailable, 'hidden-control')
@@ -72,6 +79,11 @@ test('mapper preserves URL states and waits for a delayed rendered branch', asyn
     await page.goto(origin + '/__inspector-flow/')
     await page.frameLocator('#app-preview').getByRole('heading', { name: 'Home' }).waitFor()
     await page.getByRole('button', { name: 'Expand flow', exact: true }).click()
+    const fitCanvas = () => page.locator('#zoom-preset').evaluate(control => {
+      control.value = 'fit'
+      control.dispatchEvent(new Event('change'))
+    })
+    await fitCanvas()
     await page.getByRole('button', { name: 'Show details', exact: true }).click()
     const dialog = page.frameLocator('#app-preview').getByRole('dialog', { name: 'Delayed details' })
     await dialog.waitFor()
@@ -81,9 +93,14 @@ test('mapper preserves URL states and waits for a delayed rendered branch', asyn
     await switchToDesktop.waitFor()
     await dialog.waitFor({ state: 'hidden' })
     await page.locator('#frame-view-toggle[aria-disabled=false]').waitFor()
+    await fitCanvas()
     await switchToDesktop.click()
+    await fitCanvas()
     await page.getByRole('button', { name: 'Show details', exact: true }).click()
     await dialog.waitFor()
+    await fitCanvas()
+    await page.getByRole('button', { name: 'Paid', exact: true }).click()
+    await page.frameLocator('#app-preview').getByRole('tab', { name: 'Paid', selected: true }).waitFor()
     assert.equal(actionRequests, 0)
   } finally {
     await browser?.close()

@@ -16,7 +16,7 @@ export function waitFor(read, current) {
 }
 
 export function findControl(doc, step) {
-  return observePage(doc, false, step)
+  return observePage(doc, 'control', step)
 }
 
 export function openControl(control) {
@@ -29,6 +29,6 @@ export function openControl(control) {
 }
 
 export function matchesCheckpoint(doc, frame, surfaces = observeSurfaces(doc)) {
-  if (frame.heading && observePage(doc).heading !== frame.heading) return false
+  if (frame.heading && observePage(doc, 'heading') !== frame.heading) return false
   return frame.checkpoint.every(check => surfaces.some(item => item.role === check.role && item.label === check.label))
 }

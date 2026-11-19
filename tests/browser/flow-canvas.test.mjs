@@ -2,6 +2,42 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHarness } from './harness.mjs'
 
+test('a saved Canvas edit detaches from a same-URL lookalike and returns to the verified view', async () => {
+  const frames = ['A', 'B'].map(label => ({
+    id: label, label, route: '/', heading: 'Queue', image: 'frame.png',
+    steps: [{ role: 'tab', label, inMain: true }],
+    checkpoint: [{ role: 'tabpanel', label }],
+  }))
+  const h = await createHarness({ canvas: true, dock: true, pendingEdits: true, flowFrames: frames, flowPages: { '/': {
+    body: `<main><h1>Queue</h1><button role="tab">A</button><button role="tab">B</button>
+      <section role="tabpanel" aria-label="A"><button id="queue-action" style="font-size:20px">Details</button></section>
+      </main><script>document.querySelectorAll('[role=tab]').forEach(tab => {
+        tab.onclick = () => document.querySelector('[role=tabpanel]').setAttribute('aria-label', tab.textContent)
+      })</script>`,
+  } } })
+  try {
+    const toggle = h.page.locator('#flow-toggle')
+    await toggle.click()
+    await h.open()
+    await h.select('#queue-action')
+    await h.enter('Font size', 30)
+    await h.settled()
+    const [saved] = await h.journal()
+    assert.match(saved.frameState, /^[a-f0-9]{64}$/)
+    await toggle.click()
+    await h.app.getByRole('tab', { name: 'B', exact: true }).click()
+    await h.app.waitForFunction(() => getComputedStyle(document.querySelector('#queue-action')).fontSize === '20px',
+      null, { timeout: 2500 })
+    await h.showEdits()
+    assert.equal(await h.host.locator('.li-pending-open').count(), 1)
+    await h.app.getByRole('tab', { name: 'A', exact: true }).click()
+    await h.app.waitForFunction(() => getComputedStyle(document.querySelector('#queue-action')).fontSize === '30px')
+    await h.settled()
+    await h.host.locator('.li-pending-open').click()
+    assert.equal(await h.host.locator('[data-selected]').count(), 1)
+  } finally { await h.close() }
+})
+
 test('Inspector selects, edits, and undoes on the real page at canvas scale', async () => {
   const h = await createHarness({ dock: true, canvas: true })
   try {

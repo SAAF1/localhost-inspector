@@ -3,7 +3,7 @@ export function flowRoute(address) {
     (/^#!?\//.test(address.hash) ? address.hash : '')
 }
 
-export function observePage(doc = document, surfacesOnly = false, find) {
+export function observePage(doc = document, mode = 'page', find) {
   const visible = node => Boolean(node.getClientRects().length &&
     doc.defaultView.getComputedStyle(node).visibility === 'visible' &&
     !node.closest('[hidden], [inert], [aria-hidden="true"]'))
@@ -13,6 +13,8 @@ export function observePage(doc = document, surfacesOnly = false, find) {
     return (named || node.getAttribute('aria-label') || node.innerText || node.title || '').trim().replace(/\s+/g, ' ').slice(0, 100)
   }
   const main = doc.querySelector('main, [role="main"]')
+  const heading = () => (main?.querySelector('h1, h2') || doc.querySelector('h1'))?.innerText.trim() || doc.title
+  if (mode === 'heading') return heading()
   const role = node => node.getAttribute('role') || 'button'
   if (find) {
     const scope = find.inMain ? main : doc
@@ -27,7 +29,11 @@ export function observePage(doc = document, surfacesOnly = false, find) {
       role: node.getAttribute('role') || (node.matches('dialog[open]') ? 'dialog' : 'popover'),
       label: (doc.getElementById(node.getAttribute('aria-labelledby'))?.textContent || label(node)).trim().slice(0, 120),
     }))
-  if (surfacesOnly) return { surfaces }
+  for (const tab of doc.querySelectorAll('[role="tab"][aria-selected="true"]')) {
+    const name = label(tab)
+    if (name && visible(tab)) surfaces.push({ role: 'selected-tab', label: name })
+  }
+  if (mode === 'surfaces') return { surfaces }
   const links = [...doc.querySelectorAll('a[href]')].filter(visible).map(node => ({ href: node.href, label: label(node) }))
   // Controlled forms may use ordinary buttons as their launchers.
   const openForm = /^(create|add|invite|import|new)(?: |$)/i
@@ -43,9 +49,9 @@ export function observePage(doc = document, surfacesOnly = false, find) {
       popup: node.hasAttribute('aria-haspopup'),
     }))
     .filter(item => item.label && !/delete|remove|send|submit|sign out|log out|publish|purchase|pay now/i.test(item.label))
-  return { links, triggers, surfaces, heading: (main?.querySelector('h1, h2') || doc.querySelector('h1'))?.innerText.trim() || doc.title }
+  return { links, triggers, surfaces, heading: heading() }
 }
 
 export function observeSurfaces(doc) {
-  return observePage(doc, true).surfaces
+  return observePage(doc, 'surfaces').surfaces
 }

@@ -31,7 +31,7 @@
   const revertDialog = ui.createRevertDialog(root)
   const temporary = new Set()
   const recovery = ui.createPreviewRecovery({
-    apply: applyRestored, remove, canEdit,
+    apply: applyRestored, remove, canEdit, readFrameState,
     removeButtonSize: entry => ui.buttonSize.setSize(entry.node, entry.target.key, entry.requested, entry.before, entry.path),
   })
   const fields = get('fields')
@@ -56,6 +56,8 @@
   let pendingRows = []
   let savedRoute
   let scopedPreviewTargets = false
+  let landmarkPreviewTargets = false
+  let templatePreviews = false
   let refreshing = false
   let editNavigation = 0
   const editDestinationKey = 'localhost-inspector.pending-destination'
@@ -75,22 +77,24 @@
   async function goToEdit(edit) {
     const navigation = ++editNavigation
     status('')
-    if (edit.route === savedRoute) {
+    if (edit.template || edit.route === savedRoute) {
       if (await selectEditTarget(edit.id, navigation)) {
         if (panel.hidden) setOpen(true, isCanvasExpanded?.())
         if (isCanvasExpanded?.()) openEditRoute(route())
         selection.syncOutlines()
         return true
       }
-      if (navigation !== editNavigation || edit.route !== savedRoute) return false
-      if (isCanvasExpanded?.()) {
-        if (edit.frameState && rememberEditDestination(edit)) {
-          if (!openEditRoute(route(), edit.frameState)) return true
-          sessionStorage.removeItem(editDestinationKey)
-        }
-        openEditRoute(route())
+      if (navigation !== editNavigation) return false
+    }
+    if (edit.route === savedRoute) {
+      if (edit.frameState && isCanvasExpanded && rememberEditDestination(edit)) {
+        if (!openEditRoute(route(), edit.frameState, edit.id)) return true
+        sessionStorage.removeItem(editDestinationKey)
       }
-      status('Couldn’t locate the element for this edit.', true)
+      if (isCanvasExpanded?.()) openEditRoute(route())
+      const wrongState = edit.frameState && edit.frameState !== readFrameState()
+      status(wrongState ? 'Open the original Canvas view to locate this saved edit.' :
+        'Couldn’t locate the element for this edit.', true)
       return false
     }
     const address = new URL(edit.route, location.origin)
@@ -102,21 +106,46 @@
       status('Open the page in the app to locate this edit.', true)
       return false
     }
-    if (openEditRoute(edit.route, edit.frameState)) location.assign(address.href)
+    if (openEditRoute(edit.route, edit.frameState, edit.id)) {
+      if (edit.frameState) {
+        sessionStorage.removeItem(editDestinationKey)
+        status('Open the original Canvas view to locate this saved edit.', true)
+        return false
+      }
+      location.assign(address.href)
+    }
     return true
   }
 
-  function rememberEditDestination({ id, route }) {
+  function rememberEditDestination({ id, route, frameState }) {
     try {
-      sessionStorage.setItem(editDestinationKey, JSON.stringify({ id, route }))
+      sessionStorage.setItem(editDestinationKey, JSON.stringify({ id, route, frameState }))
       return true
     } catch { return false }
   }
 
-  function openEditRoute(path, frameState) {
-    const detail = frameState ? JSON.stringify({ path, frameState }) : path
+  function readFrameState() {
+    host.dispatchEvent(new Event('capture-inspector-edit-state'))
+    const state = host.dataset.editFrameState
+    delete host.dataset.editFrameState
+    return state
+  }
+
+  function openEditRoute(path, frameState, editId) {
+    const detail = frameState ? JSON.stringify({ path, frameState, editId }) : path
     return host.dispatchEvent(new CustomEvent('open-inspector-edit-route', { cancelable: true, detail }))
   }
+
+  host.addEventListener('inspector-edit-route-unavailable', event => {
+    let destination
+    try { destination = JSON.parse(sessionStorage.getItem(editDestinationKey)) }
+    catch { return }
+    if (destination?.id !== event.detail?.id) return
+    sessionStorage.removeItem(editDestinationKey)
+    status(event.detail.reason === 'hidden-control'
+      ? 'This view opens on Desktop. Switch Canvas to Desktop to see the saved edit.'
+      : 'Couldn’t reopen the original view. Your edit is still saved.', true)
+  })
 
   async function selectEditTarget(id, navigation) {
     const path = currentRoute
@@ -127,6 +156,11 @@
         getComputedStyle(node).visibility !== 'visible') return false
     node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
     selection.select(node)
+    if (!comparing && !recovery.previewNode(id)) {
+      const baseline = recovery.changedBaseline(id, node)
+      status(baseline ? 'The app now uses ' + baseline.value + ' for ' + baseline.label + '. Your edit is still saved.' :
+        'Found the element. The saved preview couldn’t be applied here.', true)
+    }
     return true
   }
 
@@ -156,7 +190,7 @@
       const snapshot = await send({ type: 'load', route: path })
       if (busy || !isCurrentRoute(path, version) || journalRevision !== startedRevision || snapshot?.revision === journalRevision) return
       if (!validSnapshot(snapshot)) throw Error('Invalid journal snapshot')
-      if (startedRevision !== null && recovery.matchesSnapshot(snapshot.edits.filter(edit => edit.route === snapshot.route))) {
+      if (startedRevision !== null && recovery.matchesSnapshot(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template))) {
         acceptSnapshot(snapshot)
         journalRevision = snapshot.revision
         syncPending()
@@ -200,8 +234,8 @@
   }
   function overlayFor(node) {
     const overlay = node?.closest('[role=menu], [role=dialog], [role=alertdialog], [role=listbox], dialog[open], :popover-open')
-    // The canvas panel sits outside the app document and its dialog focus trap.
-    return window.localhostInspectorIsCanvasExpanded?.() && overlay?.matches('[role=dialog]')
+    // The workspace panel sits outside the app document and its dialog focus trap.
+    return isCanvasExpanded && overlay?.matches('[role=dialog]')
       ? null : overlay
   }
   function renderActions() {
@@ -350,14 +384,14 @@
       const box = node.getBoundingClientRect()
       return property === 'height' ? box.height : box.width
     }
-    const beforeSize = measure()
+    const dimensions = property === 'width' || property === 'height'
+    const beforeSize = dimensions ? measure() : 0
     node.style.setProperty(property, requested)
     const declared = node.style.getPropertyValue(property)
     const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle }
     temporary.add(entry)
     let observed = getComputedStyle(node).getPropertyValue(property)
     const mode = ['100%', 'fit-content'].includes(requested)
-    const dimensions = property === 'width' || property === 'height'
     const changedSize = () => Math.abs(measure() - beforeSize) > 0.5
     const sameValue = () => observed === declared || observed === requested ||
       (['min-width', 'min-height'].includes(property) && requested === 'auto' && observed === '0px')
@@ -538,18 +572,20 @@
     const version = activeRouteVersion
     const isCurrent = () => isCurrentRoute(editRoute, version)
     const target = ui.describePreviewTarget(node)
+    const template = templatePreviews && !tokenOptions?.pendingColor ? ui.templatePreview.of(node) : undefined
     const sourceContext = ui.describeSourceContext(node)
     const selected = selection.current
     const evidence = ++evidenceVersion
     const entry = await apply(node, property, requested, isCurrent, tokenOptions)
     entry.liveTarget = target
-    if (!isCurrent() || !ui.matchesPreviewTarget(node, target)) {
+    const sameTarget = () => ui.matchesPreviewTarget(node, target) && (!template || ui.templatePreview.of(node) === template)
+    if (!isCurrent() || !sameTarget()) {
       discardTemporary(entry)
       throw Error('Selection changed. Earlier saved changes remain available to Undo.')
     }
     let edit, captureEnabled
     try {
-      edit = await editRecord(entry, target, { editRoute, sourceContext, tokenOptions })
+      edit = await editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template })
       const result = await write({ type: 'save', record: edit }, editRoute, version)
       captureEnabled = result.visualEvidence === true
     } catch (error) {
@@ -561,18 +597,19 @@
       if (currentRoute === editRoute) window.phaseAInspectorReady = loadRoute()
       return
     }
-    if (ui.matchesPreviewTarget(node, target)) {
+    if (sameTarget()) {
       temporary.delete(entry)
       recovery.remember(edit, entry)
       if (captureEnabled) {
         ui.captureEditEvidence?.(node, panel, edit, () => evidence === evidenceVersion && isCurrent() &&
-          selection.current === selected && ui.matchesPreviewTarget(node, target) && ui.ownsPreviewDeclaration(entry))
+          selection.current === selected && sameTarget() && ui.ownsPreviewDeclaration(entry))
       }
     } else {
       discardTemporary(entry)
       recovery.remember(edit)
       recoveryRequested = true
     }
+    if (template) await restore(editRoute, version)
     reportRecovery()
   }
   function paddingMembers(node) {
@@ -652,19 +689,18 @@
     recoveryRequested ||= !attached
     reportRecovery()
   }
-  async function editRecord(entry, target, { editRoute, sourceContext, tokenOptions }) {
-    if (isCanvasExpanded?.()) host.dispatchEvent(new Event('capture-inspector-edit-state'))
-    const capturedState = host.dataset.editFrameState
-    delete host.dataset.editFrameState
-    const frameState = /^[a-f0-9]{64}$/.test(capturedState) ? capturedState : undefined
-    const journalTarget = target.anchor && !scopedPreviewTargets
+  async function editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template }) {
+    const capturedState = template ? undefined : readFrameState()
+    const frameState = capturedState && /^[a-f0-9]{64}$/.test(capturedState) ? capturedState : undefined
+    const journalTarget = target.anchor && (!scopedPreviewTargets ||
+      (target.anchor.kind === 'landmark' && !landmarkPreviewTargets))
       ? { tag: target.tag, id: target.id, slot: target.slot, key: target.key }
       : target
     return {
       id: crypto.randomUUID(), route: editRoute, target: await ui.previewTargetForJournal(journalTarget), property: entry.property, before: entry.before,
       requested: entry.requested, observed: entry.observed, ...tokenOptions,
-      restore: ui.findPreviewTarget(journalTarget, entry.node) === entry.node ? 'unique' : 'ambiguous',
-      viewport: { width: innerWidth, height: innerHeight }, frameState,
+      restore: template || (capturedState !== 'unverified' && ui.findPreviewTarget(journalTarget, entry.node) === entry.node) ? 'unique' : 'ambiguous',
+      viewport: { width: innerWidth, height: innerHeight }, frameState, ...(template ? { template } : {}),
       intent: 'feature-template', sourceContext,
     }
   }
@@ -887,7 +923,7 @@
     get(panel.hidden ? 'pending-order' : 'edits-tab').focus({ preventScroll: true })
     await run(async () => {
       const entries = recovery.buttonEntries()
-      const persist = () => write({ type: 'reset', route: requestedRoute }, requestedRoute, version)
+      const persist = () => write({ type: 'reset', route: requestedRoute, templateIds: recovery.activeTemplateIds() }, requestedRoute, version)
       if (entries.length) await rewindButtonSizes(entries, requestedRoute, version, persist)
       else await persist()
       if (currentRoute !== requestedRoute || route() !== requestedRoute) return
@@ -923,6 +959,8 @@
     buttonSizeKey = typeof snapshot.buttonSizeKey === 'string' ? snapshot.buttonSizeKey : null
     savedRoute = snapshot.route
     scopedPreviewTargets = snapshot.scopedPreviewTargets === true
+    landmarkPreviewTargets = snapshot.landmarkPreviewTargets === true
+    templatePreviews = snapshot.templatePreviews === true
     if (Array.isArray(snapshot.pending)) pendingRows = snapshot.pending
   }
   async function loadSavedEdits(requestedRoute, version) {
@@ -930,7 +968,7 @@
     if (!isCurrentRoute(requestedRoute, version)) return null
     if (!validSnapshot(snapshot)) throw Error('Restart the local helper with the updated Inspector.')
     acceptSnapshot(snapshot)
-    recovery.load(snapshot.edits.filter(edit => edit.route === snapshot.route))
+    recovery.load(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template), snapshot.route)
     return snapshot.revision
   }
   let currentRoute = route()
@@ -940,6 +978,8 @@
     loadingRoute = true
     journalRevision = null
     scopedPreviewTargets = false
+    landmarkPreviewTargets = false
+    templatePreviews = false
     colorCatalog = null
     spacingCatalog = null
     textStyleCatalog = null
@@ -1001,7 +1041,13 @@
     window.phaseAInspectorReady = loadRoute()
     selection.select(null)
   }
-  new MutationObserver(records => {
+  const observedAttributes = new Set(['id', 'data-slot', 'data-inspector-target', 'role', 'style', 'class', 'data-theme', 'hidden',
+    'aria-hidden', 'aria-labelledby', 'aria-label', 'aria-selected', 'open', 'data-state',
+    ui.sharedPadding.attribute, ui.templatePreview.attribute])
+  new MutationObserver(mutations => {
+    const records = mutations.filter(record => record.type !== 'attributes' ||
+      observedAttributes.has(record.attributeName) || ui.isPreviewContextAttribute(record.attributeName))
+    if (!records.length) return
     onRouteChange()
     selection.refresh()
     const scopeChanged = records.some(record => record.type === 'childList' ||
@@ -1025,13 +1071,13 @@
         property => target.style.getPropertyValue(property).startsWith('var('),
       ))) renderFields({ keepPopup: true })
     }
-    if (!recovery.hasSaved) return
+    if (!recovery.hasRecords) return
     recoveryRequested ||= styleChanges.length !== records.length || recovery.hasTargetClassChange(styleChanges) ||
+      ((recovery.hasScopedEdits || recovery.hasTemplateEdits) && styleChanges.some(record => record.attributeName === 'class')) ||
       (!busy && !loadingRoute && !comparing && recovery.hasStyleConflict(styleChanges))
     queueRecovery()
   }).observe(document.documentElement, {
     childList: true, subtree: true, characterData: true, attributes: true,
-    attributeFilter: ['id', 'data-slot', 'data-inspector-target', 'role', 'style', 'class', 'data-theme', 'hidden', ui.sharedPadding.attribute],
   })
   function refreshResponsiveSpacing() {
     const node = selection.current

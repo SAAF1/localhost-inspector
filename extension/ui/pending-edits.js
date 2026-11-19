@@ -118,12 +118,13 @@
           open.type = 'button'
           open.dataset.editId = remove.dataset.editId = edit.id
           row.toggleAttribute('data-selected', selectedId === edit.id)
-          const node = edit.route === currentRoute ? locate(edit.id) : null
+          const node = edit.template || edit.route === currentRoute ? locate(edit.id) : null
           const observed = node?.getAttribute('aria-label') ||
             (node?.matches('button, a, label, h1, h2, h3') ? node.textContent.trim() : '')
           const target = edit.target
           const name = observed?.slice(0, 64) || humanize(target.slot || target.id || ({ div: 'Container', span: 'Text', tr: 'Row', td: 'Cell' }[target.tag] ?? target.tag ?? 'Element'))
-          const detail = (properties[edit.property] ?? humanize(edit.property)) + '  ' + edit.before + ' → ' + edit.requested
+          const detail = (properties[edit.property] ?? humanize(edit.property)) + '  ' + edit.before + ' → ' + edit.requested +
+            (edit.template ? ' · Whole template' : '')
           open.append(ui.element('span', 'li-pending-name', name), ui.element('span', 'li-pending-detail',
             recent ? pageName(edit.route) + ' · ' + detail : detail))
           if (node) {

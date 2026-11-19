@@ -12,6 +12,22 @@ test('identical values on separately identified elements do not form a removal c
   assert.deepEqual(removePendingEdit([first, other], 'first'), { edits: [other], removed: [first], rebased: [] })
 })
 
+test('removing an edit preserves the baseline of a lookalike in another app state', () => {
+  const target = { tag: 'button', id: 'action', regionFingerprint: 'region', classFingerprint: 'class' }
+  const first = { ...change('first', '20px', '30px', target), frameState: 'a'.repeat(64) }
+  const other = { ...change('other', '30px', '40px', target), frameState: 'b'.repeat(64) }
+  assert.deepEqual(removePendingEdit([first, other], 'first'), { edits: [other], removed: [first], rebased: [] })
+})
+
+test('removing a template edit rebases the same template across routes and preserves neighboring templates', () => {
+  const first = { ...change('first', '8px', '12px', { tag: 'span', key: 'open/1' }), template: 'orders/status' }
+  const other = { ...change('other', '12px', '18px', { tag: 'span', key: 'paid/2' }), template: 'orders/priority' }
+  const later = { ...change('later', '12px', '16px', { tag: 'span', key: 'paid/1' }), template: first.template, route: '/paid' }
+  assert.deepEqual(removePendingEdit([first, other, later], 'first'), {
+    removed: [first], rebased: [{ id: 'later', before: '8px' }], edits: [other, { ...later, before: '8px' }],
+  })
+})
+
 test('ambiguous or nonliteral scope preserves the journal instead of rebasing a possible dependency', () => {
   const unknown = { tag: 'div', id: null, slot: 'row' }
   const first = change('first', '8px', '12px', unknown)

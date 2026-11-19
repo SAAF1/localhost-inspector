@@ -301,15 +301,17 @@ const targetFingerprint = value => typeof value === 'string' && /^[a-f0-9]{64}$/
 function validScopedTarget(target) {
   const { anchor, id, key, tag, textFingerprint, regionFingerprint, classFingerprint } = target
   if (anchor === undefined) return true
-  return !id && !key && anchor && ['id', 'key', 'main'].includes(anchor.kind) && (anchor.kind !== 'main' || anchor.value === 'main') &&
+  return !id && !key && anchor && ['id', 'key', 'main', 'landmark'].includes(anchor.kind) &&
+    (anchor.kind !== 'main' || anchor.value === 'main') &&
+    (anchor.kind !== 'landmark' || ['navigation', 'complementary'].includes(anchor.value)) &&
     typeof anchor.value === 'string' && anchor.value.length > 0 && validTargetKey(anchor.value) &&
     typeof anchor.path === 'string' && /^[a-z][a-z0-9-]{0,39}(>[a-z][a-z0-9-]{0,39}){0,7}$/.test(anchor.path) &&
     anchor.path.split('>').at(-1) === tag &&
     [textFingerprint, regionFingerprint, classFingerprint].every(targetFingerprint)
 }
-function journalTarget({ tag, id, slot, key, anchor, textFingerprint, regionFingerprint, classFingerprint }) {
+function journalTarget({ tag, id, slot, key, anchor, textFingerprint, regionFingerprint, classFingerprint, contextFingerprint }) {
   return { tag, id, slot, key, ...(anchor ? { anchor: { kind: anchor.kind, value: anchor.value, path: anchor.path } } : {}),
-    textFingerprint, regionFingerprint, classFingerprint }
+    textFingerprint, regionFingerprint, classFingerprint, contextFingerprint }
 }
 function migrateJournal(journal) {
   journal.edits = journal.edits.filter(edit => !edit.undone).map(edit => {
@@ -360,7 +362,10 @@ function editFrom(record, catalog, group, pendingTextStyle) {
       !['unique', 'ambiguous'].includes(record.restore) || !target || !/^[a-z][a-z0-9-]*$/.test(target.tag) ||
       !validScopedTarget(target) || !validTargetKey(target.key) || [target.id, target.slot].some(value => value !== null && (typeof value !== 'string' || value.length > 120)) ||
       (record.frameState !== undefined && !targetFingerprint(record.frameState)) ||
-      [target.textFingerprint, target.regionFingerprint, target.classFingerprint].some(value =>
+      (record.template !== undefined && (group || pending || record.frameState !== undefined ||
+        record.restore !== 'unique' || record.intent !== featureTemplateScope ||
+        typeof record.template !== 'string' || !/^[a-z0-9][a-z0-9._:/-]{0,119}$/i.test(record.template))) ||
+      [target.textFingerprint, target.regionFingerprint, target.classFingerprint, target.contextFingerprint].some(value =>
         value !== undefined && !targetFingerprint(value))) {
     throw Error('Invalid edit record')
   }
@@ -377,7 +382,8 @@ function editFrom(record, catalog, group, pendingTextStyle) {
   const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
   return {
     id, route: journalRoute(route), property, requested, observed, before, restore,
-    target: journalTarget(target), viewport, frameState: record.frameState, colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,
+    target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,
+    colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,
   }
 }
 function groupedPaddingEdits(records, catalog, journal, shared) {
@@ -400,7 +406,7 @@ function groupedPaddingEdits(records, catalog, journal, shared) {
     const { key, tag } = top.target
     if ((shared && (!key || keys.has(key))) || tag !== first.target.tag || top.property !== firstSide ||
       bottom.property !== secondSide || JSON.stringify(top.target) !== JSON.stringify(bottom.target) ||
-      [top, bottom].some((entry, offset) => entry.route !== first.route || entry.requested !== first.requested ||
+      [top, bottom].some((entry, offset) => entry.template || entry.route !== first.route || entry.requested !== first.requested ||
         Boolean(entry.spacingToken) !== Boolean(first.spacingToken) ||
         (shared && entry.restore !== 'unique') || entry.intent !== featureTemplateScope || records[index + offset].sharedPadding !== name)) {
       throw Error('Invalid grouped padding operation')
@@ -516,7 +522,8 @@ async function handle(message) {
     if (!validRoute(message.route)) throw Error('Expected a route')
     const route = journalRoute(message.route)
     const buttonSize = await readButtonSize(binding).catch(() => null)
-    return { revision: journal.revision, route, scopedPreviewTargets: true, edits: journal.edits.filter(edit => edit.route === route), pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
+    return { revision: journal.revision, route, scopedPreviewTargets: true, landmarkPreviewTargets: true, templatePreviews: true,
+      edits: journal.edits.filter(edit => edit.route === route || edit.template), pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
   }
   if (message.type === 'saveEvidence') {
     if (!validRoute(message.route)) return false
@@ -578,8 +585,10 @@ async function handle(message) {
   } else if (message.type === 'reset') {
     if (!validRoute(message.route)) throw Error('Expected a route')
     const route = journalRoute(message.route)
-    removed = journal.edits.filter(edit => edit.route === route)
-    journal.edits = journal.edits.filter(edit => edit.route !== route)
+    const visible = Array.isArray(message.templateIds) ? new Set(message.templateIds) : new Set()
+    const matches = edit => edit.route === route || (edit.template && visible.has(edit.id))
+    removed = journal.edits.filter(matches)
+    journal.edits = journal.edits.filter(edit => !matches(edit))
   } else throw Error('Unknown operation')
   journal.revision++
   await atomic(file, journal)

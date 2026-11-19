@@ -10,11 +10,12 @@ function operations(edits) {
 
 export function pendingEdits(edits) {
   return Array.from(operations(edits), ([id, group]) => {
-    const { route, target, property, before, requested, pendingTextStyle, textStyleToken, spacingToken, colorToken, frameState } = group[0]
+    const { route, target, property, before, requested, pendingTextStyle, textStyleToken, spacingToken, colorToken, frameState, template } = group[0]
     const pair = properties => properties.every(name => group.some(edit => edit.property === name))
     const label = pendingTextStyle?.name ?? textStyleToken?.name ?? spacingToken?.name ?? colorToken?.name
     return {
-      id, route, frameState, sessionOnly: group.some(edit => edit.restore !== 'unique'), target: { id: target.id, tag: target.tag, slot: target.slot },
+      id, route, frameState, ...(template ? { template } : {}),
+      sessionOnly: group.some(edit => edit.restore !== 'unique'), target: { id: target.id, tag: target.tag, slot: target.slot },
       property: pendingTextStyle || textStyleToken ? 'text-style' :
         pair(['padding-top', 'padding-bottom']) ? 'vertical-padding' :
         pair(['padding-left', 'padding-right']) ? 'horizontal-padding' : property,
@@ -26,10 +27,13 @@ export function pendingEdits(edits) {
 function sameOccurrence(a, b) {
   const left = a.target
   const right = b.target
+  if (a.template && b.template) return a.template === b.template && left.tag === right.tag && left.slot === right.slot
   if (a.route !== b.route || left.tag !== right.tag) return false
+  if (a.frameState && b.frameState && a.frameState !== b.frameState) return false
   if (left.slot !== right.slot) return false
   if (left.key || right.key) return Boolean(left.key && left.key === right.key)
   if (left.anchor && right.anchor) {
+    if (left.textFingerprint && right.textFingerprint && left.textFingerprint !== right.textFingerprint) return false
     return ['kind', 'value', 'path'].every(key => left.anchor[key] === right.anchor[key])
   }
   return left.id === right.id
@@ -58,8 +62,11 @@ export function removePendingEdit(edits, id) {
     }
     const possible = later.filter(entry => sameOccurrence(edit, entry) && entry.property === edit.property)
     const guarded = next => edit.target.id || (edit.target.anchor && next.target.anchor)
-    const sameVerifiedTarget = next => Boolean(edit.target.key || (guarded(next) && edit.target.regionFingerprint &&
-      ['regionFingerprint', 'classFingerprint', 'textFingerprint'].every(key => edit.target[key] === next.target[key])))
+    const sameVerifiedTarget = next => edit.template || next.template
+      ? Boolean(edit.template && edit.template === next.template)
+      : edit.frameState === next.frameState && Boolean(edit.target.key ||
+      (guarded(next) && edit.target.regionFingerprint &&
+        ['regionFingerprint', 'classFingerprint', 'textFingerprint', 'contextFingerprint'].every(key => edit.target[key] === next.target[key])))
     // A matching tag is weak evidence. A later baseline can only depend on an
     // unverified earlier edit if that edit actually changed the value saved.
     const next = possible.find(entry => sameVerifiedTarget(entry) ||

@@ -37,8 +37,10 @@ const { cards, layout } = renderFrames(map, data, activate, viewOf, previewIndex
   anchor => changeView({ preset: 'desktop', anchor }))
 const updateSharpPreviews = createSharpPreviews(cards)
 const framesById = new Map(data.frames.map(frame => [frame.id, frame]))
-const frameStates = new Map(await Promise.all(data.frames.filter(frame => frame.steps.length).map(async frame => {
-  const state = new TextEncoder().encode(JSON.stringify([frame.steps, frame.checkpoint]))
+const scenarioRoutes = new Set(data.frames.filter(frame => frame.steps.length).map(frame => frame.route))
+const frameStates = new Map(await Promise.all(data.frames.filter(frame => scenarioRoutes.has(frame.route)).map(async frame => {
+  const state = new TextEncoder().encode(JSON.stringify(frame.steps.length
+    ? [frame.steps, frame.checkpoint] : [frame.route, frame.heading, frame.checkpoint]))
   const bytes = await crypto.subtle.digest('SHA-256', state)
   return [frame.id, Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('')]
 })))
@@ -221,6 +223,26 @@ function currentFrame() {
   return onRoute.find(frame => !frame.steps.length)
 }
 
+function verifiedFrameState(frame) {
+  const route = routeOf(frame)
+  if (!scenarioRoutes.has(route)) return undefined
+  const doc = frame.contentDocument
+  if (!doc?.body) return 'unverified'
+  const surfaces = observeSurfaces(doc)
+  const onRoute = data.frames.filter(item => item.route === route)
+  const scenarios = onRoute.filter(item => item.steps.length)
+  const matches = scenarios.filter(item => matchesCheckpoint(doc, item, surfaces))
+  // An empty checkpoint can only distinguish a scenario by a different heading.
+  if (matches.length === 1 && (matches[0].checkpoint.length ||
+      (matches[0].heading && onRoute.filter(item => item.heading === matches[0].heading).length === 1))) {
+    return frameStates.get(matches[0].id)
+  }
+  const base = onRoute.filter(item => !item.steps.length && matchesCheckpoint(doc, item, surfaces) &&
+    surfaces.every(surface => (surface.role === 'selected-tab' && !item.checkpoint.some(check => check.role === 'selected-tab')) ||
+      item.checkpoint.some(check => check.role === surface.role && check.label === surface.label)))
+  return !matches.length && base.length === 1 ? frameStates.get(base[0].id) : 'unverified'
+}
+
 function syncLiveFrame() {
   if (!expanded || candidate) return
   const frame = currentFrame()
@@ -261,7 +283,7 @@ function prepare(frame) {
   next.title = 'Preparing selected app frame'
   next.inert = true
   const view = viewOf(frame.id)
-  sizeFrame(next, presets[view.preset])
+  sizeFrame(next, expanded ? presets[view.preset] : { width: preview.clientWidth, height: preview.clientHeight })
   next.src = frame.route
   preview.after(next)
   const ready = (async () => {
@@ -303,15 +325,16 @@ function clearHover() {
   if (candidate && !pendingCard) cancelCandidate()
 }
 
-async function activate(frame) {
+async function activate(frame, expectedState) {
   if (resizing) return
   clearHoverTimers()
-  if (frame.id === active && !preview.style.visibility && routeOf(preview) === frame.route &&
+  if (!expectedState && frame.id === active && !preview.style.visibility && routeOf(preview) === frame.route &&
       matchesCheckpoint(preview.contentDocument, frame) &&
       (frame.steps.length || (currentFrame()?.id === frame.id && observeSurfaces(preview.contentDocument).every(surface =>
-        surface.role === 'tabpanel' || frame.checkpoint.some(item => item.role === surface.role && item.label === surface.label))))) {
+        surface.role === 'tabpanel' || surface.role === 'selected-tab' ||
+        frame.checkpoint.some(item => item.role === surface.role && item.label === surface.label))))) {
     setFrameSelected(true)
-    return
+    return true
   }
   if (pendingCard === cards.get(frame.id).button) return
   const viewBeforeActivation = viewOf(frame.id)
@@ -321,6 +344,7 @@ async function activate(frame) {
   try {
     const fitted = await ready
     if (!current()) return
+    if (expectedState && verifiedFrameState(next) !== expectedState) throw Error('State unavailable')
 
     const attached = document.body.hasAttribute('data-inspector-watching')
     preview.remove()
@@ -333,6 +357,7 @@ async function activate(frame) {
     next.title = 'Active app frame'
     next.inert = false
     preview = next
+    if (!expanded) preview.removeAttribute('style')
     candidate = null
     preparation = null
     saveView(frame.id, fitted)
@@ -355,6 +380,7 @@ async function activate(frame) {
         }
       }
     }
+    return true
   } catch {
     if (current()) message('Could not reopen ' + frame.label)
   } finally {
@@ -422,19 +448,20 @@ zoomPreset.addEventListener('change', () => {
 })
 
 dock.addEventListener('capture-inspector-edit-state', event => {
-  if (!expanded || event.target !== dock.firstElementChild) return
-  const state = frameStates.get(currentFrame()?.id)
+  if (event.target !== dock.firstElementChild) return
+  const state = verifiedFrameState(preview)
   if (state) event.target.dataset.editFrameState = state
 }, true)
 
 dock.addEventListener('open-inspector-edit-route', event => {
-  if (!expanded || event.target !== dock.firstElementChild || typeof event.detail !== 'string') return
+  if (event.target !== dock.firstElementChild || typeof event.detail !== 'string') return
   let destinationRequest = { path: event.detail }
   if (event.detail.startsWith('{')) {
     try { destinationRequest = JSON.parse(event.detail) }
     catch { return }
   }
-  const { path, frameState } = destinationRequest ?? {}
+  const { path, frameState, editId } = destinationRequest ?? {}
+  if (!expanded && !frameState) return
   if (typeof path !== 'string' || !path.startsWith('/')) return
   const address = new URL(path, location.origin)
   if (address.origin !== location.origin) return
@@ -443,7 +470,7 @@ dock.addEventListener('open-inspector-edit-route', event => {
   const stateMatches = frameState ? matchingFrames.filter(frame => frameStates.get(frame.id) === frameState) : []
   const stateFrame = stateMatches.length === 1 ? stateMatches[0] : null
   const alreadyOnPage = routeOf(preview) === destination
-  if (frameState && alreadyOnPage && (!stateFrame || currentFrame()?.id === stateFrame.id)) return
+  if (frameState && (!stateFrame || (alreadyOnPage && verifiedFrameState(preview) === frameState))) return
   if (!frameState && active && alreadyOnPage) {
     event.preventDefault()
     clearHover()
@@ -459,7 +486,18 @@ dock.addEventListener('open-inspector-edit-route', event => {
     return
   }
   event.preventDefault()
-  void activate(frame).then(() => {
+  const notifyUnavailable = reason => {
+    if (editId && event.target === dock.firstElementChild) {
+      event.target.dispatchEvent(new CustomEvent('inspector-edit-route-unavailable', { detail: { id: editId, reason } }))
+    }
+  }
+  const variants = previewIndex?.[frame.id]
+  if (expanded && variants?.[device]?.unavailable === 'hidden-control' && variants.desktop?.fixed) {
+    notifyUnavailable('hidden-control')
+    return
+  }
+  void activate(frame, frameState).then(opened => {
+    if (!opened) notifyUnavailable('unavailable')
     if (active !== frame.id || !expanded) return
     center(active, viewport.clientWidth - dock.offsetWidth)
     position()

@@ -398,6 +398,41 @@ test('a button inside an unkeyed repeated item stays session-only even with one 
   } finally { await h.close() }
 })
 
+test('already-labelled sibling controls recover after recreation and identical labels remain ambiguous', async () => {
+  const h = await createHarness({ pendingEdits: true })
+  try {
+    await h.app.evaluate(() => document.body.insertAdjacentHTML('beforeend',
+      '<nav aria-label="Workspace"><button>Inbox</button><button>Reports</button></nav>'))
+    await h.open()
+    await h.select('nav button:last-child')
+    const baseline = await h.css('font-size', 'nav button:first-child')
+    await h.enter('Font size', 22)
+    await h.settled()
+    const [edit] = await h.journal()
+    assert.equal(edit.restore, 'unique')
+    assert.equal(edit.target.anchor.value, 'navigation')
+    const navigate = async path => {
+      await h.app.evaluate(path => history.pushState(null, '', path), path)
+      await h.app.evaluate(() => window.phaseAInspectorReady)
+    }
+    await navigate('/other')
+    await h.app.locator('nav').evaluate(node => { node.innerHTML = '<button>Reports</button><button>Inbox</button>' })
+    await navigate('/')
+    assert.equal(await h.css('font-size', 'nav button:first-child'), '22px')
+    assert.equal(await h.css('font-size', 'nav button:last-child'), baseline)
+    await h.showEdits()
+    await h.host.locator('.li-pending-open').click()
+    assert.equal(await h.host.locator('[data-selected]').count(), 1)
+    await h.app.locator('nav button:first-child').evaluate(node => {
+      const duplicate = node.cloneNode(true)
+      duplicate.removeAttribute('style')
+      node.after(duplicate)
+    })
+    await h.app.waitForFunction(() => !document.querySelector('nav button').style.fontSize)
+    assert.equal(await h.css('font-size', 'nav button:nth-child(2)'), baseline)
+  } finally { await h.close() }
+})
+
 test('identical text inside explicitly keyed rows follows the original row after reorder', async () => {
   const h = await createHarness()
   try {
