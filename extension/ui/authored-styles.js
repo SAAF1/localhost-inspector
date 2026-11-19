@@ -72,7 +72,20 @@
       duplicates.set(key, index + 1)
       visit(sheet, null, [sheet.href ? 'external' : 'inline', key, index])
     }
-    const result = readable ? rules : null
+    // Utility stylesheets often contain hundreds of single-class rules. Index
+    // those once per snapshot and leave compound selectors to the browser.
+    const byClass = new Map()
+    const other = []
+    for (const [order, item] of rules.entries()) {
+      item.order = order
+      const selector = item.rule.selectorText
+      const simple = doc.compatMode === 'CSS1Compat' && /^\.((?:[\w-]|\\[^a-zA-Z0-9\s])+)$/.exec(selector)
+      if (!simple) { other.push(item); continue }
+      const name = simple[1].replace(/\\(.)/g, '$1')
+      if (!byClass.has(name)) byClass.set(name, [])
+      byClass.get(name).push(item)
+    }
+    const result = readable ? { byClass, other } : null
     documents.set(doc, result)
     return result
   }
@@ -80,10 +93,17 @@
   function candidates(node) {
     if (matched.has(node)) return matched.get(node)
     const rules = sourceRules(node.ownerDocument)
-    const result = rules?.filter(({ rule }) => {
+    const result = rules?.other.filter(({ rule }) => {
       try { return node.matches(rule.selectorText) }
       catch { return false }
     })
+    if (result) {
+      for (const name of node.classList) {
+        const items = rules.byClass.get(name)
+        if (items) result.push(...items)
+      }
+      result.sort((a, b) => a.order - b.order)
+    }
     matched.set(node, result)
     return result
   }

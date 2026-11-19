@@ -23,7 +23,7 @@ async function serve(request, response) {
   if (path.startsWith(flowPath)) {
     const relative = path.slice(flowPath.length)
     if (mapRoot && await serveWorkspaceAsset(path, response)) return
-    if (mapRoot && /^((map|previews)\.json|frame-\d+(\.png|-(desktop|tablet|phone)(-hug)?(-2x)?\.webp))$/.test(relative)) {
+    if (mapRoot && /^((map|previews|audit)\.json|frame-\d+(\.png|-(desktop|tablet|phone)(-hug)?(-2x)?\.webp))$/.test(relative)) {
       data = await readFile(resolve(mapRoot, relative))
       type = types[extname(relative)]
     } else {

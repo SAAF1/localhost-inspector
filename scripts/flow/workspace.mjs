@@ -1,5 +1,6 @@
 import './tooltip.js'
-import { frameLabelHeight, renderFrames } from './render-frames.mjs'
+import { connectSidebar } from './workspace-sidebar.mjs'
+import { flowHeadingSpace, groupFlowFrames, renderFrames } from './render-frames.mjs'
 import { flowRoute, observeSurfaces } from './page-state.mjs'
 import { findControl, matchesCheckpoint, openControl, waitFor } from './replay.mjs'
 import { contentOverflow, fitFrame, framePresets, sizeFrame } from './frame-view.mjs'
@@ -33,7 +34,8 @@ const saveView = (id, view) => {
   else heights.delete(key)
 }
 const previewIndex = await fetch('./previews.json').then(response => response.ok ? response.json() : null).catch(() => null)
-const { cards, layout } = renderFrames(map, data, activate, viewOf, previewIndex,
+const groups = groupFlowFrames(data.frames)
+const { cards, layout } = renderFrames(map, data, groups, activate, viewOf, previewIndex,
   anchor => changeView({ preset: 'desktop', anchor }))
 const updateSharpPreviews = createSharpPreviews(cards)
 const framesById = new Map(data.frames.map(frame => [frame.id, frame]))
@@ -52,6 +54,7 @@ const routeOf = frame => {
 }
 const camera = { x: 34, y: 28, scale: .36 }
 let active
+let sidebar
 let request = 0
 let pendingCard
 let pendingIndicatorTimer
@@ -159,7 +162,7 @@ function position() {
   if (!expanded || !active) return
   const card = cards.get(active)
   preview.style.left = camera.x + card.x * camera.scale + 'px'
-  preview.style.top = camera.y + (card.y + frameLabelHeight) * camera.scale + 'px'
+  preview.style.top = camera.y + (card.y + card.labelHeight) * camera.scale + 'px'
   preview.style.transform = 'scale(' + camera.scale + ')'
 }
 
@@ -167,6 +170,7 @@ function setFrameSelected(selected) {
   if (active) cards.get(active).button.setAttribute('aria-pressed', String(selected))
   preview.toggleAttribute('data-frame-selected', Boolean(active && selected))
   dock.toggleAttribute('data-canvas-page', expanded && !(active && selected))
+  sidebar?.changed()
 }
 
 function setActive(id) {
@@ -419,6 +423,7 @@ toggle.addEventListener('click', () => {
     dock.inert = false
     dock.removeAttribute('data-canvas-page')
   }
+  sidebar?.changed()
 })
 
 function setZoom(scale, x, y) {
@@ -441,9 +446,9 @@ zoomPreset.addEventListener('change', () => {
     const board = [...cards.values()]
     if (!board.length) return
     const left = Math.min(...board.map(card => card.x))
-    const top = Math.min(...board.map(card => card.y))
+    const top = Math.min(...board.map(card => card.y)) - flowHeadingSpace
     const right = Math.max(...board.map(card => card.x + card.width))
-    const bottom = Math.max(...board.map(card => card.y + card.height + frameLabelHeight))
+    const bottom = Math.max(...board.map(card => card.y + card.height + card.labelHeight))
     camera.scale = Math.min(1, Math.max(.12, Math.min((width - 48) / (right - left), (height - 48) / (bottom - top))))
     camera.x = (width - (left + right) * camera.scale) / 2
     camera.y = (height - (top + bottom) * camera.scale) / 2
@@ -600,7 +605,7 @@ function updateInspectModifier(event) {
 }
 
 viewport.addEventListener('click', event => {
-  if (event.isTrusted && !event.target.closest('.flow-frame, #workspace-toolbar, #localhost-inspector-dock')) {
+  if (event.isTrusted && !event.composedPath().some(node => node.matches?.('.flow-frame, #workspace-toolbar, #localhost-inspector-dock'))) {
     clearCanvasSelection()
   }
 })
@@ -642,6 +647,10 @@ function watchLiveFrame(frame) {
     const doc = frame.contentDocument
     if (frame !== preview || !doc || doc === connected) return
     connected = doc
+    sidebar?.changed()
+    frame.contentWindow.navigation?.addEventListener('currententrychange', () => {
+      if (preview === frame) sidebar?.changed()
+    })
     const appWindow = frame.contentWindow
     function lockAppClick(event) {
       if (!event.isTrusted || frame !== preview) return
@@ -696,6 +705,38 @@ function watchLiveFrame(frame) {
   if (frame.contentDocument && frame.contentDocument.readyState !== 'loading') connect()
 }
 
+function auditPage() {
+  const route = routeOf(preview)
+  if (!route) return null
+  const base = data.frames.find(item => item.route === route && !item.steps.length)
+  const current = currentFrame()
+  return { id: route, label: base?.label || preview.contentDocument.title || route, frameId: current?.id }
+}
+
+sidebar = connectSidebar({
+  data, groups, dock, getFrame: () => preview, livePage: auditPage,
+  selectedRoute: () => expanded && !preview.hasAttribute('data-frame-selected') ? null : routeOf(preview),
+  navigate: async id => {
+    const frame = framesById.get(id)
+    if (!frame) return false
+    const opened = await activate(frame)
+    if (opened && expanded) focusEditFrame()
+    return opened
+  },
+  focusResult: node => {
+    node.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' })
+    if (expanded && active) {
+      setFrameSelected(true)
+      const card = cards.get(active)
+      const box = node.getBoundingClientRect()
+      camera.scale = .9
+      camera.x = (viewport.clientWidth - dock.offsetWidth) / 2 - (card.x + box.left + box.width / 2) * camera.scale
+      camera.y = viewport.clientHeight / 2 - (card.y + card.labelHeight + box.top + box.height / 2) * camera.scale
+      position()
+    }
+    return !node.dispatchEvent(new Event('select-inspector-variable-use', { bubbles: true, composed: true, cancelable: true }))
+  },
+})
 watchLiveFrame(preview)
 const previewBounds = new ResizeObserver(schedulePreviewUpdate)
 previewBounds.observe(viewport)

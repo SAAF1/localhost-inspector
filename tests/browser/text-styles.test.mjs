@@ -43,7 +43,7 @@ const go = async (h, path) => {
 }
 
 test('stylesheet bindings identify named typography and palette values without mistaking equal literals for tokens', async () => {
-  const h = await createHarness({ ...setup, colorCatalog: { source, names: ['--ink'] } })
+  const h = await createHarness({ ...setup, fontFamilies: [{ name: '--font-editorial', fallback: 'Georgia, serif' }, { name: '--font-interface', fallback: 'sans-serif' }], colorCatalog: { source, names: ['--ink'] } })
   try {
     await h.app.addStyleTag({ content: `
       @layer base, utilities;
@@ -61,14 +61,25 @@ test('stylesheet bindings identify named typography and palette values without m
       '<article id="copy" class="copy">Named style</article><article id="literal" class="copy literal" style="color:#243654;font-size:16px">Equal values</article>'))
     await h.open()
     await h.select('#copy')
-    assert.equal(await h.host.getByRole('textbox', { name: 'Font family' }).inputValue(), 'Georgia, serif')
+    assert.equal(await button(h, 'Font family').count(), 0)
     await current(h, '--text-body').waitFor()
     await button(h, 'Text color variable ink').waitFor()
     assert.equal(await h.field('Horizontal padding').getAttribute('data-inspector-tooltip'), '--unit × 3')
     await h.select('#literal')
+    await current(h, '--text-body').waitFor()
+    assert.equal(await h.host.getByText('Pending source change', { exact: true }).count(), 0)
+    await button(h, 'About this style match').click()
+    await h.host.getByRole('tooltip').getByText('This text looks like Body. Changes to Body won’t update it.').waitFor()
+    assert.equal(await current(h, '--text-body').isVisible(), true)
+    assert.deepEqual(await h.journal(), [])
+    await button(h, 'Detach text style').click()
     await button(h, 'Apply text styles').waitFor()
     assert.equal(await button(h, 'Text color variable ink').count(), 0)
     assert.deepEqual(await h.journal(), [])
+    assert.equal(await button(h, 'Font family').innerText(), 'Editorial')
+    await button(h, 'Font family').click()
+    await h.host.getByText('Interface', { exact: true }).click()
+    await h.app.waitForFunction(() => getComputedStyle(document.querySelector('#literal')).fontFamily === 'sans-serif')
   } finally { await h.close() }
 })
 
@@ -261,6 +272,28 @@ test('creating a text style captures one layer, saves a named bundle, and undoes
     assert.equal(definitions[0].label, 'Compact Copy')
     assert.equal(definitions[0].description, 'Compact labels')
 
+    await h.app.locator(layer).evaluate(node => {
+      const peer = node.cloneNode(false)
+      peer.removeAttribute('style')
+      peer.id = 'matching-card-title'
+      peer.textContent = 'Another title'
+      node.after(peer)
+      for (const property of ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing']) {
+        peer.style.setProperty(property, getComputedStyle(node).getPropertyValue(property))
+      }
+    })
+    await h.select('#matching-card-title')
+    await chip.waitFor()
+    await button(h, 'About this style match').waitFor()
+    await h.host.getByText('Pending source change', { exact: true }).waitFor()
+    assert.equal(await button(h, 'Detach text style').count(), 1)
+    assert.equal((await h.journal()).length, 5)
+    await h.app.locator('#matching-card-title').evaluate(node => { node.style.fontWeight = '300' })
+    await h.select(layer)
+    await h.select('#matching-card-title')
+    await button(h, 'Font weight').waitFor()
+    assert.equal(await chip.count(), 0)
+    await h.select(layer)
     await chip.click()
     assert.equal(await option(h, 'Compact Copy').getAttribute('aria-selected'), 'true')
     await apply(h, '--text-title')
@@ -269,7 +302,7 @@ test('creating a text style captures one layer, saves a named bundle, and undoes
     await chip.waitFor()
     assert.deepEqual(await values(h), before)
     assert.equal((await h.journal()).filter(edit => edit.pendingTextStyle).length, 1)
-    assert.equal((await h.journal()).filter(edit => edit.pendingTextStyleName === '--text-compact-copy').length, 1)
+    assert.equal((await h.journal()).filter(edit => !edit.undone && edit.pendingTextStyleName === '--text-compact-copy').length, 1)
     await undo(h)
     await current(h, '--text-title').waitFor()
     await undo(h)

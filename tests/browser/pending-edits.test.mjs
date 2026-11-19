@@ -136,7 +136,7 @@ test('clicking a pending edit centers its Canvas frame at 90% even when its elem
       assert.ok(Math.abs(bounds.x + bounds.width / 2 - (canvas.x + (canvas.width - inspector.width) / 2)) <= 1)
     }
     await viewport.dispatchEvent('wheel', { deltaX: 1600, deltaY: 900, bubbles: true, cancelable: true })
-    assert.ok((await frame.boundingBox()).x < -1000)
+    assert.ok((await frame.boundingBox()).x - (await viewport.boundingBox()).x < -1000)
     await h.host.getByRole('button', { name: /0px → 4px/ }).click()
     await h.host.locator('#pending-status').getByText('Couldn’t locate the element for this edit.', { exact: true }).waitFor()
     assert.equal(await zoom.locator('option:checked').textContent(), '90%')

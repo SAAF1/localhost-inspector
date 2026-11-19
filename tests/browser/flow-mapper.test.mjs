@@ -19,7 +19,7 @@ test('mapper preserves URL states and waits for a delayed rendered branch', asyn
   let browser
   const server = createServer(async (request, response) => {
     if (await serveWorkspaceAsset(request.url, response)) return
-    const asset = /^\/__inspector-flow\/(map\.json|previews\.json|frame-\d+[-\w]*\.(?:webp|png))$/.exec(request.url)
+    const asset = /^\/__inspector-flow\/(map\.json|previews\.json|audit\.json|frame-\d+[-\w]*\.(?:webp|png))$/.exec(request.url)
     if (asset) {
       const file = await readFile(join(output, asset[1])).catch(() => null)
       response.writeHead(file ? 200 : 404, { 'content-type': asset[1].endsWith('.json') ? 'application/json' :
@@ -64,6 +64,11 @@ test('mapper preserves URL states and waits for a delayed rendered branch', asyn
       ['/hash#/details', 'details'],
       ['/hash#/billing', 'billing'],
     ])
+    const { scans } = JSON.parse(await readFile(join(output, 'audit.json'), 'utf8'))
+    assert.deepEqual(scans.map(scan => scan.page.id), [...labels.keys()])
+    const home = scans.find(scan => scan.page.id === '/')
+    assert.ok(home.entries.some(entry => entry.category === 'typography' &&
+      entry.occurrences.some(use => use.label === 'Home' && !('node' in use))))
     const delayed = frames.find(frame => frame.label === 'Show details')
     assert.deepEqual(delayed?.checkpoint, [{ role: 'dialog', label: 'Delayed details' }])
     assert.ok(connections.some(edge => edge.to === delayed.id && edge.observed))

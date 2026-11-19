@@ -12,7 +12,7 @@
       renderSelection()
     },
     inspect: () => editsUI.showDesign(),
-    openPanel: () => setOpen(true, isCanvasExpanded?.()),
+    openPanel: () => setOpen(true, isCanvasExpanded?.() && !host.ownerDocument.body.hasAttribute('data-sidebar-open')),
   })
   function renderSelection() {
     renderFields()
@@ -49,6 +49,7 @@
   let journalRevision = null
   let colorCatalog = null
   let spacingCatalog = null
+  let fontFamilies = []
   let textStyleCatalog = null
   let textStyleUnavailable = false
   let buttonSizeKey = null
@@ -80,6 +81,7 @@
 
   function syncPending() {
     editsUI.update(pendingRows, savedRoute, previewVisibility)
+    if (host.hasAttribute('data-workspace-toolbar')) host.dispatchEvent(new Event('variables-data-changed', { bubbles: true }))
   }
 
   async function goToEdit(edit) {
@@ -358,7 +360,7 @@
         hasPaddingPreview: recovery.hasVerticalPaddingPreview(node),
         commitPaddingPair: (axis, requested, options) => commitPaddingPair(node, version, axis, axis === 'vertical' ? verticalPadding : paddingScope(node, axis), requested, options),
         pendingColorFor: target => recovery.pendingColorFor(target),
-        textStyleCatalog, textStyleUnavailable,
+        textStyleCatalog, textStyleUnavailable, fontFamilies, refreshTypography: renderFields,
         pendingTextStyles: recovery.pendingTextStyles(),
         pendingTextStyleFor: target => recovery.pendingTextStyleFor(target),
         createTextStyle: (targets, draft) => commitTextStyle(node, version, targets, null, draft),
@@ -593,7 +595,34 @@
     new MutationObserver(() => renderFields()).observe(host.parentElement, {
       attributes: true, attributeFilter: ['data-canvas-page'],
     })
-    host.addEventListener('toggle-workspace-inspector', () => toggleInspector(false))
+    let discovered
+    host.addEventListener('request-variables-catalog', async () => {
+      if (loadingRoute) return
+      discovered ??= send({ type: 'variablesCatalog' }).catch(() => null)
+      const catalog = await discovered
+      const detail = JSON.stringify({
+        ...(catalog?.textStyleCatalog || catalog?.colorCatalog || catalog?.spacingCatalog
+          ? catalog : { textStyleCatalog, colorCatalog, spacingCatalog }),
+        pendingTextStyles: recovery.pendingTextStyles(),
+      })
+      host.dispatchEvent(new CustomEvent('variables-catalog', { detail, bubbles: true }))
+    })
+    document.addEventListener('select-inspector-variable-use', event => {
+      const node = event.composedPath()[0]
+      if (!(node instanceof HTMLElement) || !node.isConnected || busy) return
+      event.preventDefault()
+      editsUI.showDesign()
+      setOpen(true)
+      selection.select(node)
+    })
+    function setWorkspaceOpen(open) {
+      ui.dismissTooltip()
+      ui.closeMenu()
+      setOpen(open)
+      selection.syncOutlines()
+    }
+    host.addEventListener('open-workspace-inspector', () => setWorkspaceOpen(true))
+    host.addEventListener('hide-workspace-inspector', () => setWorkspaceOpen(false))
     host.addEventListener('clear-workspace-selection', event => {
       if (root.querySelector('dialog[open]')) event.preventDefault()
       else if (selection.current || isFloating()) selection.select(null)
@@ -1099,6 +1128,7 @@
     projectWideRevert = false
     colorCatalog = null
     spacingCatalog = null
+    fontFamilies = []
     textStyleCatalog = null
     textStyleUnavailable = false
     buttonSizeKey = null
@@ -1108,13 +1138,15 @@
     recovery.clear()
     renderActions()
     try {
-      const [revision, catalog, spacing, textStyles] = await Promise.all([
+      const [revision, catalog, spacing, textStyles, families] = await Promise.all([
         loadSavedEdits(requestedRoute, version),
         send({ type: 'colorCatalog' }).catch(() => null),
         send({ type: 'spacingCatalog' }).catch(() => null),
         send({ type: 'textStyleCatalog' }).then(catalog => ({ catalog }), () => ({ catalog: null, unavailable: true })),
+        send({ type: 'fontFamilyCatalog' }).catch(() => []),
       ])
       if (revision === null || !isCurrentRoute(requestedRoute, version)) return
+      fontFamilies = Array.isArray(families) ? families : []
       colorCatalog = catalog
       spacingCatalog = spacing
       textStyleCatalog = textStyles.catalog

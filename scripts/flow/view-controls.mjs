@@ -33,7 +33,6 @@ export function connectViewControls({ apply, read, presets }) {
   inspectorObserver.observe(document.body, { attributes: true, attributeFilter: ['data-expanded'] })
   syncInspector()
   pending.addEventListener('click', () => dock.firstElementChild?.dispatchEvent(new Event('toggle-pending-edits')))
-  inspector.addEventListener('click', () => dock.firstElementChild?.dispatchEvent(new Event('toggle-workspace-inspector')))
 
   function close(focus = false) {
     menu.hidden = true

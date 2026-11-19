@@ -93,6 +93,7 @@ export async function createHarness(options = {}) {
         const { type, expectedRevision } = message
         if (type === 'colorCatalog') return settings.colorCatalog ?? null
         if (type === 'spacingCatalog') return settings.spacingCatalog ?? null
+        if (type === 'fontFamilyCatalog') return settings.fontFamilies ?? []
         if (type === 'textStyleCatalog') {
           if (settings.failTextStyleCatalog) throw Error('Source unavailable')
           return settings.textStyleCatalog ?? null

@@ -5,7 +5,12 @@ const assets = new Map([
   ['', ['workspace.html', 'text/html']],
   ['workspace.css', ['workspace.css', 'text/css']],
   ['workspace.mjs', ['workspace.mjs', 'text/javascript']],
-  ['tooltip.js', ['../../extension/ui/tooltip.js', 'text/javascript']],
+  ...['tokens', 'styles', 'panel-styles', 'icons', 'tooltip', 'dom', 'menu', 'variables-panel',
+    'variables-styles', 'authored-styles', 'policy', 'text-style-values', 'color-bindings', 'solid-color-picker', 'spacing-gap'].map(
+    name => [name + '.js', ['../../extension/ui/' + name + '.js', 'text/javascript']]),
+  ['variables-audit.js', ['../../extension/variables-audit.js', 'text/javascript']],
+  ['workspace-sidebar.mjs', ['workspace-sidebar.mjs', 'text/javascript']],
+  ['sidebar.css', ['sidebar.css', 'text/css']],
   ['view-controls.mjs', ['view-controls.mjs', 'text/javascript']],
   ['frame-view.mjs', ['frame-view.mjs', 'text/javascript']],
   ['sharp-previews.mjs', ['sharp-previews.mjs', 'text/javascript']],

@@ -1,14 +1,46 @@
 import { restoreStandardPreview } from './sharp-previews.mjs'
 
-export const frameLabelHeight = 45
+const frameLabelHeight = 45
 
-export function renderFrames(map, data, activate, viewOf, previews, switchToDesktop) {
+export const flowHeadingSpace = 80
+
+export function groupFlowFrames(frames) {
+  // Keep hash-router pages distinct and put query variants under their base screen.
+  const paths = new Set(frames.map(frame => flowPath(frame.route)))
+  function flowPath(route) {
+    const url = new URL(route, 'http://localhost')
+    return url.pathname + url.hash.split('?')[0]
+  }
+  const groups = new Map()
+  for (const frame of frames) {
+    const path = flowPath(frame.route)
+    let key = path
+    for (let i = 1; i < path.length; i++) {
+      if (path[i] === '/' && path[i - 1] !== '#' && paths.has(path.slice(0, i))) {
+        key = path.slice(0, i)
+        break
+      }
+    }
+    if (!groups.has(key)) groups.set(key, { key, frames: [] })
+    groups.get(key).frames.push(frame)
+  }
+  const labels = new Map()
+  for (const group of groups.values()) {
+    const base = group.frames.find(frame => frame.route === group.key && !frame.steps.length) ?? group.frames[0]
+    group.label = base.label || group.key
+    labels.set(group.label, (labels.get(group.label) || 0) + 1)
+  }
+  for (const group of groups.values()) {
+    if (labels.get(group.label) > 1) group.label += ' · ' + group.key
+  }
+  return [...groups.values()]
+}
+
+export function renderFrames(map, data, groups, activate, viewOf, previews, switchToDesktop) {
   const cards = new Map()
-  const rows = new Map()
+  const headings = new Map()
   const missingPreview = previews ? 'Couldn’t load preview' : 'Open live preview'
   for (const frame of data.frames) {
-    const page = frame.route.split('?')[0]
-    if (!rows.has(page)) rows.set(page, [])
     const button = document.createElement('button')
     button.className = 'flow-frame'
     button.type = 'button'
@@ -33,9 +65,25 @@ export function renderFrames(map, data, activate, viewOf, previews, switchToDesk
     })
     const card = { id: frame.id, button, image, unavailable, hiddenControl: false,
       labelHeight: frameLabelHeight, desktop: frame.image }
-    rows.get(page).push(card)
     cards.set(frame.id, card)
     map.append(button)
+  }
+  for (const group of groups) {
+    const first = cards.get(group.frames[0].id)
+    if (group.frames.length === 1) {
+      first.labelHeight = 0
+      first.button.classList.add('single-screen')
+      const title = first.button.firstElementChild
+      title.textContent = group.label
+      title.className = 'flow-heading'
+      title.style.top = -flowHeadingSpace + 'px'
+      continue
+    }
+    const heading = document.createElement('h2')
+    heading.className = 'flow-heading'
+    heading.textContent = group.label
+    headings.set(group, heading)
+    first.button.before(heading)
   }
   const wires = data.connections.flatMap(edge => {
     const from = cards.get(edge.from)
@@ -54,10 +102,14 @@ export function renderFrames(map, data, activate, viewOf, previews, switchToDesk
 
   function layout() {
     let y = 0
-    for (const row of rows.values()) {
+    for (const group of groups) {
+      const heading = headings.get(group)
+      if (heading) heading.style.top = y + 'px'
+      y += flowHeadingSpace
       let x = 0
       let rowHeight = 0
-      for (const card of row) {
+      for (const frame of group.frames) {
+        const card = cards.get(frame.id)
         const { width, height, preset, mode, fixedHeight } = viewOf(card.id)
         const variants = previews?.[card.id]
         const saved = variants?.[preset]
@@ -92,11 +144,11 @@ export function renderFrames(map, data, activate, viewOf, previews, switchToDesk
         card.image.height = fittingHug || mode === 'fixed' ? height : fixedHeight
         card.unavailable.hidden = Boolean(file)
         card.unavailable.style.height = cardHeight + 'px'
-        card.button.style.minHeight = cardHeight + frameLabelHeight + 'px'
-        x += width + 210
-        rowHeight = Math.max(rowHeight, cardHeight)
+        card.button.style.minHeight = cardHeight + card.labelHeight + 'px'
+        x += width + 240
+        rowHeight = Math.max(rowHeight, cardHeight + card.labelHeight)
       }
-      y += rowHeight + 174
+      y += rowHeight + 320
     }
     for (const { from, to, wire, path } of wires) {
       wire.style.display = from.y === to.y ? '' : 'none'

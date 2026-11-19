@@ -84,6 +84,14 @@
         if (anchor && buttonFor(event) === anchor && !inside(anchor, event.relatedTarget)) dismiss()
       })
     }
-    root.addEventListener('click', dismiss, true)
+    root.addEventListener('click', event => {
+      dismiss()
+      const button = buttonFor(event)
+      if (button?.dataset.tooltipOnClick === 'true') {
+        schedule(button)
+        clearTimeout(timer)
+        show()
+      }
+    }, true)
   }
 })()

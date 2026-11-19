@@ -1,9 +1,10 @@
-import { mkdir, readdir, writeFile } from 'node:fs/promises'
-import { resolve, join } from 'node:path'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { basename, resolve, join } from 'node:path'
 import { chromium } from 'playwright'
 import { locateTrigger, observePage, repoRoutes } from './discover.mjs'
 import { captureContext, capturePreviews } from './capture-previews.mjs'
 import { flowRoute } from './page-state.mjs'
+import { createAuditCapture, writeAudit } from './capture-variables.mjs'
 
 const [repo, url, destination, stateRoute, stateLabel] = process.argv.slice(2)
 if (!repo || !url || !destination || Boolean(stateRoute) !== Boolean(stateLabel)) {
@@ -103,7 +104,19 @@ if ((await readdir(output)).length) throw Error('Choose an empty output director
 const browser = await chromium.launch({ headless: true })
 try {
   const context = await captureContext(browser, start.origin, viewport)
+  const audit = await createAuditCapture(context, repo)
+  const scans = []
   const page = await context.newPage()
+  async function auditBase() {
+    const frame = frames.at(-1)
+    try {
+      const scan = await audit(page, frame, start.origin)
+      if (!scan) throw Error('Page changed during audit')
+      scans.push(scan)
+    } catch (error) {
+      gaps.push({ route: frame.route, reason: 'Variables audit: ' + error.message.split('\n')[0] })
+    }
+  }
   let visited = 0
   while (queue.length && visited++ < routeLimit) {
     const route = queue.shift()
@@ -116,6 +129,7 @@ try {
       } else {
         const base = await capture(page, route, observed.heading, [], observed.surfaces, observed.heading)
         frameForRoute.set(route, base)
+        await auditBase()
         for (const link of observed.links) {
           const path = schedule(link.href)
           if (path && path !== route && link.label) pendingLinks.push({ from: base, route: path, action: link.label })
@@ -144,6 +158,7 @@ try {
     const id = await capture(page, route, stateLabel, [], observed.surfaces, observed.heading)
     connections.push({ from: base, to: id, action: stateLabel, observed: true })
     frameForRoute.set(route, id)
+    await auditBase()
   }
   for (const link of pendingLinks) {
     const to = frameForRoute.get(link.route)
@@ -152,7 +167,13 @@ try {
     }
   }
   for (const route of queue) gaps.push({ route, reason: 'Route budget reached' })
-  const map = { origin: start.origin, viewport, frames, connections, gaps }
+  let projectName = basename(resolve(repo))
+  try {
+    const pkg = JSON.parse(await readFile(join(repo, 'package.json'), 'utf8'))
+    if (typeof pkg.name === 'string' && pkg.name.trim()) projectName = pkg.name.trim()
+  } catch { /* The mapped project may have no package manifest. */ }
+  await writeAudit(output, scans)
+  const map = { projectName, origin: start.origin, viewport, frames, connections, gaps }
   await writeFile(join(output, 'map.json'), JSON.stringify(map, null, 2))
   await context.close()
   await capturePreviews(browser, output, map)

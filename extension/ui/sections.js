@@ -1,7 +1,12 @@
 (() => {
   const ui = window.LocalhostInspector
-  function manualTypographyFields(controls) {
-    return [
+  function manualTypographyFields(controls, targets, catalog) {
+    const palettes = targets.map(node => ui.fontFamilyOptions(node, catalog))
+    const families = [...palettes[0].keys()].filter(value => palettes.every(palette => palette.has(value)))
+    const family = controls.select('font-family', 'Font family', families, value =>
+      palettes[0].get(value) ?? value.replace(/^["']([^"']+)["'].*$/, '$1').split(',')[0].trim())
+    family.disabled ||= !families.some(value => value !== controls.value('font-family'))
+    return [family,
       ui.row(controls.select('font-weight', 'Font weight', ui.choices.weights, ui.weightName),
         controls.numeric('font-size', 'Font size')),
       ui.row(
@@ -10,7 +15,7 @@
       ),
     ]
   }
-  function typographyControls(controls, binding, textStyle) {
+  function typographyControls(controls, binding, textStyle, targets, catalog) {
     const alignment = controls.value('text-align')
     const segments = controls.segments('text-align', 'Text alignment', [
       ['left', 'Align text left', 'textAlignLeft'], ['center', 'Align text center', 'textAlignCenter'], ['right', 'Align text right', 'textAlignRight'],
@@ -21,17 +26,8 @@
     heading.classList.add('li-color-label')
     const textColor = ui.element('div', 'li-stack li-text-color')
     textColor.append(heading, binding.field)
-    const fontFields = textStyle.field ? [textStyle.field] : manualTypographyFields(controls)
-    const family = ui.element('input')
-    family.id = 'control-font-family'
-    family.type = 'text'
-    family.readOnly = true
-    family.value = controls.value('font-family') ?? 'Mixed'
-    family.title = family.value
-    family.setAttribute('aria-label', 'Font family')
-    const familyField = ui.element('div', 'li-field')
-    familyField.append(family)
-    const section = ui.section('Typography', ui.stack('Font family', familyField), ...fontFields,
+    const fontFields = textStyle.field ? [textStyle.field] : manualTypographyFields(controls, targets, catalog)
+    const section = ui.section('Typography', ...fontFields,
       ui.stack(alignment === null ? 'Alignment · Mixed' : 'Alignment', ui.row(segments, more)), textColor,
     )
     section.classList.add('li-type-section')
@@ -57,7 +53,7 @@
     }
     const controls = ui.createControls(textContext)
     const binding = ui.colorBinding(context, controls, { property: 'color', label: 'Text color', targets })
-    return typographyControls(controls, binding, ui.textStyleControl?.(context, controls, targets) ?? {})
+    return typographyControls(controls, binding, ui.textStyleControl?.(context, controls, targets) ?? {}, targets, context.fontFamilies ?? [])
   }
   function paintSection(title, binding, ...fields) {
     const section = ui.section(title, binding.field, ...fields)

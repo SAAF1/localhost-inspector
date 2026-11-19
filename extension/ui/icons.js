@@ -2,6 +2,8 @@
   'use strict'
   const ui = window.LocalhostInspector = window.LocalhostInspector || {}
   const markup = {
+  "workspaceFile": '<svg fill="none" viewBox="0 0 16 16" stroke="currentColor" stroke-linejoin="round"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>',
+  "info": '<svg fill="none" viewBox="0 0 16 16" stroke="currentColor" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M8 7.5v3M8 5.25v.1"/></svg>',
   "launcherSliders": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><path d=\"M2 4h2m3 0h7M2 8h7m3 0h2M2 12h4m3 0h5\"/><circle cx=\"5.5\" cy=\"4\" r=\"1.5\"/><circle cx=\"10.5\" cy=\"8\" r=\"1.5\"/><circle cx=\"7.5\" cy=\"12\" r=\"1.5\"/></svg>",
   "dockInspector": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 18 18\"><rect x=\"2.5\" y=\"3.5\" width=\"13\" height=\"11\" rx=\"2\"/><path d=\"M11.5 4v10\"/></svg>",
   "editPencil": "<svg fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" viewBox=\"0 0 16 16\"><path d=\"m3 10 8-8 3 3-8 8-4 1zM10 3l3 3\"/></svg>",
@@ -27,6 +29,7 @@
   "paddingSidesToggle": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><rect width=\"11\" height=\"11\" x=\"2.5\" y=\"2.5\" stroke=\"currentColor\" rx=\"1\"/><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M6.5 4.5h3m-3 7h3M4.5 6v4m7-4v4\"/></svg>",
   "gapHorizontal": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M3.5 3.5q1 .5 1 2v5q0 1.5-1 2m9-9q-1 .5-1 2v5q0 1.5 1 2\"/><circle cx=\"8\" cy=\"8\" r=\"1\" fill=\"currentColor\"/></svg>",
   "chevronDown": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.5 6.5 8 9l2.5-2.5\"/></svg>",
+  "arrowRight": '<svg fill="none" viewBox="0 0 16 16"><path d="M3 8h9m-4-4 4 4-4 4" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   "chevronRight": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path d=\"m6.5 4 3.5 4-3.5 4\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
   "search": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><circle cx=\"7\" cy=\"7\" r=\"4\" stroke=\"currentColor\"/><path stroke=\"currentColor\" stroke-linecap=\"round\" d=\"m10 10 3 3\"/></svg>",
   "link": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path d=\"m6 10 4-4M5.7 11.9l-1 1a2.6 2.6 0 0 1-3.7-3.7l3-3A2.6 2.6 0 0 1 7.7 6m2.6-1.9 1-1a2.6 2.6 0 0 1 3.7 3.7l-3 3a2.6 2.6 0 0 1-3.7.2\" stroke=\"currentColor\" stroke-linecap=\"round\"/></svg>",
@@ -42,6 +45,7 @@
   "dismiss": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" d=\"M3 3l10 10m0-10L3 13\"/></svg>",
   "minus": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" d=\"M5 8h6\"/></svg>",
   "menuCheck": "<svg fill=\"none\" viewBox=\"0 0 12 12\"><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"m3.5 5.5 4 3.5L12 1.5\"/></svg>",
+  "frame": '<svg aria-hidden="true" fill="none" viewBox="0 0 16 16"><path d="M4.5 1.5v13m7-13v13m-10-10h13m-13 7h13" stroke="currentColor" stroke-linecap="round"/></svg>',
   "flowRow": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><rect width=\"4\" height=\"4\" x=\"2.5\" y=\"2.5\" stroke=\"currentColor\" rx=\"1\"/><rect width=\"4\" height=\"4\" x=\"9.5\" y=\"2.5\" stroke=\"currentColor\" rx=\"1\"/><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M2.5 11.5h11m-2-2 2 2-2 2\"/></svg>",
   "flowColumn": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><rect width=\"4\" height=\"4\" x=\"2.5\" y=\"2.5\" stroke=\"currentColor\" rx=\"1\"/><rect width=\"4\" height=\"4\" x=\"2.5\" y=\"9.5\" stroke=\"currentColor\" rx=\"1\"/><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M11.5 2.5v11m-2-2 2 2 2-2\"/></svg>",
   "reverseDirection": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M8.5 3.5H10a3 3 0 0 1 0 6H3.5m3-3-3 3 3 3\"/></svg>",

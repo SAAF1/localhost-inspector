@@ -20,7 +20,7 @@ export async function captureContext(browser, origin, viewport, deviceScaleFacto
   return context
 }
 
-async function verify(page, frame, origin) {
+export async function verifyCaptureState(page, frame, origin) {
   const url = new URL(page.url())
   if (url.origin !== origin || flowRoute(url) !== frame.route) return false
   const { heading, surfaces } = await page.evaluate(observePage)
@@ -91,7 +91,7 @@ export async function capturePreviews(browser, output, map) {
             }
           }
           const deadline = Date.now() + 800
-          while (!(await verify(page, frame, origin))) {
+          while (!(await verifyCaptureState(page, frame, origin))) {
             if (Date.now() >= deadline) throw Error('Mapped state changed at this size')
             await pause(40)
           }
@@ -103,7 +103,7 @@ export async function capturePreviews(browser, output, map) {
           const expandedHeight = await growToContents(height, () => page.evaluate(contentOverflow), async height => {
             await page.setViewportSize({ width, height })
             await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
-            return verify(page, frame, origin)
+            return verifyCaptureState(page, frame, origin)
           })
           if (expandedHeight) {
             const hug = prefix + '-hug.webp'

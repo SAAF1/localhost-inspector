@@ -17,6 +17,8 @@
     return [red, green, blue, alpha]
   }
 
+  ui.colorChannels = rgba
+
   // Hex is a display approximation for colors outside 8-bit sRGB.
   ui.colorFieldText = value => {
     const color = ui.normalizeSolidColor(value)

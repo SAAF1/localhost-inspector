@@ -7,6 +7,22 @@
   const family = /^(?:"[^"\r\n\\{};]+"|'[^'\r\n\\{};]+'|[\p{L}\p{N}_-]+(?: +[\p{L}\p{N}_-]+)*)(?: *, *(?:"[^"\r\n\\{};]+"|'[^'\r\n\\{};]+'|[\p{L}\p{N}_-]+(?: +[\p{L}\p{N}_-]+)*))*$/u
   const style = document.createElement('span').style
 
+  ui.fontFamilyOptions = (node, catalog) => {
+    const computed = getComputedStyle(node)
+    const options = new Map()
+    for (const { name, fallback } of catalog) {
+      let raw = computed.getPropertyValue(name).trim() || fallback || ''
+      const alias = /^var\(\s*(--[\w-]+)\s*\)$/.exec(raw)
+      if (alias) raw = computed.getPropertyValue(alias[1]).trim()
+      if (raw.length > 512 || !family.test(raw) || !CSS.supports('font-family', raw) ||
+          /^(inherit|initial|unset|revert|revert-layer)$/i.test(raw)) continue
+      style.fontFamily = raw
+      const label = name.replace(/^--(?:font-family-|font-)?/, '').replace(/-/g, ' ')
+      options.set(style.fontFamily, label[0].toUpperCase() + label.slice(1))
+    }
+    return options
+  }
+
   ui.textStyleProperties = properties
   ui.supportsTextStyle = node => Array.from(node.children).every(child =>
     !child.textContent.trim() || child.matches('svg,script,style,template,[hidden]') ||
@@ -19,7 +35,7 @@
     if (!node?.isConnected || !ui.supportsTextStyle(node)) return null
     const computed = getComputedStyle(node)
     const values = Object.fromEntries(properties.map(property => [property, computed.getPropertyValue(property).trim()]))
-    if (Object.values(values).some(value => !value || value.length > 100) ||
+    if (Object.entries(values).some(([property, value]) => !value || value.length > (property === 'font-family' ? 512 : 100)) ||
         !family.test(values['font-family']) || !number.test(values['font-weight']) ||
         Number(values['font-weight']) < 1 || Number(values['font-weight']) > 1000) return null
     for (const property of properties.slice(2)) {
@@ -38,7 +54,7 @@
     const values = {}
     for (const property of properties) {
       const value = computed.getPropertyValue(name + '-' + property).trim()
-      if (!value || value.length > 100 || !CSS.supports(property, value)) return null
+      if (!value || value.length > (property === 'font-family' ? 512 : 100) || !CSS.supports(property, value)) return null
       values[property] = value
     }
     if (!family.test(values['font-family']) || /^(inherit|initial|unset|revert|revert-layer)$/i.test(values['font-family'])) return null

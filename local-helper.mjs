@@ -5,6 +5,7 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import { access, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
+import { discoverVariablesCatalog } from './variables-catalog.mjs'
 import { completeHandoff } from './complete-handoff.mjs'
 import { pendingEdits, removePendingEdit, setPreviewVisibility } from './journal-edits.mjs'
 import { buildSourceHandoff, featureTemplateScope, sourceContextFrom } from './source-handoff.mjs'
@@ -17,10 +18,11 @@ const [mode, ...args] = process.argv.slice(3)
 const catalogKinds = new Map([
   ['register-colors', 'colors'],
   ['register-spacing', 'spacing'],
+  ['register-font-families', 'font-families'],
   ['register-text-styles', 'text-styles'],
 ])
 if (!root || (!['bind', 'status', 'handoff', 'complete', 'serve', 'register-button-size', 'visual-evidence'].includes(mode) && !catalogKinds.has(mode))) {
-  throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors/register-spacing/register-text-styles <port> <relative.css> <name>... | register-button-size <port> <target-key> <relative-source> | status | handoff <port> | complete <port> <report.json> | visual-evidence <port> on|off | serve')
+  throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors/register-spacing/register-font-families/register-text-styles <port> <relative.css> <name>... | register-button-size <port> <target-key> <relative-source> | status | handoff <port> | complete <port> <report.json> | visual-evidence <port> on|off | serve')
 }
 if (mode !== 'handoff' && mode !== 'complete') await mkdir(root, { recursive: true, mode: 0o700 })
 const configPath = join(root, 'bindings.json')
@@ -252,11 +254,12 @@ const keywords = {
 const modernColor = /^(?:oklch|oklab|lch|lab|color)\((?:[a-z][a-z0-9-]* )?[-\d.%e+ /]+\)$/i
 const colors = new Set(['color','background-color','border-color'])
 function validValue(property, value) {
-  if (typeof value !== 'string' || value.length > 100) return false
+  if (typeof value !== 'string' || value.length > (property === 'font-family' ? 512 : 100)) return false
   if (property === 'width' && ['100%', 'fit-content'].includes(value)) return true
   if (['min-width', 'min-height'].includes(property) && value === 'auto') return true
   if (['max-width', 'max-height'].includes(property) && value === 'none') return true
   if (pixelProperties.has(property)) return /^-?\d+(\.\d+)?px$/.test(value)
+  if (property === 'font-family') return validTextStyleValue(property, value)
   if (property === 'font-weight') return /^(normal|bold|[1-9]00)$/.test(value)
   if (colors.has(property) && modernColor.test(value)) return true
   if (colors.has(property)) return /^(#[0-9a-f]{3,8}|rgba?\([\d.,% /]+\)|[a-z]{3,20})$/i.test(value)
@@ -266,7 +269,7 @@ function validTargetKey(key) {
   return key == null || (typeof key === 'string' && key.length <= 120 && key.trim().length > 0)
 }
 function validTextStyleValue(property, value) {
-  if (typeof value !== 'string' || !value || value.length > 100) return false
+  if (typeof value !== 'string' || !value || value.length > (property === 'font-family' ? 512 : 100)) return false
   if (property === 'font-family') {
     // CSSOM family lists contain names and quoted names, not CSS functions.
     const family = /(?:"[^"\r\n\\{};]+"|'[^'\r\n\\{};]+'|[\p{L}\p{N}_-]+(?: +[\p{L}\p{N}_-]+)*)/u
@@ -360,7 +363,7 @@ function editFrom(record, catalog, group, pendingTextStyle) {
       Object.hasOwn(record, 'group') || (!group && Object.hasOwn(record, 'textStyleToken')) ||
       ((Object.hasOwn(record, 'pendingTextStyle') || Object.hasOwn(record, 'pendingTextStyleName')) && !pendingTextStyle) ||
       !(group ? validTextStyleValue(record.property, record.observed) : validValue(record.property, record.observed)) ||
-      typeof record.before !== 'string' || record.before.length > 100 ||
+      typeof record.before !== 'string' || record.before.length > (record.property === 'font-family' ? 512 : 100) ||
       !['unique', 'ambiguous'].includes(record.restore) || !target || !/^[a-z][a-z0-9-]*$/.test(target.tag) ||
       !validScopedTarget(target) || !validTargetKey(target.key) || [target.id, target.slot].some(value => value !== null && (typeof value !== 'string' || value.length > 120)) ||
       (record.frameState !== undefined && !targetFingerprint(record.frameState)) ||
@@ -496,12 +499,29 @@ async function handle(message) {
   const binding = Object.hasOwn(bindings, message.origin) ? bindings[message.origin] : null
   if (!binding) throw Error('No saved project connection for this origin')
   await verify(binding)
+  if (message.type === 'variablesCatalog') {
+    const [colorCatalog, spacingCatalog, textStyleCatalog] = await Promise.all([
+      readCatalog(binding), readCatalog(binding, 'spacing'), readCatalog(binding, 'text-styles'),
+    ])
+    return discoverVariablesCatalog(binding.source, { colorCatalog, spacingCatalog, textStyleCatalog })
+  }
   if (message.type === 'colorCatalog') {
     const catalog = await readCatalog(binding)
     if (!catalog) return null
     const { source, names, file } = catalog
     const canCreate = await access(file, constants.W_OK).then(() => true, () => false)
     return { source, names, canCreate }
+  }
+  if (message.type === 'fontFamilyCatalog') {
+    const catalog = await readCatalog(binding, 'font-families')
+    if (!catalog) return []
+    return catalog.names.map(name => {
+      // An inlined theme token may disappear from the served CSS. Only use
+      // its source fallback when all declarations agree on the same value.
+      const declaration = new RegExp('(?:^|[;{])\\s*' + name + '\\s*:\\s*([^;{}]+)', 'g')
+      const values = new Set(Array.from(catalog.css.matchAll(declaration), match => match[1].trim()))
+      return { name, fallback: values.size === 1 ? [...values][0] : null }
+    })
   }
   if (message.type === 'spacingCatalog') {
     const catalog = await readCatalog(binding, 'spacing')
