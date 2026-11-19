@@ -249,3 +249,28 @@ test('template padding pairs follow regular and overdue rows through remount and
     assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })
+
+test('a render site can introduce padding without an existing rule and keeps equal-looking sites separate', async () => {
+  const h = await createHarness()
+  try {
+    const render = () => h.app.evaluate(() => {
+      const board = document.querySelector('main') ?? document.body.appendChild(document.createElement('main'))
+      board.innerHTML = '<table><tbody>' + ['a', 'b'].map(key =>
+        '<tr><td><span data-inspector-template="jsx-site/abc/12">' + key + '</span></td>' +
+        '<td><span data-inspector-template="jsx-site/abc/34">' + key + '</span></td></tr>').join('') + '</tbody></table>'
+    })
+    const values = () => h.app.locator('main span').evaluateAll(nodes => nodes.map(node => getComputedStyle(node).paddingLeft))
+    await render()
+    await h.open()
+    await h.select('main tr:first-child td:first-child span')
+    await h.enter('Horizontal padding', 12)
+    await h.settled()
+    assert.deepEqual(await values(), ['12px', '0px', '12px', '0px'])
+    await render()
+    await h.app.waitForFunction(() => document.querySelector('main span').style.paddingLeft === '12px')
+    assert.deepEqual(await values(), ['12px', '0px', '12px', '0px'])
+    await h.previewAction('Undo last preview')
+    await h.settled()
+    assert.deepEqual(await values(), ['0px', '0px', '0px', '0px'])
+  } finally { await h.close() }
+})

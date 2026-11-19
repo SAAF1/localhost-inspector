@@ -191,6 +191,11 @@
   ui.authoredTemplateSource = (node, property, originalInline, positional) => {
     if (node.getRootNode() !== node.ownerDocument) return null
     // Only a declaration owned by this template part establishes a shared edit scope.
-    return localDeclaration(node, property, true, originalInline(node), positional) ?? null
+    const source = localDeclaration(node, property, true, originalInline(node), positional)
+    // Padding is not inherited. A verified JSX site can introduce it even when
+    // no author rule currently sets it. Unreadable or conflicting rules return null.
+    if (source === undefined && /^padding-(top|right|bottom|left)$/.test(property) &&
+        node.getAttribute('data-inspector-template')?.startsWith('jsx-site/')) return 'initial:' + property
+    return source ?? null
   }
 })()
