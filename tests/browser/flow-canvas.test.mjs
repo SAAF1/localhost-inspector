@@ -464,6 +464,34 @@ test('inspect mode blocks menu activation and saved states still replay', async 
   } finally { await h.close() }
 })
 
+test('pinching crosses between the live page and its centered canvas frame', async () => {
+  const h = await createHarness({ canvas: true, dock: true })
+  try {
+    await h.page.setViewportSize({ width: 1000, height: 740 })
+    await h.app.evaluate(() => { document.body.dataset.gestureState = 'preserved' })
+    const pinch = deltaY => h.app.locator('body').dispatchEvent('wheel', { deltaY, ctrlKey: true, cancelable: true })
+    await pinch(8)
+    const toggle = h.page.locator('#flow-toggle')
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'true')
+    await pinch(6)
+    assert.equal(await h.page.locator('#zoom-preset').inputValue(), '0.5')
+    const frame = h.page.locator('#app-preview')
+    const bounds = await frame.boundingBox()
+    const viewport = await h.page.locator('#viewport').boundingBox()
+    assert.ok(Math.abs(bounds.x + bounds.width / 2 - viewport.x - viewport.width / 2) < 2)
+    // Start a separate pinch after the first gesture has settled.
+    await new Promise(resolve => setTimeout(resolve, 250))
+    await h.app.locator('body').dispatchEvent('wheel', {
+      deltaY: -17, ctrlKey: true, cancelable: true,
+      clientX: bounds.width, clientY: bounds.height,
+    })
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'false')
+    assert.equal(await h.app.locator('body').getAttribute('data-gesture-state'), 'preserved')
+    await pinch(2)
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'false')
+  } finally { await h.close() }
+})
+
 test('moderate zoom prepares one frame and further zoom and click reuse it', async () => {
   const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
   try {

@@ -408,7 +408,7 @@ async function activate(frame, expectedState) {
   }
 }
 
-toggle.addEventListener('click', () => {
+function toggleView() {
   if (resizing) return
   expanded = !expanded
   document.body.toggleAttribute('data-expanded', expanded)
@@ -429,7 +429,9 @@ toggle.addEventListener('click', () => {
     dock.removeAttribute('data-canvas-page')
   }
   sidebar?.changed()
-})
+}
+
+toggle.addEventListener('click', toggleView)
 
 function setZoom(scale, x, y) {
   const next = Math.min(1, Math.max(.12, scale))
@@ -439,9 +441,31 @@ function setZoom(scale, x, y) {
   position()
 }
 
-function zoomAt(event, x, y) {
+// Chromium reports trackpad pinches as Ctrl-wheel without a finger count.
+let lastTransitionWheel = -Infinity
+function consumePinchTail(event) {
+  if (performance.now() - lastTransitionWheel >= 220) return false
+  lastTransitionWheel = performance.now()
   event.preventDefault()
-  setZoom(camera.scale * Math.exp(-event.deltaY * .006), x, y)
+  return true
+}
+
+function zoomAt(event, x, y, card) {
+  event.preventDefault()
+  if (consumePinchTail(event)) return
+  const nextScale = camera.scale * Math.exp(-event.deltaY * .006)
+  if (event.deltaY < 0 && card && !resizing && !pendingCard && (nextScale >= .55 || fillsCanvas(card))) {
+    const id = card.dataset.frame
+    if (!cards.get(id).hiddenControl) {
+      lastTransitionWheel = performance.now()
+      if (id === active) toggleView()
+      else void activate(framesById.get(id)).then(opened => {
+        if (opened && expanded && active === id) toggleView()
+      })
+      return
+    }
+  }
+  setZoom(nextScale, x, y)
 }
 
 zoomPreset.addEventListener('change', () => {
@@ -528,7 +552,7 @@ viewport.addEventListener('wheel', event => {
   if (!expanded || event.target.closest('#workspace-toolbar, #localhost-inspector-dock')) return
   if (event.ctrlKey) {
     const rect = viewport.getBoundingClientRect()
-    zoomAt(event, event.clientX - rect.x, event.clientY - rect.y)
+    zoomAt(event, event.clientX - rect.x, event.clientY - rect.y, event.target.closest('.flow-frame'))
   } else {
     panByWheel(event)
   }
@@ -681,7 +705,21 @@ function watchLiveFrame(frame) {
     appWindow.addEventListener('keyup', lockAppKey, true)
     appWindow.addEventListener('beforeinput', lockAppKey, true)
     appWindow.addEventListener('wheel', event => {
-      if (!expanded || frame !== preview) return
+      if (frame !== preview) return
+      if (!expanded) {
+        if (!event.ctrlKey || event.target.closest?.('#localhost-inspector') || consumePinchTail(event)) return
+        if (event.deltaY <= 0 || resizing || !currentFrame()) return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        lastTransitionWheel = performance.now()
+        camera.scale = .5
+        toggleView()
+        if (active) {
+          center(active, viewport.clientWidth - dock.offsetWidth)
+          position()
+        }
+        return
+      }
       if (event.metaKey && !event.ctrlKey) {
         clearHover()
         return
@@ -696,7 +734,7 @@ function watchLiveFrame(frame) {
       const app = preview.getBoundingClientRect()
       clearHover()
       zoomAt(event, app.x - view.x + event.clientX * camera.scale,
-        app.y - view.y + event.clientY * camera.scale)
+        app.y - view.y + event.clientY * camera.scale, active && cards.get(active).button)
     }, { capture: true, passive: false })
     if (expanded && !active) syncLiveFrame()
   }
