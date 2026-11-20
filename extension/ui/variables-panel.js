@@ -4,7 +4,6 @@
   const scopeLabels = { typography: 'All type', color: 'All colors', spacing: 'All spacing' }
   const allLabels = { ...scopeLabels, typography: 'All typography' }
   const colorProperties = { color: 'Text', 'background-color': 'Fill', 'border-color': 'Border', 'placeholder-color': 'Placeholder' }
-  const weightNames = { 100: 'Thin', 200: 'Extra light', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'Semibold', 700: 'Bold', 800: 'Extra bold', 900: 'Black' }
 
   function control(className, handler, label) {
     const button = ui.element('button', 'li-var-control ' + className, label)
@@ -81,40 +80,27 @@
     return trailing
   }
 
-  function specimen(entry, hits, onOpen) {
+  function specimen(entry, hits, onOpen, openDetails) {
+    if (entry.category === 'typography') return ui.typographyInventoryRow(entry, countLabel(hits.length), familyNames(entry.value.fontFamily)[0] || '', onOpen, openDetails)
     const row = onOpen ? control('li-var-value', onOpen) : ui.element('div', 'li-var-value')
     const line = ui.element('span', 'li-var-line')
     const sample = ui.element('span', 'li-var-sample')
     const value = entry.value
-    let metadata
-    if (entry.category === 'typography') {
-      sample.textContent = entry.name || 'The quick brown fox'
-      for (const prop of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontStretch', 'lineHeight', 'letterSpacing']) {
-        if (value[prop]) sample.style[prop] = value[prop]
-      }
-      const family = familyNames(value.fontFamily)[0]
-      const size = [value.fontSize, value.lineHeight].filter(Boolean).join(' / ')
-      const weight = weightNames[value.fontWeight] || value.fontWeight
-      const tracking = value.letterSpacing && value.letterSpacing !== 'normal' ? 'Tracking ' + value.letterSpacing : ''
-      metadata = [family, size, weight, value.fontStyle !== 'normal' && value.fontStyle, tracking].filter(Boolean).join(' · ')
-      sample.title = value.fontFamily || ''
-    } else {
-      sample.classList.add('li-var-distance')
-      const ruler = ui.element('span', 'li-var-ruler')
-      ruler.setAttribute('aria-hidden', 'true')
-      if (/^\d*\.?\d+px$/.test(value)) ruler.style.width = value
-      else ruler.hidden = true
-      sample.append(ui.element('span', '', entry.name || value), ruler)
-      const properties = [...new Set(hits.map(hit => hit.property).filter(Boolean))].join(', ')
-      metadata = [entry.name && value, properties].filter(Boolean).join(' · ')
-    }
+    sample.classList.add('li-var-distance')
+    const ruler = ui.element('span', 'li-var-ruler')
+    ruler.setAttribute('aria-hidden', 'true')
+    if (/^\d*\.?\d+px$/.test(value)) ruler.style.width = value
+    else ruler.hidden = true
+    sample.append(ui.element('span', '', entry.name || value), ruler)
+    const properties = [...new Set(hits.map(hit => hit.property).filter(Boolean))].join(', ')
+    const metadata = [entry.name && value, properties].filter(Boolean).join(' · ')
     line.append(sample, countLabel(hits.length))
     row.append(line)
     if (metadata) row.append(ui.element('span', 'li-var-meta', metadata))
     return row
   }
 
-  ui.createVariablesPanel = ({ onReveal, onPage } = {}) => {
+  ui.createVariablesPanel = ({ onReveal, onPage, onCreateTextStyle } = {}) => {
     const element = ui.element('section', 'li-variables')
     element.setAttribute('aria-label', 'Variables')
     const styles = ui.element('style', '', ui.variablesStyles)
@@ -123,6 +109,7 @@
     const status = ui.element('p', 'li-var-message')
     status.setAttribute('role', 'status')
     element.append(styles, body, status, coverage)
+    const collapsedTypeGroups = new Set()
     const sharedFonts = new Set()
     let inventory = { pages: [], entries: [] }
     let category = 'typography'
@@ -134,7 +121,28 @@
     let selectedHit = null
     let revealRequest = 0
 
+    let popup = null
+    let popupEntry = null
+    let canCreateTextStyle = false
+    let refreshAfterClose = false
+    function closePopup() { popup?.() }
+
+    function openTypography(anchor, entry) {
+      closePopup()
+      popupEntry = entry.id
+      popup = ui.openInventoryTypeDetails(anchor, entry, canCreateTextStyle && onCreateTextStyle, () => {
+        popup = popupEntry = null
+        if (refreshAfterClose) {
+          refreshAfterClose = false
+          render()
+          const next = body.querySelector('[data-entry-id="' + CSS.escape(entry.id) + '"] .li-type-action')
+          if (next && body.isConnected) next.focus({ preventScroll: true })
+        }
+      }, () => { status.textContent = 'Text style created.' })
+    }
+
     function clearDetails() {
+      closePopup()
       selectedEntry = resultPage = selectedHit = null
       revealRequest++
       status.textContent = ''
@@ -166,7 +174,7 @@
       const options = [['all', allScope], ['screens', 'By screen']]
       const scope = control('li-var-quiet', () => ui.openMenu(scope, options, mode, value => {
         navigate(() => { mode = value; scopedPage = null; automaticScope = false; clearDetails() }, '.li-var-quiet')
-      }, { label: 'Variable inventory scope', below: true }), mode === 'screens' ? 'By screen' : allScope)
+      }, { label: 'Variable inventory scope', below: true }), mode === 'screens' ? (automaticScope && category === 'typography' ? 'Current screen' : 'By screen') : allScope)
       scope.setAttribute('aria-haspopup', 'menu')
       scope.setAttribute('aria-expanded', 'false')
       scope.append(ui.icon('chevronDown'))
@@ -202,10 +210,18 @@
       groups.forEach((label, index) => {
         const groupRows = rows.filter(({ entry }) => Boolean(entry.name) === (index === 0))
         if (!groupRows.length) return
-        const group = ui.element('section', 'li-var-group')
-        group.append(ui.element('h3', '', label))
+        const group = category === 'typography'
+          ? ui.sidebarDisclosure(label, 'li-var-group li-type-group', !collapsedTypeGroups.has(label))
+          : ui.element('section', 'li-var-group')
+        if (category === 'typography') {
+          group.ontoggle = () => {
+            if (!body.contains(group)) return
+            if (group.open) collapsedTypeGroups.delete(label)
+            else collapsedTypeGroups.add(label)
+          }
+        } else group.append(ui.element('h3', '', label))
         for (const { entry, hits } of groupRows) {
-          group.append(specimen(entry, hits, () => navigate(() => { selectedEntry = entry })))
+          group.append(specimen(entry, hits, () => navigate(() => { selectedEntry = entry }), anchor => openTypography(anchor, entry)))
         }
         body.append(group)
       })
@@ -362,7 +378,7 @@
         if (automaticScope) header()
         else body.append(back('All screens', () => { scopedPage = null; mode = 'screens' }))
         if (!page) { body.append(ui.element('p', 'li-var-message', 'Waiting for this screen.')); return }
-        body.append(ui.element('h2', 'li-var-detail-title', page.label))
+        if (!(category === 'typography' && automaticScope)) body.append(ui.element('h2', 'li-var-detail-title', page.label))
         showInventory()
         return
       }
@@ -381,18 +397,27 @@
 
     render()
     return {
-      element, setScope,
+      element, setScope, closePopup,
       update(data, options = {}) {
         const active = element.getRootNode().activeElement
         const restoreFocus = body.contains(active) ? active.textContent : null
         inventory = data
+        const nextCapability = options.canCreateTextStyle ?? canCreateTextStyle
+        const capabilityChanged = nextCapability !== canCreateTextStyle
+        canCreateTextStyle = nextCapability
         if (selectedHit && ui.findVariableOccurrence) {
           const entry = data.entries.find(item => item.id === selectedEntry?.id)
           selectedHit = ui.findVariableOccurrence(entry, selectedHit)
         }
         shareSpecimenFonts(data.entries, options.fontDocument, element.ownerDocument, sharedFonts)
         if (Object.hasOwn(options, 'pageId')) setScope(options.pageId)
-        else render()
+        else if (popup && !capabilityChanged && data.entries.some(entry => entry.id === popupEntry)) {
+          refreshAfterClose = true
+          return
+        } else {
+          closePopup()
+          render()
+        }
         if (restoreFocus !== null) {
           const buttons = body.querySelectorAll('button')
           const matching = [...buttons].filter(button => button.textContent === restoreFocus)
@@ -400,6 +425,7 @@
         }
       },
       dispose() {
+        closePopup()
         for (const face of sharedFonts) element.ownerDocument.fonts.delete(face)
         sharedFonts.clear()
       },

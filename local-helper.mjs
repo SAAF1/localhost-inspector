@@ -109,12 +109,16 @@ async function readCatalog(binding, kind = 'colors') {
   return catalog && verifyCatalog(binding, catalog, kind)
 }
 
-async function verifyPublishedDefinitions(binding, edits) {
+async function verifyPublishedDefinitions(binding, edits, projectStyles = []) {
   for (const [kind, property, command] of [
     ['colors', 'pendingColor', 'register-colors'],
     ['text-styles', 'pendingTextStyle', 'register-text-styles'],
   ]) {
     const definitions = edits.flatMap(edit => edit[property] ? [edit[property]] : [])
+    if (property === 'pendingTextStyle' && projectStyles.length) {
+      const references = new Set(edits.map(edit => edit.pendingTextStyleName))
+      definitions.push(...projectStyles.filter(style => references.has(style.name)))
+    }
     if (!definitions.length) continue
     const catalog = await readCatalog(binding, kind)
     for (const { name, source } of definitions) {
@@ -209,6 +213,16 @@ if (mode === 'handoff') {
   assertJournalBinding(journal, binding)
   if (journal.version !== 2) throw Error('Open Inspector to migrate this journal before exporting a handoff')
   const handoff = buildSourceHandoff(binding, journal)
+  if (journal.textStyleDefinitions?.length) {
+    const catalog = await readCatalog(binding, 'text-styles')
+    const pending = journal.textStyleDefinitions.filter(style =>
+      catalog?.source !== style.source || !catalog.names.includes(style.name))
+    if (pending.length) {
+      handoff.textStyleDefinitions = pending
+      handoff.instructions = [...handoff.instructions,
+        'Publish textStyleDefinitions as reusable styles in their recorded source and register their names. Create no element bindings unless an operation calls for one.']
+    }
+  }
   await addVisualEvidence(root, binding, handoff)
   await printJson(handoff)
   process.exit(0)
@@ -423,9 +437,8 @@ function groupedPaddingEdits(records, catalog, journal, shared) {
   return edits.map(edit => ({ ...edit, group: first.id, sharedPadding: name }))
 }
 
-async function pendingTextStyleFrom(records, catalog, journal) {
-  const pending = records[0]?.pendingTextStyle
-  if (!pending) return null
+async function validateTextStyleDefinition(pending, catalog, journal) {
+  if (!pending || typeof pending !== 'object') throw Error('Invalid new text style')
   const { name, label, description, source, values } = pending
   if (!catalog || source !== catalog.source ||
       typeof label !== 'string' || !/^[a-z][a-z0-9 -]{0,69}$/i.test(label) || label !== label.trim() ||
@@ -438,7 +451,8 @@ async function pendingTextStyleFrom(records, catalog, journal) {
   await access(catalog.file, constants.W_OK).catch(() => { throw Error('The text style source is read-only.') })
   if (catalog.names.includes(name) || declaresVariable(catalog.css, name) ||
       textStyleProperties.some(property => declaresVariable(catalog.css, name + '-' + property)) ||
-      journal.edits.some(edit => edit.pendingTextStyle?.name === name)) {
+      journal.edits.some(edit => edit.pendingTextStyle?.name === name) ||
+      journal.textStyleDefinitions?.some(style => style.name === name)) {
     throw Error('That style name is already in use.')
   }
   return { name, label, description, source, values: Object.fromEntries(textStyleProperties.map(property => [property, values[property]])) }
@@ -455,8 +469,10 @@ async function textStyleEdits(records, catalog, journal) {
   if (reference !== undefined && (typeof reference !== 'string' || !validRoute(record.route) || record.pendingTextStyle)) {
     throw Error('Invalid pending text style reference')
   }
-  const pending = reference === undefined ? await pendingTextStyleFrom(records, catalog, journal)
-    : journal.edits.find(edit => edit.route === journalRoute(record.route) && edit.pendingTextStyle?.name === reference)?.pendingTextStyle
+  const pending = reference === undefined
+    ? record.pendingTextStyle && await validateTextStyleDefinition(record.pendingTextStyle, catalog, journal)
+    : journal.textStyleDefinitions?.find(style => style.name === reference) ??
+      journal.edits.find(edit => edit.route === journalRoute(record.route) && edit.pendingTextStyle?.name === reference)?.pendingTextStyle
   if (reference !== undefined && (!pending || pending.source !== catalog?.source || catalog.names.includes(reference))) {
     throw Error('This pending text style is unavailable.')
   }
@@ -531,7 +547,7 @@ async function handle(message) {
     const catalog = await readCatalog(binding, 'text-styles')
     if (!catalog) return null
     const canCreate = await access(catalog.file, constants.W_OK).then(() => true, () => false)
-    return { source: catalog.source, names: catalog.names, canCreate }
+    return { source: catalog.source, names: catalog.names, canCreate, canCreateDefinition: canCreate }
   }
   if (message.type === 'check') return { id: binding.id, visualEvidence: binding.visualEvidence === true }
   const file = join(root, binding.id + '-changes.json')
@@ -548,6 +564,7 @@ async function handle(message) {
     const buttonSize = await readButtonSize(binding).catch(() => null)
     return { revision: journal.revision, route, scopedPreviewTargets: true, landmarkPreviewTargets: true, sectionPreviewTargets: true, templatePreviews: true,
       templateSourcePreviews: true, templatePaddingPreviews: true, projectWideRevert: true, previewVisibility: true,
+      textStyleDefinitions: journal.textStyleDefinitions ?? [],
       edits: journal.edits.filter(edit => edit.route === route || edit.template), pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
   }
   if (message.type === 'saveEvidence') {
@@ -563,7 +580,7 @@ async function handle(message) {
     const originalEdits = journal.edits
     const { completed, retired } = completeHandoff(binding, journal, message.report, new Date().toISOString())
     const retiredIds = new Set(retired)
-    await verifyPublishedDefinitions(binding, originalEdits.filter(edit => retiredIds.has(edit.id)))
+    await verifyPublishedDefinitions(binding, originalEdits.filter(edit => retiredIds.has(edit.id)), journal.textStyleDefinitions)
     journal.revision++
     await atomic(file, journal)
     const imageCleanupFailed = await removeVisualEvidence(root, binding, retired)
@@ -571,7 +588,12 @@ async function handle(message) {
   }
   let removed = []
   let rebased
-  if (message.type === 'save') {
+  let definition
+  if (message.type === 'saveTextStyleDefinition') {
+    definition = await validateTextStyleDefinition(message.definition, await readCatalog(binding, 'text-styles'), journal)
+    journal.textStyleDefinitions ??= []
+    journal.textStyleDefinitions.push(definition)
+  } else if (message.type === 'save') {
     const catalog = message.record?.spacingToken ? await readCatalog(binding, 'spacing') :
       message.record?.colorToken || message.record?.pendingColor ? await readCatalog(binding) : null
     const edit = editFrom(message.record, catalog)
@@ -625,7 +647,7 @@ async function handle(message) {
   journal.revision++
   await atomic(file, journal)
   if (removed.length) await removeVisualEvidence(root, binding, removed.map(edit => edit.id))
-  return { file, revision: journal.revision, pending: pendingEdits(journal.edits), rebased,
+  return { file, revision: journal.revision, pending: pendingEdits(journal.edits), rebased, definition,
     ...(binding.visualEvidence === true && ['save', 'saveTextStyle', 'saveSharedPadding', 'savePairedPadding'].includes(message.type) ? { visualEvidence: true } : {}),
   }
 }

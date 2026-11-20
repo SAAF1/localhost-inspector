@@ -2,7 +2,7 @@
   const ui = window.LocalhostInspector
   const labels = ['Font family', 'Weight', 'Size', 'Line height', 'Letter spacing']
 
-  ui.openCreateTextStyle = (anchor, picker, { capture, submit }, onCreated) => {
+  ui.openCreateTextStyle = (anchor, picker, { capture, submit, mount, back }, onCreated) => {
     const values = capture()
     if (!values) return null
     const title = 'Create new text style'
@@ -48,7 +48,13 @@
     const create = ui.element('button', 'li-create-definition-submit', 'Create style')
     create.type = 'submit'
     form.append(properties, error, ui.row(more, create))
-    popup.append(ui.popupHeader(title, dismiss), specimen, form)
+    const header = ui.popupHeader(title, dismiss)
+    const backButton = back && ui.action('Back to typography details', 'chevronRight', back)
+    if (backButton) {
+      backButton.firstElementChild.style.transform = 'rotate(180deg)'
+      header.prepend(ui.row(backButton, header.firstElementChild))
+    }
+    popup.append(header, specimen, form)
 
     let saving = false
     function showError(message, invalidField) {
@@ -74,6 +80,7 @@
         return
       }
       saving = create.disabled = dismiss.disabled = name.readOnly = description.readOnly = true
+      if (backButton) backButton.disabled = true
       form.setAttribute('aria-busy', 'true')
       showError('')
       try {
@@ -90,6 +97,7 @@
         }
       } finally {
         saving = create.disabled = dismiss.disabled = name.readOnly = description.readOnly = false
+        if (backButton) backButton.disabled = false
         form.removeAttribute('aria-busy')
       }
     }
@@ -99,7 +107,7 @@
       event.stopPropagation()
       if (!saving) close()
     }
-    const close = ui.mountDefinitionForm(anchor, picker, popup, { trackSize: true })
+    const close = mount ? mount(popup) : ui.mountDefinitionForm(anchor, picker, popup, { trackSize: true })
     name.focus({ preventScroll: true })
     return close
   }

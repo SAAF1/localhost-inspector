@@ -6,6 +6,7 @@ import './tooltip.js'
 import './dom.js'
 import './menu.js'
 import './variables-styles.js'
+import './variables-typography.js'
 import './variables-panel.js'
 import './policy.js'
 import './authored-styles.js'
@@ -52,10 +53,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       files.append(screenButton(group.frames[0], group.label, 'flow-group single-flow'))
       continue
     }
-    const section = ui.element('details', 'flow-group')
-    const summary = ui.element('summary', '', group.label)
-    summary.prepend(ui.icon('chevronRight'))
-    section.append(summary)
+    const section = ui.sidebarDisclosure(group.label, 'flow-group')
     for (const frame of group.frames) {
       const button = screenButton(frame, frame.label || frame.route, 'flow-screen')
       button.prepend(ui.icon('frame'))
@@ -64,7 +62,41 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     files.append(section)
   }
 
+  let textStyleFormRequest = 0
+  const recipeProperties = ['fontFamily', 'fontWeight', 'fontSize', 'lineHeight', 'letterSpacing']
+  function openTextStyleForm(entry, anchor, onBack, onCreated, onDismiss) {
+    const inspector = dock.firstElementChild
+    if (!inspector || dock.inert) return null
+    const id = ++textStyleFormRequest
+    const values = Object.fromEntries(ui.textStyleProperties.map((property, index) => [property, entry.value[recipeProperties[index]]]))
+    const bounds = anchor.closest('.li-type-row').getBoundingClientRect()
+    function result(event) {
+      if (typeof event.detail !== 'string') return
+      let response
+      try { response = JSON.parse(event.detail) } catch { return }
+      if (response?.id !== id) return
+      inspector.removeEventListener('variables-text-style-form-result', result)
+      if (response.action === 'back') onBack?.()
+      else {
+        if (response.action === 'created') onCreated?.()
+        else onDismiss?.()
+        if (anchor.isConnected) anchor.focus({ preventScroll: true })
+      }
+    }
+    inspector.addEventListener('variables-text-style-form-result', result)
+    const detail = JSON.stringify({ id, values, left: bounds.right + 8, top: bounds.top })
+    const opened = !inspector.dispatchEvent(new CustomEvent('open-variables-text-style-form', { detail, cancelable: true }))
+    if (opened) return () => {
+      inspector.removeEventListener('variables-text-style-form-result', result)
+      inspector.dispatchEvent(new Event('close-variables-text-style-form'))
+      onDismiss?.()
+    }
+    inspector.removeEventListener('variables-text-style-form-result', result)
+    return null
+  }
+
   const panel = ui.createVariablesPanel({
+    onCreateTextStyle: openTextStyleForm,
     onPage: async pageId => {
       if (livePage()?.id !== pageId && !await goToPage(pageId)) throw Error('Screen unavailable')
     },
@@ -135,7 +167,10 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
 
   function publish() {
     inventoryChanged = false
-    panel.update(ui.variablesInventory([...scans.values()]), { fontDocument: getFrame().contentDocument })
+    panel.update(ui.variablesInventory([...scans.values()]), {
+      fontDocument: getFrame().contentDocument,
+      canCreateTextStyle: catalogs.canCreateTextStyle === true,
+    })
     const checked = [...mapped].filter(route => scans.has(route)).length
     panel.setCoverage(checked < mapped.size ? checked + ' of ' + mapped.size + ' mapped pages inspected.' : '')
   }
@@ -238,6 +273,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       readCatalog()
       schedule()
     } else {
+      panel.closePopup?.()
       clearTimeout(timer)
       timer = null
     }

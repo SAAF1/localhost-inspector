@@ -1,7 +1,5 @@
 (() => {
   const ui = window.LocalhostInspector
-  const weightNames = ['Thin', 'Extra Light', 'Light', 'Regular', 'Medium', 'Semi Bold', 'Bold', 'Extra Bold', 'Black']
-  ui.weightName = value => weightNames[ui.choices.weights.indexOf(value)] || value
   ui.colorText = value => {
     const match = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/.exec(value)
     return match ? match.slice(1).map(n => Number(n).toString(16).padStart(2, '0')).join('').toUpperCase() : value

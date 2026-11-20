@@ -18,7 +18,7 @@ test('Variables reveals the exact occurrence in Inspector and keeps the canvas i
     await sidebar.getByRole('button', { name: 'Spacing', exact: true }).click()
     await sidebar.getByRole('button', { name: /16px.*padding/ }).waitFor()
     await sidebar.getByRole('button', { name: 'Typography', exact: true }).click()
-    await sidebar.getByRole('button', { name: /quick brown fox.*32px/ }).click()
+    await sidebar.locator('button.li-type-body').filter({ hasText: /· 32\// }).click()
     await sidebar.getByRole('button', { name: 'Two', exact: true }).click()
     const outline = h.app.locator('#localhost-inspector-outlines #outline')
     assert.deepEqual(await outline.boundingBox(), await h.app.locator('#second-label').boundingBox())
@@ -83,7 +83,7 @@ test('opening Variables reuses the inspected page and picks up changes made whil
     const variables = sidebar.getByRole('button', { name: 'Variables', exact: true })
     const file = sidebar.getByRole('button', { name: 'File', exact: true })
     await variables.click()
-    await sidebar.getByRole('button', { name: /quick brown fox.*32px/ }).waitFor()
+    await sidebar.locator('button.li-type-body').filter({ hasText: /· 32\// }).waitFor()
     await file.click()
     const scanned = await h.page.evaluate(() => window.fixtureScanCount)
     await variables.click()
@@ -92,7 +92,32 @@ test('opening Variables reuses the inspected page and picks up changes made whil
     await file.click()
     await h.app.locator('#app-widget span').evaluate(node => { node.style.fontSize = '37px' })
     await variables.click()
-    await sidebar.getByRole('button', { name: /quick brown fox.*37px/ }).waitFor()
-    assert.equal(await sidebar.getByRole('button', { name: /quick brown fox.*· 33px/ }).count(), 0)
+    await sidebar.locator('button.li-type-body').filter({ hasText: /· 37\// }).waitFor()
+    assert.equal(await sidebar.locator('button.li-type-body').filter({ hasText: /· 33\// }).count(), 0)
+  } finally { await h.close() }
+})
+
+test('oversized typography fits the inventory tile while details retain its actual size', async () => {
+  const h = await createHarness({ canvas: true, dock: true, appStyles: '#target #second-label { font: bold 112px/140px Arial }' })
+  try {
+    await h.open()
+    const sidebar = h.page.locator('#workspace-sidebar')
+    await sidebar.getByRole('button', { name: 'Variables', exact: true }).click()
+    const row = sidebar.locator('.li-type-row').filter({ hasText: '112/140' })
+    const marker = row.locator('sup')
+    await marker.waitFor({ state: 'visible' })
+    const tile = await row.locator('.li-type-tile').boundingBox()
+    for (const element of [row.locator('.li-type-tile > span'), marker]) {
+      const glyph = await element.boundingBox()
+      assert.ok(glyph.x >= tile.x && glyph.y >= tile.y)
+      assert.ok(glyph.x + glyph.width <= tile.x + tile.width && glyph.y + glyph.height <= tile.y + tile.height)
+    }
+    await row.hover()
+    await row.getByRole('button', { name: /View typography details/ }).click()
+    const detail = sidebar.getByRole('dialog').locator('.li-text-style-specimen span:visible')
+    await detail.waitFor()
+    assert.equal(await detail.textContent(), 'Ag')
+    assert.equal(await detail.evaluate(el => getComputedStyle(el).fontSize), '112px')
+    assert.equal(await detail.evaluate(el => new DOMMatrix(getComputedStyle(el).transform).a), 1)
   } finally { await h.close() }
 })

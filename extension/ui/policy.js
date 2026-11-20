@@ -21,6 +21,8 @@
     if (['border-width', 'border-color'].includes(property)) return style.borderTopStyle !== 'none'
     return true
   }
+  const weightNames = ['Thin', 'Extra Light', 'Light', 'Regular', 'Medium', 'Semi Bold', 'Bold', 'Extra Bold', 'Black']
+  ui.weightName = value => weightNames[ui.choices.weights.indexOf(value)] || value
   ui.choices = {
     distribution: ['normal', 'start', 'center', 'end', 'space-between', 'space-around', 'space-evenly', 'stretch'],
     alignment: ['normal', 'start', 'center', 'end', 'stretch', 'baseline'],

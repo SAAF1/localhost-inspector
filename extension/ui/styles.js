@@ -287,6 +287,7 @@
       display: flex; flex: 0 0 40px; justify-content: space-between; align-items: center;
       padding: 0 var(--li-gap) 0 var(--li-inset); font-weight: 600;
     }
+    .li-popup-header > .li-row { align-items: center; }
     .li-popup-actions { display: flex; align-items: center; }
     .li-settings-preview {
       display: grid; flex: 0 0 120px; place-items: center; background: var(--li-popup-field);

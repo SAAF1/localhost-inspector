@@ -59,11 +59,13 @@
         entry('typography', name, styleLabel(name), typography(values))
       }
     }
+    const projectStyleNames = new Set(catalogs.textStyleDefinitions?.map(style => style.name))
     for (const draft of catalogs.pendingTextStyles ?? []) {
       if (draft.source !== catalogs.textStyleCatalog?.source || definitions.some(item => item.name === draft.name)) continue
       if (!draft.values || !cssKeys.every(key => typeof draft.values[key] === 'string')) continue
       const label = draft.label || styleLabel(draft.name)
-      definitions.push({ name: draft.name, label, values: draft.values, pending: true })
+      definitions.push({ name: draft.name, label, values: draft.values, pending: true,
+        requiresBinding: projectStyleNames.has(draft.name) })
       entry('typography', draft.name, label, typography(draft.values))
     }
     const tokens = { color: new Map(), spacing: new Map() }
@@ -131,11 +133,13 @@
           if (textStyle.fontStyle === 'normal' && ['normal', '100%'].includes(textStyle.fontStretch)) {
             matches = definitions.filter(definition => {
               const expected = definition.pending ? definition.values : ui.textStyleValues(node, definition.name)
-              return expected && cssKeys.every(key => ui.textStyleMatches(values[key], expected[key]))
+              return expected && cssKeys.every(key => ui.textStyleMatches(values[key], expected[key]) &&
+                (!definition.requiresBinding || ui.authoredProperty(node, key) === ui.textStyleReference(definition.name, key, expected[key])))
             })
           }
           const match = matches.length === 1 ? matches[0] : matches.find(definition =>
-            !definition.pending && cssKeys.every(key => ui.authoredProperty(node, key) === ui.textStyleReference(definition.name, key)))
+            (!definition.pending || definition.requiresBinding) && cssKeys.every(key =>
+              ui.authoredProperty(node, key) === ui.textStyleReference(definition.name, key, definition.pending ? definition.values[key] : undefined)))
           add(entry('typography', match?.name, match?.label, recipe), 'typography')
           if (painted(textStyle.color)) {
             const item = placeholder ? entry('color', null, undefined, textStyle.color) :

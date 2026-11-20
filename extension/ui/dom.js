@@ -6,6 +6,14 @@
     if (text !== undefined) element.textContent = text
     return element
   }
+  ui.sidebarDisclosure = (label, className, open = false) => {
+    const group = ui.element('details', 'li-sidebar-disclosure ' + className)
+    group.open = open
+    const summary = ui.element('summary', '', label)
+    summary.prepend(ui.icon('chevronRight'))
+    group.append(summary)
+    return group
+  }
   ui.caption = (text, small = false) => ui.element('span', small ? 'li-caption li-bound-caption' : 'li-caption', text)
   ui.row = (...children) => {
     const row = ui.element('div', 'li-row')

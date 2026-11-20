@@ -32,7 +32,7 @@
   const revertDialog = ui.createRevertDialog(root)
   const temporary = new Set()
   const recovery = ui.createPreviewRecovery({
-    apply: applyRestored, remove, canEdit, readFrameState,
+    apply: applyRestored, remove, canEdit, readFrameState, projectTextStyles: () => textStyleDefinitions,
     removeButtonSize: entry => ui.buttonSize.setSize(entry.node, entry.target.key, entry.requested, entry.before, entry.path),
   })
   const fields = get('fields')
@@ -51,6 +51,7 @@
   let spacingCatalog = null
   let fontFamilies = []
   let textStyleCatalog = null
+  let textStyleDefinitions = []
   let textStyleUnavailable = false
   let buttonSizeKey = null
   let confirmedButton = null
@@ -600,12 +601,34 @@
       if (loadingRoute) return
       discovered ??= send({ type: 'variablesCatalog' }).catch(() => null)
       const catalog = await discovered
+      const available = catalog?.textStyleCatalog || catalog?.colorCatalog || catalog?.spacingCatalog
+        ? catalog : { textStyleCatalog, colorCatalog, spacingCatalog }
       const detail = JSON.stringify({
-        ...(catalog?.textStyleCatalog || catalog?.colorCatalog || catalog?.spacingCatalog
-          ? catalog : { textStyleCatalog, colorCatalog, spacingCatalog }),
+        ...available,
+        canCreateTextStyle: textStyleCatalog?.canCreateDefinition === true && journalRevision !== null,
         pendingTextStyles: recovery.pendingTextStyles(),
+        textStyleDefinitions,
       })
       host.dispatchEvent(new CustomEvent('variables-catalog', { detail, bubbles: true }))
+    })
+    const closeVariablesForm = ui.connectWorkspaceTextStyle({
+      host, root,
+      canCreate: () => textStyleCatalog?.canCreateDefinition === true && journalRevision !== null && !loadingRoute,
+      save: ({ label, description, values }) => run(async () => {
+        const path = currentRoute
+        const version = activeRouteVersion
+        if (!textStyleCatalog?.canCreateDefinition) throw Error('The text style source is unavailable for creation.')
+        const definition = {
+          name: '--text-' + label.toLowerCase().replace(/ +/g, '-'),
+          label, description, values, source: textStyleCatalog.source,
+        }
+        const result = await write({ type: 'saveTextStyleDefinition', definition }, path, version)
+        if (!result.definition) throw Error('Could not confirm the saved text style.')
+        if (isCurrentRoute(path, version)) {
+          textStyleDefinitions = [...textStyleDefinitions, result.definition]
+          syncPending()
+        }
+      }, { background: true, keepPopup: true, rethrow: true }),
     })
     document.addEventListener('select-inspector-variable-use', event => {
       const node = event.composedPath()[0]
@@ -622,7 +645,7 @@
       selection.syncOutlines()
     }
     host.addEventListener('open-workspace-inspector', () => setWorkspaceOpen(true))
-    host.addEventListener('hide-workspace-inspector', () => setWorkspaceOpen(false))
+    host.addEventListener('hide-workspace-inspector', () => { closeVariablesForm(); setWorkspaceOpen(false) })
     host.addEventListener('clear-workspace-selection', event => {
       if (root.querySelector('dialog[open]')) event.preventDefault()
       else if (selection.current || isFloating()) selection.select(null)
@@ -1092,6 +1115,7 @@
     return Number.isSafeInteger(snapshot?.revision) && Array.isArray(snapshot.edits) && typeof snapshot.route === 'string'
   }
   function acceptSnapshot(snapshot) {
+    textStyleDefinitions = Array.isArray(snapshot.textStyleDefinitions) ? snapshot.textStyleDefinitions : []
     buttonSizeKey = typeof snapshot.buttonSizeKey === 'string' ? snapshot.buttonSizeKey : null
     savedRoute = snapshot.route
     scopedPreviewTargets = snapshot.scopedPreviewTargets === true
@@ -1130,6 +1154,7 @@
     spacingCatalog = null
     fontFamilies = []
     textStyleCatalog = null
+    textStyleDefinitions = []
     textStyleUnavailable = false
     buttonSizeKey = null
     confirmedButton = null

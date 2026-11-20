@@ -274,7 +274,7 @@
   )).filter(node => node instanceof HTMLElement && templateMatches(edit, node) &&
     node.getClientRects().length && getComputedStyle(node).visibility === 'visible')
   ui.templatePreview = { attribute: templateAttribute, of: templateOf, nodes: templateNodes }
-  ui.createPreviewRecovery = ({ apply, remove, canEdit, removeButtonSize, readFrameState }) => {
+  ui.createPreviewRecovery = ({ apply, remove, canEdit, removeButtonSize, readFrameState, projectTextStyles }) => {
     const saved = new Map()
     const attached = new Map()
     const inlineStacks = new WeakMap()
@@ -485,7 +485,7 @@
     }
 
     function pendingTextStyles() {
-      return Array.from(saved.values()).flatMap(edit => edit.pendingTextStyle ? [edit.pendingTextStyle] : [])
+      return [...projectTextStyles(), ...Array.from(saved.values()).flatMap(edit => edit.pendingTextStyle ? [edit.pendingTextStyle] : [])]
     }
 
     function sameReplayTarget(earlier, edit, node) {

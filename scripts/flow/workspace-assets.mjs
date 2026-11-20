@@ -6,7 +6,7 @@ const assets = new Map([
   ['workspace.css', ['workspace.css', 'text/css']],
   ['workspace.mjs', ['workspace.mjs', 'text/javascript']],
   ...['tokens', 'styles', 'panel-styles', 'icons', 'tooltip', 'dom', 'menu', 'variables-panel',
-    'variables-styles', 'authored-styles', 'policy', 'text-style-values', 'color-bindings', 'solid-color-picker', 'spacing-gap'].map(
+    'variables-typography', 'variables-styles', 'authored-styles', 'policy', 'text-style-values', 'color-bindings', 'solid-color-picker', 'spacing-gap'].map(
     name => [name + '.js', ['../../extension/ui/' + name + '.js', 'text/javascript']]),
   ['variables-audit.js', ['../../extension/variables-audit.js', 'text/javascript']],
   ['workspace-sidebar.mjs', ['workspace-sidebar.mjs', 'text/javascript']],

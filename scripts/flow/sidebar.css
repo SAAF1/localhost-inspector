@@ -9,21 +9,21 @@
 .project strong { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:14px; }
 .project button svg,.rail button[aria-label=File] svg { width:16px; height:16px; }
 .project button svg { transform:scaleX(-1); }
-.files { font:400 var(--li-type-size)/var(--li-line-height) var(--li-font); padding:12px; min-height:0; overflow:auto; }
+.files { --flow-label-offset:calc(var(--li-icon-size) + var(--li-space-small)); font:400 var(--li-type-size)/var(--li-line-height) var(--li-font); padding:12px; min-height:0; overflow:auto; }
 .files h2 { margin:0 0 12px; font:inherit; font-weight:600; }
 .flow-group + .flow-group { margin-top:4px; }
-.flow-group summary { display:flex; align-items:center; gap:4px; min-height:32px; cursor:pointer;
+.li-sidebar-disclosure > summary { display:flex; align-items:center; gap:var(--li-space-small); min-height:32px; cursor:pointer;
   list-style:none; font:inherit; font-weight:600; border-radius:var(--li-radius); }
-.flow-group summary::-webkit-details-marker { display:none; }
-.flow-group summary svg { flex:none; width:16px; height:16px; opacity:0; }
-.flow-group summary:hover svg,.flow-group summary:focus-visible svg { opacity:1; color:var(--li-muted); }
-.flow-group summary:focus-visible { outline:2px solid var(--li-active); outline-offset:-2px; }
-.flow-group summary:focus-visible svg { color:var(--li-active); }
+.li-sidebar-disclosure > summary::-webkit-details-marker { display:none; }
+.li-sidebar-disclosure > summary svg { flex:none; width:var(--li-icon-size); height:var(--li-icon-size); opacity:0; }
+.li-sidebar-disclosure > summary:hover svg,.li-sidebar-disclosure > summary:focus-visible svg { opacity:1; color:var(--li-muted); }
+.li-sidebar-disclosure > summary:focus-visible { outline:2px solid var(--li-active); outline-offset:-2px; }
+.li-sidebar-disclosure > summary:focus-visible svg { color:var(--li-active); }
 .flow-group:not([open]):has(button[aria-current=true]) > summary { background:var(--li-control-selected-surface); }
-.flow-group[open] > summary svg { transform:rotate(90deg); }
-@media (hover:none) { .flow-group summary svg { opacity:1; } }
-.files button { display:flex; align-items:center; gap:4px; width:100%; min-height:24px; text-align:left; font:inherit; color:inherit; padding:4px 8px 4px 36px; background:transparent; border:0; border-radius:var(--li-radius); }
-.files .single-flow { min-height:32px; padding-inline-start:20px; font-weight:600; }
+.li-sidebar-disclosure[open] > summary svg { transform:rotate(90deg); }
+@media (hover:none) { .li-sidebar-disclosure > summary svg { opacity:1; } }
+.files button { display:flex; align-items:center; gap:var(--li-gap); width:100%; min-height:24px; text-align:left; font:inherit; color:inherit; padding:var(--li-space-small) var(--li-gap); padding-inline-start:var(--flow-label-offset); background:transparent; border:0; border-radius:var(--li-radius); }
+.files .single-flow { min-height:32px; font-weight:600; }
 .flow-screen svg { flex:none; width:14px; height:14px; color:var(--li-muted); }
 .flow-group > button + button { margin-top:2px; }
 .files button:hover { background:var(--li-field); }

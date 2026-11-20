@@ -81,6 +81,7 @@ export async function createHarness(options = {}) {
         button.setAttribute('data-inspector-button-size', 'sm')
       }
       window.__journal = settings.journal || []
+      window.__textStyleDefinitions = []
       window.__revision = 0
       window.__saveCount = 0
       window.__settings = settings
@@ -108,7 +109,7 @@ export async function createHarness(options = {}) {
         const pending = async () => settings.pendingEdits
           ? await window.summarizeFixtureJournal(window.__journal.filter(edit => !edit.undone))
           : undefined
-        if (type === 'load') return { revision: window.__revision, route: message.route, scopedPreviewTargets: !settings.legacyPreviewHelper, landmarkPreviewTargets: !settings.legacyPreviewHelper, sectionPreviewTargets: !settings.legacyPreviewHelper && !settings.legacySectionHelper, templatePreviews: !settings.legacyPreviewHelper, templateSourcePreviews: !settings.legacyPreviewHelper && !settings.legacyTemplateSourceHelper, templatePaddingPreviews: !settings.legacyPreviewHelper, previewVisibility: !settings.legacyPreviewHelper, projectWideRevert: !settings.legacyPreviewHelper, buttonSizeKey: settings.buttonSizeKey, pending: await pending(), edits: structuredClone(window.__journal.filter(edit => !edit.undone && (edit.route === message.route || edit.template))) }
+        if (type === 'load') return { textStyleDefinitions: structuredClone(window.__textStyleDefinitions), revision: window.__revision, route: message.route, scopedPreviewTargets: !settings.legacyPreviewHelper, landmarkPreviewTargets: !settings.legacyPreviewHelper, sectionPreviewTargets: !settings.legacyPreviewHelper && !settings.legacySectionHelper, templatePreviews: !settings.legacyPreviewHelper, templateSourcePreviews: !settings.legacyPreviewHelper && !settings.legacyTemplateSourceHelper, templatePaddingPreviews: !settings.legacyPreviewHelper, previewVisibility: !settings.legacyPreviewHelper, projectWideRevert: !settings.legacyPreviewHelper, buttonSizeKey: settings.buttonSizeKey, pending: await pending(), edits: structuredClone(window.__journal.filter(edit => !edit.undone && (edit.route === message.route || edit.template))) }
         if (['save', 'saveTextStyle', 'saveButtonSize', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
           window.__saveCount++
           if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
@@ -128,6 +129,14 @@ export async function createHarness(options = {}) {
           const error = Error('Saved previews changed in another tab. Reload the page and try again.')
           error.code = 'STALE_JOURNAL'
           throw error
+        }
+        if (type === 'saveTextStyleDefinition') {
+          const { definition } = message
+          if (window.__textStyleDefinitions.some(style => style.name === definition.name)) {
+            throw Object.assign(Error('That style name is already in use.'), { code: 'WRITE_REJECTED' })
+          }
+          window.__textStyleDefinitions.push(definition)
+          return { revision: ++window.__revision, pending: await pending(), definition }
         }
         if (type === 'save' || type === 'saveButtonSize') window.__journal.push(message.record)
         if (['saveTextStyle', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
