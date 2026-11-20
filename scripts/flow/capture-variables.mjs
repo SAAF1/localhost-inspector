@@ -7,7 +7,7 @@ import { chromium } from 'playwright'
 import { discoverVariablesCatalog } from '../../variables-catalog.mjs'
 import { captureContext, verifyCaptureState } from './capture-previews.mjs'
 
-const modules = ['ui/authored-styles', 'ui/text-style-values', 'ui/color-bindings', 'ui/spacing-gap', 'variables-audit']
+const modules = ['ui/authored-styles', 'ui/text-style-values', 'ui/color-bindings', 'ui/solid-color-picker', 'ui/spacing-gap', 'variables-audit']
 
 export async function createAuditCapture(context, repo) {
   const catalogs = await discoverVariablesCatalog(repo)

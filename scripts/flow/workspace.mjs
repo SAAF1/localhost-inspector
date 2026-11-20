@@ -7,6 +7,11 @@ import { contentOverflow, fitFrame, framePresets, sizeFrame } from './frame-view
 import { createSharpPreviews } from './sharp-previews.mjs'
 import { connectCanvasBackground, connectViewControls } from './view-controls.mjs'
 
+// Workspace controls live outside the Inspector shadow roots.
+const theme = new CSSStyleSheet()
+theme.replaceSync(window.LocalhostInspector.tokens.replaceAll(':host', ':root'))
+document.adoptedStyleSheets.push(theme)
+
 window.LocalhostInspector.bindTooltips(document.querySelector('#workspace-toolbar'), '#frame-view-menu:not([hidden])')
 
 const map = document.querySelector('#map')

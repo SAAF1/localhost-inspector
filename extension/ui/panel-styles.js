@@ -36,6 +36,7 @@
       border: 0; border-radius: var(--li-radius); background: transparent;
       min-height: var(--li-action-size); padding-inline: var(--li-gap);
     }
+    .li-inspector-tabs button:focus-visible { outline-offset: -1px; }
     .li-inspector-tabs button { color: var(--li-muted); white-space: nowrap; }
     .li-inspector-tabs button:hover, .li-inspector-tabs button[aria-selected="true"] {
       background: var(--li-field); color: var(--li-text);

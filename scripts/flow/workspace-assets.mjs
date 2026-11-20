@@ -9,6 +9,8 @@ const assets = new Map([
     'variables-typography', 'variables-styles', 'authored-styles', 'policy', 'text-style-values', 'color-bindings', 'solid-color-picker', 'spacing-gap'].map(
     name => [name + '.js', ['../../extension/ui/' + name + '.js', 'text/javascript']]),
   ['variables-audit.js', ['../../extension/variables-audit.js', 'text/javascript']],
+  ['color-preview.mjs', ['color-preview.mjs', 'text/javascript']],
+  ['spacing-preview.mjs', ['spacing-preview.mjs', 'text/javascript']],
   ['workspace-sidebar.mjs', ['workspace-sidebar.mjs', 'text/javascript']],
   ['sidebar.css', ['sidebar.css', 'text/css']],
   ['view-controls.mjs', ['view-controls.mjs', 'text/javascript']],

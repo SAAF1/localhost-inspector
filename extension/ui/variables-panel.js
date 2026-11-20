@@ -54,6 +54,47 @@
 
   const characters = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
+  // Oklab brings lightness and hue differences onto a comparable scale.
+  function colorPoint([red, green, blue, alpha]) {
+    const [r, g, b] = [red, green, blue].map(byte => {
+      const v = byte / 255
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+    })
+    const l = Math.cbrt(0.4122214708*r + 0.5363325363*g + 0.0514459929*b)
+    const m = Math.cbrt(0.2119034982*r + 0.6806995451*g + 0.1073969566*b)
+    const s = Math.cbrt(0.0883024619*r + 0.2817188376*g + 0.6299787005*b)
+    return [0.2104542553*l + 0.793617785*m - 0.0040720468*s,
+      1.9779984951*l - 2.428592205*m + 0.4505937099*s,
+      0.0259040371*l + 0.7827717662*m - 0.808675766*s, alpha / 255 * 0.02]
+  }
+
+  function orderedColors(rows, order) {
+    const swatches = rows.map(row => {
+      const rgba = ui.colorChannels(row.entry.value)
+      const hex = rgba.slice(0, 3).map(n => n.toString(16).padStart(2, '0')).join('')
+      return { row, point: colorPoint(rgba), label: row.entry.name || hex, rgba: rgba.join(',') }
+    })
+    swatches.sort((a, b) => Number(Boolean(b.row.entry.name)) - Number(Boolean(a.row.entry.name)) ||
+      a.label.localeCompare(b.label) || a.row.entry.id.localeCompare(b.row.entry.id))
+    if (order === 'name') return swatches
+    const result = []
+    let from = [1, 0, 0, 0.02] // Start at opaque white, then walk to the nearest remaining swatch.
+    while (swatches.length) {
+      let nearest = 0
+      let best = Infinity
+      for (let i = 0; i < swatches.length; i++) {
+        const point = swatches[i].point
+        const distance = point.reduce((sum, channel, j) => sum + (channel - from[j]) ** 2, 0)
+        if (distance < best) { nearest = i; best = distance }
+        if (best === 0) break
+      }
+      const [next] = swatches.splice(nearest, 1)
+      result.push(next)
+      from = next.point
+    }
+    return result
+  }
+
   function colorSpecimen(entry, hits, onOpen) {
     const row = onOpen ? control('li-var-color-row', onOpen) : ui.element('div', 'li-var-color-row')
     const field = ui.element('span', 'li-var-color-field')
@@ -84,14 +125,8 @@
     if (entry.category === 'typography') return ui.typographyInventoryRow(entry, countLabel(hits.length), familyNames(entry.value.fontFamily)[0] || '', onOpen, openDetails)
     const row = onOpen ? control('li-var-value', onOpen) : ui.element('div', 'li-var-value')
     const line = ui.element('span', 'li-var-line')
-    const sample = ui.element('span', 'li-var-sample')
     const value = entry.value
-    sample.classList.add('li-var-distance')
-    const ruler = ui.element('span', 'li-var-ruler')
-    ruler.setAttribute('aria-hidden', 'true')
-    if (/^\d*\.?\d+px$/.test(value)) ruler.style.width = value
-    else ruler.hidden = true
-    sample.append(ui.element('span', '', entry.name || value), ruler)
+    const sample = ui.element('span', 'li-var-sample', entry.name || value)
     const properties = [...new Set(hits.map(hit => hit.property).filter(Boolean))].join(', ')
     const metadata = [entry.name && value, properties].filter(Boolean).join(' · ')
     line.append(sample, countLabel(hits.length))
@@ -100,19 +135,42 @@
     return row
   }
 
-  ui.createVariablesPanel = ({ onReveal, onPage, onCreateTextStyle } = {}) => {
+  ui.createVariablesPanel = ({ onReveal, onPage, onCreateTextStyle, onSpacingPreview, onColorPreview } = {}) => {
     const element = ui.element('section', 'li-variables')
     element.setAttribute('aria-label', 'Variables')
     const styles = ui.element('style', '', ui.variablesStyles)
     const body = ui.element('div', 'li-variables-body')
+    body.addEventListener('keydown', event => {
+      if (event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey || event.shiftKey ||
+        !['ArrowUp', 'ArrowDown'].includes(event.key)) return
+      const selector = 'button.li-var-color-row, button.li-var-value, button.li-type-body, button.li-var-list-row'
+      const rows = [...body.querySelectorAll(selector)].filter(row =>
+        !row.disabled && !row.closest('details:not([open])') && row.getClientRects().length)
+      if (!rows.length) return
+      const target = event.target
+      const current = target.closest(selector) ?? target.closest('.li-type-row')?.querySelector(selector)
+      let index = rows.indexOf(current)
+      const down = event.key === 'ArrowDown'
+      if (index >= 0) index = Math.max(0, Math.min(rows.length - 1, index + (down ? 1 : -1)))
+      else {
+        const direction = down ? Node.DOCUMENT_POSITION_FOLLOWING : Node.DOCUMENT_POSITION_PRECEDING
+        const candidates = down ? rows : rows.slice().reverse()
+        const next = candidates.find(row => target.compareDocumentPosition(row) & direction)
+        index = next ? rows.indexOf(next) : down ? 0 : rows.length - 1
+      }
+      event.preventDefault()
+      rows[index].focus({ preventScroll: true })
+      rows[index].scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    })
     const coverage = ui.element('p', 'li-var-message')
     const status = ui.element('p', 'li-var-message')
     status.setAttribute('role', 'status')
     element.append(styles, body, status, coverage)
-    const collapsedTypeGroups = new Set()
+    const collapsedGroups = new Set()
     const sharedFonts = new Set()
     let inventory = { pages: [], entries: [] }
     let category = 'typography'
+    let colorOrder = 'similarity'
     let mode = 'all'
     let scopedPage = null
     let automaticScope = false
@@ -141,7 +199,43 @@
       }, () => { status.textContent = 'Text style created.' })
     }
 
+    let pinnedEntry = null
+    let stopPreview
+    function preview(entry) {
+      stopPreview?.()
+      stopPreview = null
+      onColorPreview?.(entry?.category === 'color' ? entry : null)
+      if (entry?.category === 'spacing') stopPreview = onSpacingPreview?.(entry.occurrences.filter(hit => hit.pageId === scopedPage))
+    }
+    function clearPreview() {
+      pinnedEntry = null
+      preview(null)
+    }
+    function previewRow(entry, hits) {
+      const wrapper = ui.element('div', 'li-type-row li-preview-row')
+      const makeButton = entry.category === 'color' ? colorSpecimen : specimen
+      const button = makeButton(entry, hits, () => {
+        pinnedEntry = pinnedEntry === entry ? null : entry
+        for (const item of body.querySelectorAll('.li-preview-row [aria-pressed]')) item.setAttribute('aria-pressed', 'false')
+        button.setAttribute('aria-pressed', String(Boolean(pinnedEntry)))
+        preview(pinnedEntry)
+      })
+      button.setAttribute('aria-pressed', String(pinnedEntry === entry))
+      const open = ui.action('Open occurrences for ' + (entry.name || entry.value), 'openOccurrences', () => {
+        clearPreview()
+        navigate(() => { selectedEntry = entry })
+      })
+      open.classList.add('li-type-action', 'li-layout-settings-trigger')
+      wrapper.append(button, open)
+      wrapper.onpointerenter = () => preview(entry)
+      wrapper.onpointerleave = () => preview(pinnedEntry)
+      wrapper.onfocusin = event => { if (event.target.matches(':focus-visible')) preview(entry) }
+      wrapper.onfocusout = event => { if (!wrapper.contains(event.relatedTarget)) preview(pinnedEntry) }
+      return wrapper
+    }
+
     function clearDetails() {
+      clearPreview()
       closePopup()
       selectedEntry = resultPage = selectedHit = null
       revealRequest++
@@ -198,29 +292,52 @@
       if (!rows.length) body.append(ui.element('p', 'li-var-message', 'No ' + categories[category].toLowerCase() + ' found.'))
       if (category === 'color' && rows.length) {
         const group = ui.element('section', 'li-var-group li-var-color-group')
-        group.append(ui.element('h3', '', 'Selection colors'))
-        rows.sort((first, second) => Number(Boolean(second.entry.name)) - Number(Boolean(first.entry.name)))
-        for (const { entry, hits } of rows) {
-          group.append(colorSpecimen(entry, hits, () => navigate(() => { selectedEntry = entry })))
+        const heading = ui.element('div', 'li-color-order')
+        const options = [['similarity', 'Similarity'], ['name', 'Name']]
+        const label = options.find(([key]) => key === colorOrder)[1]
+        const sort = control('li-var-quiet', () => ui.openMenu(sort, options, colorOrder, key => {
+          navigate(() => { colorOrder = key }, '.li-color-order button')
+        }, { label: 'Sort colors', below: true }), label)
+        sort.setAttribute('aria-label', 'Sort colors by ' + label.toLowerCase())
+        sort.setAttribute('aria-haspopup', 'menu')
+        sort.setAttribute('aria-expanded', 'false')
+        sort.append(ui.icon('chevronDown'))
+        heading.append(ui.element('h3', '', 'Selection colors'), sort)
+        group.append(heading)
+        const swatches = orderedColors(rows, colorOrder)
+        let sameColorGroup
+        for (const [index, { row, rgba }] of swatches.entries()) {
+          const next = swatches[index + 1]
+          const joinsNext = colorOrder === 'similarity' && row.entry.name && next?.row.entry.name && next.rgba === rgba
+          if (joinsNext && !sameColorGroup) {
+            sameColorGroup = ui.element('div', 'li-color-matches')
+            sameColorGroup.setAttribute('role', 'group')
+            sameColorGroup.setAttribute('aria-label', 'Styles with the same color and opacity')
+            group.append(sameColorGroup)
+          }
+          const container = sameColorGroup ?? group
+          container.append(previewRow(row.entry, row.hits))
+          if (!joinsNext) sameColorGroup = null
         }
         body.append(group)
         return
       }
-      const groups = category === 'typography' ? ['Styled', 'Unstyled'] : ['Named spacing', 'Unnamed spacing']
+      const groups = ['Styled', 'Unstyled']
       groups.forEach((label, index) => {
         const groupRows = rows.filter(({ entry }) => Boolean(entry.name) === (index === 0))
         if (!groupRows.length) return
-        const group = category === 'typography'
-          ? ui.sidebarDisclosure(label, 'li-var-group li-type-group', !collapsedTypeGroups.has(label))
-          : ui.element('section', 'li-var-group')
-        if (category === 'typography') {
-          group.ontoggle = () => {
-            if (!body.contains(group)) return
-            if (group.open) collapsedTypeGroups.delete(label)
-            else collapsedTypeGroups.add(label)
-          }
-        } else group.append(ui.element('h3', '', label))
+        const key = category + '/' + label
+        const group = ui.sidebarDisclosure(label, 'li-var-group li-type-group', !collapsedGroups.has(key))
+        group.ontoggle = () => {
+          if (!body.contains(group)) return
+          if (group.open) collapsedGroups.delete(key)
+          else collapsedGroups.add(key)
+        }
         for (const { entry, hits } of groupRows) {
+          if (category === 'spacing' && scopedPage !== null) {
+            group.append(previewRow(entry, hits))
+            continue
+          }
           group.append(specimen(entry, hits, () => navigate(() => { selectedEntry = entry }), anchor => openTypography(anchor, entry)))
         }
         body.append(group)
@@ -327,7 +444,7 @@
     }
 
     function showEntry(entry) {
-      const pageId = resultPage ?? scopedPage
+      const pageId = resultPage ?? (category === 'spacing' ? null : scopedPage)
       const hits = pageId === null ? entry.occurrences : entry.occurrences.filter(hit => hit.pageId === pageId)
       const pageLabel = id => inventory.pages.find(page => page.id === id)?.label
       const backLabel = resultPage !== null ? 'Screen list' : (pageLabel(scopedPage) || allLabels[category])
@@ -363,6 +480,8 @@
     }
 
     function render() {
+      pinnedEntry = pinnedEntry && inventory.entries.find(entry => entry.id === pinnedEntry.id)
+      preview(pinnedEntry)
       body.replaceChildren()
       occurrenceRows.clear()
       const entry = inventory.entries.find(item => item.id === selectedEntry?.id) ??
@@ -376,7 +495,7 @@
       if (scopedPage !== null) {
         const page = inventory.pages.find(page => page.id === scopedPage)
         if (automaticScope) header()
-        else body.append(back('All screens', () => { scopedPage = null; mode = 'screens' }))
+        else body.append(back('All screens', () => { clearPreview(); scopedPage = null; mode = 'screens' }))
         if (!page) { body.append(ui.element('p', 'li-var-message', 'Waiting for this screen.')); return }
         if (!(category === 'typography' && automaticScope)) body.append(ui.element('h2', 'li-var-detail-title', page.label))
         showInventory()
@@ -397,7 +516,7 @@
 
     render()
     return {
-      element, setScope, closePopup,
+      element, setScope, closePopup, clearPreview,
       update(data, options = {}) {
         const active = element.getRootNode().activeElement
         const restoreFocus = body.contains(active) ? active.textContent : null
@@ -425,6 +544,7 @@
         }
       },
       dispose() {
+        clearPreview()
         closePopup()
         for (const face of sharedFonts) element.ownerDocument.fonts.delete(face)
         sharedFonts.clear()

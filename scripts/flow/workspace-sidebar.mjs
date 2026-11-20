@@ -1,3 +1,5 @@
+import { isolateColor } from './color-preview.mjs'
+import { previewSpacing } from './spacing-preview.mjs'
 import './tokens.js'
 import './styles.js'
 import './panel-styles.js'
@@ -95,8 +97,20 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     return null
   }
 
+  let restoreColor
+  function colorPreview(entry) {
+    restoreColor?.()
+    restoreColor = null
+    if (!entry) return
+    const doc = getFrame().contentDocument
+    if (liveScan && liveScan.page.id === livePage()?.id && doc?.body) {
+      restoreColor = isolateColor(doc, liveScan.entries, entry.id, ui.colorChannels(entry.value))
+    }
+  }
   const panel = ui.createVariablesPanel({
+    onColorPreview: colorPreview,
     onCreateTextStyle: openTextStyleForm,
+    onSpacingPreview: hits => previewSpacing(getFrame().contentDocument, hits),
     onPage: async pageId => {
       if (livePage()?.id !== pageId && !await goToPage(pageId)) throw Error('Screen unavailable')
     },
@@ -191,7 +205,11 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     doc.defaultView.addEventListener('resize', invalidate)
     doc.fonts?.addEventListener('loadingdone', invalidate)
     observer = new MutationObserver(records => {
-      if (records.some(record => !record.target.closest?.('#localhost-inspector-outlines'))) invalidate()
+      if (records.some(record => {
+        if (record.target.closest?.('#localhost-inspector-outlines')) return false
+        return record.type !== 'childList' || [...record.addedNodes, ...record.removedNodes]
+          .some(node => node.id !== 'localhost-inspector-spacing-preview')
+      })) invalidate()
     })
     doc.addEventListener('input', invalidate, true)
     doc.addEventListener('change', invalidate, true)
@@ -213,6 +231,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     if (liveScan && liveScan.page.id !== page.id) {
       for (const entry of liveScan.entries) for (const use of entry.occurrences) delete use.node
     }
+    colorPreview(null)
     observer.disconnect()
     observeRoot(doc.documentElement)
     liveScan = ui.scanVariablesPage(doc, page, catalogs, observeRoot)
@@ -273,6 +292,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       readCatalog()
       schedule()
     } else {
+      panel.clearPreview()
       panel.closePopup?.()
       clearTimeout(timer)
       timer = null

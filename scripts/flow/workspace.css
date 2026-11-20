@@ -1,10 +1,10 @@
 :root { --action-size: 24px; --workspace-action-size: 32px; --workspace-icon-size: 20px;
-  --workspace-toolbar-height: calc(var(--workspace-action-size) + 8px); --action-inset: 12px; --action-gap: 6px; color-scheme: light; color: #252823; background: #f2f1ee; font: 14px system-ui; }
+  --workspace-toolbar-height: calc(var(--workspace-action-size) + 8px); --action-inset: 12px; --action-gap: 6px; color-scheme: light dark; color: #252823; background: #f2f1ee; font: 14px system-ui; }
 body { margin: 0; }
 #workspace-toolbar {
   position: absolute; top: var(--action-inset); right: var(--action-inset); z-index: 1;
   display: flex; align-items: center; gap: 4px; padding: 4px 6px;
-  background: #fff; border: 1px solid #e5e5e5; border-radius: 12px;
+  color: var(--li-text); background: var(--li-surface); border: 1px solid var(--li-border); border-radius: 12px;
   box-shadow: 0 1px 4px #0002;
 }
 #workspace-toolbar button { font: inherit; color: inherit; cursor: pointer; }
@@ -14,8 +14,8 @@ body { margin: 0; }
 }
 #workspace-toolbar [hidden] { display: none; }
 #workspace-toolbar > button:hover,
-#workspace-toolbar > #frame-view-toggle[aria-expanded="true"] { background: #f3f3f3; }
-#workspace-toolbar > button:focus-visible { outline: 2px solid #0074cc; outline-offset: -2px; }
+#workspace-toolbar > #frame-view-toggle[aria-expanded="true"] { background: var(--li-field); }
+#workspace-toolbar > button:focus-visible { outline: 2px solid var(--li-active); outline-offset: -2px; }
 #workspace-toolbar > button:is(:disabled, [aria-disabled="true"]) { cursor: default; }
 #workspace-toolbar > button:is(:disabled, [data-busy]) { opacity: .45; }
 #workspace-toolbar > button svg {
@@ -33,7 +33,7 @@ body:not([data-expanded]) .desktop-glyph, body[data-expanded] .flow-glyph { disp
 #viewport:has(#localhost-inspector-dock[data-inspector-open]) #workspace-toolbar {
   top: 0; right: 0; width: min(var(--li-workspace-panel-width, 240px), 100%);
   height: var(--workspace-toolbar-height);
-  box-sizing: border-box; border: 0; border-left: 1px solid #e5e5e5;
+  box-sizing: border-box; border: 0; border-left: 1px solid var(--li-border);
   border-radius: 0; box-shadow: none;
 }
 body[data-expanded] #viewport:has(#localhost-inspector-dock[data-inspector-floating]) #workspace-toolbar {
@@ -47,15 +47,15 @@ body[data-expanded] #viewport:has(#localhost-inspector-dock[data-inspector-float
 }
 #workspace-toolbar > #pending-toggle svg:last-child { width: 12px; }
 #workspace-toolbar > #pending-toggle[hidden] { display: none; }
-#workspace-toolbar > #pending-toggle[aria-expanded="true"] { background: #f3f3f3; }
-#zoom-control { position: absolute; z-index: 1; top: calc(var(--workspace-toolbar-height) + 4px); right: 12px; }
+#workspace-toolbar > #pending-toggle[aria-expanded="true"] { background: var(--li-field); }
+#zoom-control { color: var(--li-text); position: absolute; z-index: 1; top: calc(var(--workspace-toolbar-height) + 4px); right: 12px; }
 #zoom-preset {
   appearance: none; cursor: pointer; min-height: var(--action-size); width: 58px;
   text-align: end; padding: 0 18px 0 4px; font: 11px system-ui;
   color: inherit; border: 0; border-radius: 6px; background: transparent;
 }
-#zoom-preset:hover { background: #f3f3f3; }
-#zoom-preset:focus-visible { outline: 2px solid #0074cc; outline-offset: -2px; }
+#zoom-preset:hover { background: var(--li-field); }
+#zoom-preset:focus-visible { outline: 2px solid var(--li-active); outline-offset: -2px; }
 #zoom-control svg {
   position: absolute; pointer-events: none; right: 4px; top: 6px;
   width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round;
@@ -142,6 +142,6 @@ svg.connections { position: absolute; overflow: visible; pointer-events: none; }
 body[data-sidebar-open] #viewport { margin-left: var(--workspace-sidebar-width); }
 #workspace-toolbar > #inspector-toggle:not([hidden]) {
   position: fixed; left: var(--action-inset); top: var(--action-inset); margin: 0; width: 40px; height: 40px;
-  background: white; border: 1px solid #e5e5e5; border-radius: 12px; box-shadow: 0 1px 4px #0002;
+  background: var(--li-surface); border: 1px solid var(--li-border); border-radius: 12px; box-shadow: 0 1px 4px #0002;
 }
 #workspace-sidebar[hidden] { display: none; }

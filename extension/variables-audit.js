@@ -1,10 +1,17 @@
 (() => {
   const ui = window.LocalhostInspector ||= {}
   const sides = ['top', 'right', 'bottom', 'left']
-  const ignore = 'script,style,template,noscript,head,#localhost-inspector,#localhost-inspector-outlines,#localhost-inspector-dock'
+  const ignore = 'script,style,template,noscript,head,#localhost-inspector,#localhost-inspector-outlines,#localhost-inspector-dock,#localhost-inspector-spacing-preview'
   const reference = /^var\(\s*(--[\w-]+)(?:\s*,[^)]*)?\s*\)$/
   const cssKeys = ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing']
   const jsKeys = ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing']
+
+  // Unbound swatches share the same identity as their displayed RGBA channels.
+  // Cache by CSS spelling within one scan or inventory build.
+  function rawColorId(value, cache) {
+    if (!cache.has(value)) cache.set(value, JSON.stringify(['color', null, Array.from(ui.colorChannels(value))]))
+    return cache.get(value)
+  }
 
   function typography(css, fontStyle = 'normal', fontStretch = '100%') {
     return { ...Object.fromEntries(jsKeys.map((key, i) => [key, css[cssKeys[i]]])), fontStyle, fontStretch }
@@ -45,8 +52,9 @@
     if (!doc?.body || !doc.defaultView) return { page, entries: [] }
     const win = doc.defaultView
     const root = doc.documentElement
+    const rawColors = new Map()
     function entry(category, token, name, value) {
-      const id = JSON.stringify([category, token || null, value])
+      const id = category === 'color' && !token ? rawColorId(value, rawColors) : JSON.stringify([category, token || null, value])
       if (!entries.has(id)) entries.set(id, { id, category, name, value, occurrences: [] })
       return entries.get(id)
     }
@@ -90,18 +98,23 @@
       }
     }
 
-    function measured(category, node, property, value) {
+    function measured(category, node, property, value, declaration) {
       const candidates = tokens[category].get(value)
       if (!candidates?.length) return entry(category, null, undefined, value)
-      if (category === 'spacing' && candidates.length === 1) {
-        return entry(category, candidates[0].name, simpleLabel(candidates[0].name), value)
-      }
-      const authored = reference.exec(ui.authoredProperty(node, property) || '')?.[1]
+      const authored = reference.exec((declaration === undefined ? ui.authoredProperty(node, property) : declaration) || '')?.[1]
       const matches = candidates.filter(token => authored && (token.name === authored || token.alias === authored))
       const token = matches.length === 1 ? matches[0] : null
-      // Equal colors can represent different roles. Positive evidence is
-      // required for color names. A unique matching interval is on the scale.
-      return entry(category, token?.name, token && simpleLabel(token.name), value)
+      // Equal measurements alone do not establish a variable binding.
+      return entry(category, token?.name, token ? simpleLabel(token.name) : undefined, value)
+    }
+
+    function spacing(node, property, value) {
+      const computed = node.computedStyleMap?.().get(property)
+      if (computed?.value === 'auto' || String(computed).includes('%')) return null
+      const declaration = ui.authoredProperty(node, property)
+      // Viewport and container units resolve to px even in Typed OM.
+      if (/(?:\d|\.)(?:[sld]?v(?:w|h|min|max|i|b)|cq(?:w|h|min|max|i|b))\b/i.test(declaration || '')) return null
+      return measured('spacing', node, property, value, declaration)
     }
 
     function visit(node) {
@@ -160,7 +173,11 @@
             for (const property of ['padding', 'margin']) {
               const longhand = property + '-' + side
               const value = style.getPropertyValue(longhand)
-              if (parseFloat(value)) group(measured('spacing', node, longhand, value), property, side)
+              if (!parseFloat(value)) continue
+              // Typed OM retains auto and percentage values even when the legacy
+              // computed style exposes only their used pixel measurements.
+              const item = spacing(node, longhand, value)
+              if (item) group(item, property, side)
             }
             const border = 'border-' + side
             if (parseFloat(style.getPropertyValue(border + '-width'))) {
@@ -173,7 +190,9 @@
             for (const axis of ['row', 'column']) {
               const property = axis + '-gap'
               const value = style.getPropertyValue(property)
-              if (parseFloat(value)) group(measured('spacing', node, property, value), 'gap', axis)
+              if (!parseFloat(value)) continue
+              const item = spacing(node, property, value)
+              if (item) group(item, 'gap', axis)
             }
           }
           for (const { item, property, edges } of boxes.values()) add(item, property, edges)
@@ -203,10 +222,13 @@
     // The latest scan replaces its previous counts after a route revisits.
     const latest = new Map(scans.map(scan => [scan.page.id, scan]))
     const entries = new Map()
+    const rawColors = new Map()
     for (const scan of latest.values()) {
       for (const item of scan.entries) {
-        if (!entries.has(item.id)) entries.set(item.id, { ...item, occurrences: [] })
-        for (const occurrence of item.occurrences) entries.get(item.id).occurrences.push(occurrence)
+        // Older captures keyed raw colors by their original CSS spelling.
+        const id = item.category === 'color' && !item.name ? rawColorId(item.value, rawColors) : item.id
+        if (!entries.has(id)) entries.set(id, { ...item, id, occurrences: [] })
+        for (const occurrence of item.occurrences) entries.get(id).occurrences.push(occurrence)
       }
     }
     return { pages: [...latest.values()].map(scan => scan.page), entries: [...entries.values()] }
