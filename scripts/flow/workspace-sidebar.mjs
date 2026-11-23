@@ -108,6 +108,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     }
   }
   const panel = ui.createVariablesPanel({
+    currentPageId: () => selectedRoute() ?? livePage()?.id,
     onColorPreview: colorPreview,
     onCreateTextStyle: openTextStyleForm,
     onSpacingPreview: hits => previewSpacing(getFrame().contentDocument, hits),

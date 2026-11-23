@@ -1,8 +1,6 @@
 (() => {
   const ui = window.LocalhostInspector
   const categories = { typography: 'Typography', color: 'Color', spacing: 'Spacing' }
-  const scopeLabels = { typography: 'All type', color: 'All colors', spacing: 'All spacing' }
-  const allLabels = { ...scopeLabels, typography: 'All typography' }
   const colorProperties = { color: 'Text', 'background-color': 'Fill', 'border-color': 'Border', 'placeholder-color': 'Placeholder' }
 
   function control(className, handler, label) {
@@ -95,22 +93,20 @@
     return result
   }
 
+  function colorValueLabel(value) {
+    const [red, green, blue, alpha] = ui.colorChannels(value)
+    const hex = '#' + [red, green, blue].map(channel => channel.toString(16).padStart(2, '0')).join('').toUpperCase()
+    return alpha === 255 ? hex : hex + ' · ' + Math.round(alpha / 255 * 100) + '%'
+  }
+
   function colorSpecimen(entry, hits, onOpen) {
     const row = onOpen ? control('li-var-color-row', onOpen) : ui.element('div', 'li-var-color-row')
-    const field = ui.element('span', 'li-var-color-field')
-    field.append(ui.colorSwatch(entry.value))
-    if (entry.name) {
-      const name = entry.name[0].toUpperCase() + entry.name.slice(1)
-      field.classList.add('li-var-color-role')
-      field.append(ui.element('span', 'li-var-color-name', name))
-      if (onOpen) ui.setTooltip(row, name)
-    } else {
-      const [red, green, blue, alpha] = ui.colorChannels(entry.value)
-      const hex = [red, green, blue].map(channel => channel.toString(16).padStart(2, '0')).join('').toUpperCase()
-      const opacity = Math.round(alpha / 255 * 100) + ' %'
-      field.append(ui.element('span', 'li-var-color-name', hex), ui.element('span', 'li-var-opacity', opacity))
-    }
-    row.append(field)
+    const name = entry.name ? entry.name[0].toUpperCase() + entry.name.slice(1) : 'Unnamed color'
+    const labels = ui.element('span', 'li-type-labels')
+    const role = ui.element('span', entry.name ? '' : 'li-var-color-unnamed', name)
+    labels.append(role, ui.element('span', 'li-var-meta', colorValueLabel(entry.value)))
+    row.append(ui.colorSwatch(entry.value), labels)
+    if (onOpen && entry.name) ui.setTooltip(row, name)
     if (onOpen) row.append(countLabel(hits.length))
     return row
   }
@@ -135,7 +131,7 @@
     return row
   }
 
-  ui.createVariablesPanel = ({ onReveal, onPage, onCreateTextStyle, onSpacingPreview, onColorPreview } = {}) => {
+  ui.createVariablesPanel = ({ onReveal, onPage, currentPageId, onCreateTextStyle, onSpacingPreview, onColorPreview } = {}) => {
     const element = ui.element('section', 'li-variables')
     element.setAttribute('aria-label', 'Variables')
     const styles = ui.element('style', '', ui.variablesStyles)
@@ -143,9 +139,9 @@
     body.addEventListener('keydown', event => {
       if (event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey || event.shiftKey ||
         !['ArrowUp', 'ArrowDown'].includes(event.key)) return
-      const selector = 'button.li-var-color-row, button.li-var-value, button.li-type-body, button.li-var-list-row'
+      const selector = '.li-color-matches > summary, button.li-var-color-row, button.li-var-value, button.li-type-body, button.li-var-list-row'
       const rows = [...body.querySelectorAll(selector)].filter(row =>
-        !row.disabled && !row.closest('details:not([open])') && row.getClientRects().length)
+        !row.disabled && (row.matches('summary') || !row.closest('details:not([open])')) && row.getClientRects().length)
       if (!rows.length) return
       const target = event.target
       const current = target.closest(selector) ?? target.closest('.li-type-row')?.querySelector(selector)
@@ -176,6 +172,8 @@
     let automaticScope = false
     let selectedEntry = null
     let resultPage = null
+    let expandedTypePages = null
+    let syncTypeSelection
     let selectedHit = null
     let revealRequest = 0
 
@@ -237,6 +235,7 @@
     function clearDetails() {
       clearPreview()
       closePopup()
+      expandedTypePages = null
       selectedEntry = resultPage = selectedHit = null
       revealRequest++
       status.textContent = ''
@@ -262,17 +261,50 @@
       return row
     }
 
-    function header() {
-      const top = ui.element('div', 'li-variables-header')
-      const allScope = category === 'color' ? 'All screens' : scopeLabels[category]
-      const options = [['all', allScope], ['screens', 'By screen']]
-      const scope = control('li-var-quiet', () => ui.openMenu(scope, options, mode, value => {
-        navigate(() => { mode = value; scopedPage = null; automaticScope = false; clearDetails() }, '.li-var-quiet')
-      }, { label: 'Variable inventory scope', below: true }), mode === 'screens' ? (automaticScope && category === 'typography' ? 'Current screen' : 'By screen') : allScope)
+    function typeScopeTitle(detail = false) {
+      const options = detail ? [['screens', 'This page'], ['all', 'All pages']] : [['screens', 'Text on this page'], ['all', 'Text on all pages']]
+      const label = options.find(([key]) => key === mode)[1]
+      const scope = control('li-var-quiet li-type-scope', () => ui.openMenu(scope, options, mode, value => {
+        if (mode === value) return
+        navigate(() => {
+          closePopup()
+          clearPreview()
+          revealRequest++
+          mode = value
+          scopedPage = value === 'screens' ? currentPageId?.() ?? null : null
+          automaticScope = scopedPage !== null
+          resultPage = null
+          if (scopedPage && selectedHit?.pageId !== scopedPage) selectedHit = null
+          expandedTypePages = null
+        }, '.li-type-scope')
+      }, { label: 'Text scope', below: true }), label)
       scope.setAttribute('aria-haspopup', 'menu')
       scope.setAttribute('aria-expanded', 'false')
       scope.append(ui.icon('chevronDown'))
-      top.append(ui.element('h2', '', 'Variables'), scope)
+      if (detail) return scope
+      const heading = ui.element('h2', 'li-type-scope-title')
+      heading.append(scope)
+      return heading
+    }
+
+    function inventoryScope() {
+      const allScope = category === 'color' ? 'All screens' : 'All spacing'
+      const options = [['all', allScope], ['screens', 'By screen']]
+      const scope = control('li-var-quiet', () => ui.openMenu(scope, options, mode, value => {
+        navigate(() => { mode = value; scopedPage = null; automaticScope = false; clearDetails() }, '.li-var-quiet')
+      }, { label: 'Variable inventory scope', below: true }), mode === 'screens' ? 'By screen' : allScope)
+      scope.setAttribute('aria-haspopup', 'menu')
+      scope.setAttribute('aria-expanded', 'false')
+      scope.append(ui.icon('chevronDown'))
+      return scope
+    }
+
+    function header() {
+      if (category !== 'typography') {
+        const top = ui.element('div', 'li-variables-header')
+        top.append(ui.element('h2', '', 'Variables'), inventoryScope())
+        body.append(top)
+      }
       const tabs = ui.element('div', 'li-inspector-tabs')
       tabs.setAttribute('role', 'group')
       tabs.setAttribute('aria-label', 'Variable category')
@@ -282,7 +314,8 @@
         tab.setAttribute('aria-pressed', String(category === key))
         tabs.append(tab)
       }
-      body.append(top, tabs)
+      body.append(tabs)
+      if (category === 'typography') body.append(typeScopeTitle())
     }
 
     function showInventory() {
@@ -305,19 +338,29 @@
         heading.append(ui.element('h3', '', 'Selection colors'), sort)
         group.append(heading)
         const swatches = orderedColors(rows, colorOrder)
-        let sameColorGroup
-        for (const [index, { row, rgba }] of swatches.entries()) {
-          const next = swatches[index + 1]
-          const joinsNext = colorOrder === 'similarity' && row.entry.name && next?.row.entry.name && next.rgba === rgba
-          if (joinsNext && !sameColorGroup) {
-            sameColorGroup = ui.element('div', 'li-color-matches')
-            sameColorGroup.setAttribute('role', 'group')
-            sameColorGroup.setAttribute('aria-label', 'Styles with the same color and opacity')
-            group.append(sameColorGroup)
+        for (let start = 0; start < swatches.length;) {
+          const { row, rgba } = swatches[start]
+          let end = start + 1
+          if (colorOrder === 'similarity' && row.entry.name) {
+            while (end < swatches.length && swatches[end].rgba === rgba && swatches[end].row.entry.name) end++
           }
-          const container = sameColorGroup ?? group
-          container.append(previewRow(row.entry, row.hits))
-          if (!joinsNext) sameColorGroup = null
+          let parent = group
+          if (end - start > 1) {
+            const key = 'color/' + rgba
+            const details = ui.sidebarDisclosure('', 'li-color-matches', !collapsedGroups.has(key))
+            details.firstElementChild.append(ui.colorSwatch(row.entry.value),
+              ui.element('span', '', colorValueLabel(row.entry.value)),
+              ui.element('span', 'li-color-role-count', (end - start) + ' roles'))
+            details.ontoggle = () => {
+              if (!body.contains(details)) return
+              if (details.open) collapsedGroups.delete(key)
+              else collapsedGroups.add(key)
+            }
+            group.append(details)
+            parent = details
+          }
+          for (const { row: member } of swatches.slice(start, end)) parent.append(previewRow(member.entry, member.hits))
+          start = end
         }
         body.append(group)
         return
@@ -338,7 +381,7 @@
             group.append(previewRow(entry, hits))
             continue
           }
-          group.append(specimen(entry, hits, () => navigate(() => { selectedEntry = entry }), anchor => openTypography(anchor, entry)))
+          group.append(specimen(entry, hits, () => navigate(() => { selectedEntry = entry })))
         }
         body.append(group)
       })
@@ -348,7 +391,7 @@
       const list = ui.element('div', 'li-var-list')
       for (const page of inventory.pages) {
         list.append(listRow(page.label, ui.icon('chevronRight'), () => {
-          navigate(() => { scopedPage = page.id })
+          navigate(() => { scopedPage = page.id }, category === 'typography' && !selectedEntry ? '.li-type-scope' : '.li-var-back')
           Promise.resolve(onPage?.(page.id)).catch(() => {
             if (scopedPage === page.id) status.textContent = 'This screen could not be opened.'
           })
@@ -373,6 +416,7 @@
         selectedHit = ui.findVariableOccurrence(latest, hit)
         for (const item of body.querySelectorAll('[aria-current=true]')) item.removeAttribute('aria-current')
         occurrenceRows.get(selectedHit)?.setAttribute('aria-current', 'true')
+        syncTypeSelection?.(selectedHit, true)
       } catch {
         if (isCurrent()) status.textContent = 'This occurrence could not be opened.'
       }
@@ -388,6 +432,11 @@
         if (parts.length > 16) label = label.slice(0, parts[16].index) + '…'
         ui.setTooltip(row, hit.label)
         row.setAttribute('aria-label', hit.label + ' ' + (colorProperties[hit.property] ?? hit.property))
+      }
+      if (entry.category === 'typography') {
+        row.classList.add('li-type-use')
+        row.prepend(ui.icon('textLayer'))
+        ui.setTooltip(row, hit.label)
       }
       row.append(ui.element('span', '', label))
       occurrenceRows.set(hit, row)
@@ -443,11 +492,27 @@
       body.append(list)
     }
 
-    function showEntry(entry) {
-      const pageId = resultPage ?? (category === 'spacing' ? null : scopedPage)
+    function showTypeEntry(entry) {
+      body.append(back('Typography', clearDetails))
+      const header = ui.element('div', 'li-var-detail')
+      header.append(specimen(entry, [], null, anchor => openTypography(anchor, entry)))
+      body.append(header)
+      expandedTypePages ??= new Set([selectedHit?.pageId ?? currentPageId?.()])
+      const uses = ui.typeUsesList({
+        entry, pages: inventory.pages, scopedPage, expanded: expandedTypePages, countLabel,
+        scope: typeScopeTitle(true), occurrenceRow: hit => occurrenceRow(hit, entry),
+        reveal: hit => reveal(hit, entry),
+      })
+      body.append(uses.element)
+      syncTypeSelection = uses.select
+      uses.select(selectedHit)
+    }
+
+    function showSpacingEntry(entry) {
+      const pageId = resultPage
       const hits = pageId === null ? entry.occurrences : entry.occurrences.filter(hit => hit.pageId === pageId)
-      const pageLabel = id => inventory.pages.find(page => page.id === id)?.label
-      const backLabel = resultPage !== null ? 'Screen list' : (pageLabel(scopedPage) || allLabels[category])
+      const pageLabel = inventory.pages.find(page => page.id === scopedPage)?.label
+      const backLabel = resultPage !== null ? 'Screen list' : pageLabel || 'All spacing'
       body.append(back(backLabel, () => {
         if (resultPage !== null) { resultPage = selectedHit = null; revealRequest++ }
         else clearDetails()
@@ -460,7 +525,7 @@
         for (const hit of hits) {
           const row = occurrenceRow(hit, entry)
           const label = row.firstElementChild
-          if (hit.property && entry.category !== 'typography') label.append(ui.element('span', 'li-var-meta', hit.property))
+          if (hit.property) label.append(ui.element('span', 'li-var-meta', hit.property))
           list.append(row)
         }
       } else {
@@ -484,20 +549,27 @@
       preview(pinnedEntry)
       body.replaceChildren()
       occurrenceRows.clear()
+      syncTypeSelection = null
       const entry = inventory.entries.find(item => item.id === selectedEntry?.id) ??
         (selectedEntry?.category === 'color' ? { ...selectedEntry, occurrences: [] } : null)
+      if (entry && category === 'typography' && mode === 'screens' && scopedPage === null) {
+        header()
+        showPages()
+        return
+      }
       if (entry) {
         if (entry.category === 'color') showColorEntry(entry)
-        else showEntry(entry)
+        else if (entry.category === 'typography') showTypeEntry(entry)
+        else showSpacingEntry(entry)
         return
       }
       if (selectedEntry !== null) clearDetails()
       if (scopedPage !== null) {
         const page = inventory.pages.find(page => page.id === scopedPage)
-        if (automaticScope) header()
+        if (automaticScope || category === 'typography') header()
         else body.append(back('All screens', () => { clearPreview(); scopedPage = null; mode = 'screens' }))
         if (!page) { body.append(ui.element('p', 'li-var-message', 'Waiting for this screen.')); return }
-        if (!(category === 'typography' && automaticScope)) body.append(ui.element('h2', 'li-var-detail-title', page.label))
+        if (category !== 'typography') body.append(ui.element('h2', 'li-var-detail-title', page.label))
         showInventory()
         return
       }
@@ -538,7 +610,7 @@
           render()
         }
         if (restoreFocus !== null) {
-          const buttons = body.querySelectorAll('button')
+          const buttons = body.querySelectorAll('button, .li-color-matches > summary')
           const matching = [...buttons].filter(button => button.textContent === restoreFocus)
           if (matching.length === 1) matching[0].focus({ preventScroll: true })
         }

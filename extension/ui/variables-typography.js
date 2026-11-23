@@ -56,8 +56,11 @@
     fitSpecimen(tile, value, true)
     const labels = ui.element('span', 'li-type-labels')
     const metrics = [value.fontSize, value.lineHeight].map(n => n?.replace(/px$/, '')).join('/')
-    labels.append(ui.element('span', '', label), ui.element('span', 'li-var-meta', family + ' · ' + metrics))
-    body.append(tile, labels, count)
+    const title = ui.element(openDetails ? 'h2' : 'span', '', label)
+    const subtitle = openDetails ? (entry.name ? 'Styled' : 'Unstyled') : family + ' · ' + metrics
+    labels.append(title, ui.element('span', 'li-var-meta', subtitle))
+    body.append(tile, labels)
+    if (!openDetails) body.append(count)
     row.append(body)
     if (openDetails) {
       const button = ui.action('View typography details for ' + label, 'launcherSliders', () => openDetails(button))
@@ -67,6 +70,98 @@
       row.append(button)
     }
     return row
+  }
+
+  ui.typeUsesList = ({ entry, pages, scopedPage, scope, expanded, countLabel, occurrenceRow, reveal }) => {
+    const element = ui.element('section', 'li-type-uses')
+    const toolbar = ui.element('div', 'li-type-use-toolbar')
+    const byPage = new Map()
+    for (const hit of entry.occurrences) {
+      if (scopedPage !== null && hit.pageId !== scopedPage) continue
+      if (!byPage.has(hit.pageId)) byPage.set(hit.pageId, [])
+      byPage.get(hit.pageId).push(hit)
+    }
+    const ordered = pages.flatMap(page => byPage.get(page.id) ?? [])
+    let index = -1
+    let stepping = false
+    async function stepTo(hit) {
+      if (!hit || stepping) return
+      stepping = true
+      try { await reveal(hit) }
+      finally { stepping = false }
+    }
+    const previous = ui.action('Previous use', 'chevronDown', () => stepTo(ordered[index - 1]))
+    previous.classList.add('li-type-previous')
+    const next = ui.action('Next use', 'chevronDown', () => stepTo(ordered[index + 1]))
+    if (scopedPage !== null) {
+      toolbar.append(countLabel(ordered.length))
+    }
+    toolbar.append(scope, previous, next)
+    element.setAttribute('aria-label', 'Text uses')
+    element.append(toolbar)
+    const groups = new Map()
+    const rows = new Map()
+    const collapse = ui.action('Collapse all pages', 'collapsePages', () => {
+      expanded.clear()
+      for (const group of groups.values()) group.open = false
+      collapse.disabled = true
+    })
+    if (scopedPage === null && ordered.length) {
+      toolbar.append(collapse)
+    }
+    for (const page of pages) {
+      const hits = byPage.get(page.id)
+      if (!hits) continue
+      let parent = element
+      if (scopedPage === null) {
+        const group = ui.sidebarDisclosure('', 'li-type-page', expanded.has(page.id))
+        const summary = group.firstElementChild
+        const label = ui.element('span', 'li-type-page-name', page.label)
+        ui.setTooltip(summary, page.label)
+        summary.append(ui.icon('frame'), label, countLabel(hits.length))
+        group.ontoggle = () => {
+          if (!element.isConnected) return
+          if (group.open) expanded.add(page.id)
+          else expanded.delete(page.id)
+          collapse.disabled = ![...groups.values()].some(item => item.open)
+        }
+        element.append(group)
+        groups.set(page.id, group)
+        parent = group
+      }
+      for (const hit of hits) {
+        const row = occurrenceRow(hit)
+        parent.append(row)
+        rows.set(hit, row)
+      }
+    }
+    collapse.disabled = ![...groups.values()].some(item => item.open)
+    if (!ordered.length) element.append(ui.element('p', 'li-var-message', 'No uses in this scope.'))
+    element.onkeydown = event => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+          !['ArrowDown', 'ArrowUp'].includes(event.key) || !event.target.closest('.li-type-use')) return
+      event.preventDefault()
+      const row = event.target.closest('.li-type-use')
+      const rowIndex = ordered.findIndex(hit => rows.get(hit) === row)
+      const hit = ordered[rowIndex + (event.key === 'ArrowDown' ? 1 : -1)]
+      void stepTo(hit)
+    }
+    function select(hit, scroll) {
+      index = ordered.indexOf(hit)
+      previous.disabled = index <= 0
+      next.disabled = index >= ordered.length - 1
+      if (!scroll || index < 0) return
+      const group = groups.get(hit.pageId)
+      if (group) {
+        expanded.add(hit.pageId)
+        group.open = true
+        collapse.disabled = false
+      }
+      const row = rows.get(hit)
+      row.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      if (element.getRootNode().activeElement?.closest('.li-type-use')) row.focus({ preventScroll: true })
+    }
+    return { element, select }
   }
 
   ui.openInventoryTypeDetails = (anchor, entry, openCreate, finished, created) => {
