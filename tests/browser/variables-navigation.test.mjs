@@ -2,6 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHarness } from './harness.mjs'
 
+async function chooseCategory(sidebar, category) {
+  await sidebar.locator('.li-var-category').click()
+  await sidebar.getByRole('menuitemradio', { name: category, exact: true }).click()
+}
+
 test('Variables reveals the exact occurrence in Inspector and keeps the canvas inventory in place', async () => {
   const h = await createHarness({
     canvas: true, dock: true,
@@ -15,25 +20,28 @@ test('Variables reveals the exact occurrence in Inspector and keeps the canvas i
     assert.equal(await sidebar.isVisible(), false)
     await h.open()
     await sidebar.getByRole('button', { name: 'Variables', exact: true }).click()
-    await sidebar.getByRole('button', { name: 'Spacing', exact: true }).click()
+    await chooseCategory(sidebar, 'Spacing')
     await sidebar.getByRole('button', { name: /16px.*padding/ }).waitFor()
-    await sidebar.getByRole('button', { name: 'Typography', exact: true }).click()
+    await chooseCategory(sidebar, 'Typography')
     await sidebar.locator('button.li-type-body').filter({ hasText: /· 32\// }).click()
     await sidebar.getByRole('button', { name: 'Two', exact: true }).click()
     const outline = h.app.locator('#localhost-inspector-outlines #outline')
     assert.deepEqual(await outline.boundingBox(), await h.app.locator('#second-label').boundingBox())
     await h.page.locator('#flow-toggle').click()
     await h.page.locator('#viewport').click({ position: { x: 5, y: 5 } })
-    await sidebar.getByRole('button', { name: 'Color', exact: true }).click()
+    await sidebar.getByRole('button', { name: 'Back', exact: true }).click()
+    await chooseCategory(sidebar, 'Color')
     await sidebar.getByRole('button', { name: /Unnamed color #F1F5F9 · 50%/ }).waitFor()
     await sidebar.getByRole('button', { name: /Border #DDDDDD 0/ }).waitFor()
     const white = sidebar.getByRole('button', { name: /Unnamed color #FFFFFF/ })
     const cover = h.app.locator('#second-label')
     const readAlpha = node => window.LocalhostInspector.colorChannels(getComputedStyle(node).backgroundColor)[3]
+    // The dismissed category menu can leave the pointer over a color row.
+    await sidebar.getByRole('button', { name: 'Sort colors by similarity' }).hover()
     assert.equal(await cover.evaluate(readAlpha), 255)
     await white.hover()
     assert.ok(await cover.evaluate(readAlpha) < 30, 'A covering child reveals the inspected parent fill')
-    await sidebar.getByRole('heading', { name: 'Selection colors' }).hover()
+    await sidebar.getByRole('button', { name: 'Sort colors by similarity' }).hover()
     const primary = sidebar.getByRole('button', { name: /Primary #[A-F0-9]{6} 1/ })
     const other = h.app.locator('#other')
     const readFill = node => Array.from(window.LocalhostInspector.colorChannels(getComputedStyle(node).backgroundColor))
@@ -53,7 +61,7 @@ test('Variables reveals the exact occurrence in Inspector and keeps the canvas i
     assert.notEqual(await text.evaluate(node => getComputedStyle(node).color), originalText)
     assert.equal(await primary.locator('svg').count(), 0)
     await primary.click({ position: { x: 2, y: 12 } })
-    await sidebar.getByRole('heading', { name: 'Selection colors' }).hover()
+    await sidebar.getByRole('button', { name: 'Sort colors by similarity' }).hover()
     assert.equal(await primary.getAttribute('aria-pressed'), 'true')
     assert.notEqual(await text.evaluate(node => getComputedStyle(node).color), originalText)
     await primary.click()
@@ -67,7 +75,7 @@ test('Variables reveals the exact occurrence in Inspector and keeps the canvas i
     assert.deepEqual(await outline.boundingBox(), await h.app.locator('#other').boundingBox())
     assert.equal(await h.host.locator('#design-tab').getAttribute('aria-selected'), 'true')
 
-    await sidebar.getByRole('button', { name: 'All colors', exact: true }).click()
+    await sidebar.getByRole('button', { name: 'Back', exact: true }).click()
     const rawColor = sidebar.getByRole('button', { name: /Unnamed color #DDDDDD 2/ })
     await rawColor.hover()
     await rawColor.locator('..').getByRole('button', { name: /Open occurrences/ }).click()
@@ -146,11 +154,7 @@ test('oversized typography fits the inventory tile while details retain its actu
     }
     assert.equal(await row.getByRole('button').count(), 1)
     await row.getByRole('button').click()
-    await sidebar.getByRole('button', { name: 'This page' }).click()
-    await sidebar.getByRole('menuitemradio', { name: 'All pages', exact: true }).click()
     await sidebar.locator('.li-type-page > summary').filter({ hasText: 'Fixture' }).waitFor()
-    await sidebar.getByRole('button', { name: 'All pages', exact: true }).click()
-    await sidebar.getByRole('menuitemradio', { name: 'This page' }).click()
     await sidebar.getByRole('button', { name: 'Two', exact: true }).waitFor()
     await sidebar.getByRole('button', { name: /View typography details/ }).click()
     const detail = sidebar.getByRole('dialog').locator('.li-text-style-specimen span:visible')
@@ -166,8 +170,8 @@ test('screen spacing previews the gap, pins it, and opens occurrences separately
   try {
     await h.open()
     const sidebar = h.page.locator('#workspace-sidebar')
-    await sidebar.getByRole('button', { name: 'Variables', exact: true }).click()
-    await sidebar.getByRole('button', { name: 'Spacing', exact: true }).click()
+    await sidebar.getByRole('button', { name: 'File', exact: true }).click()
+    await chooseCategory(sidebar, 'Spacing')
     const gap = sidebar.getByRole('button', { name: /^8px.*gap/ })
     const away = sidebar.locator('summary').filter({ hasText: 'Unstyled' })
     const bands = h.app.locator('#localhost-inspector-spacing-preview i')
@@ -199,16 +203,53 @@ test('arrow keys browse visible variable rows in displayed order', async () => {
     const sidebar = h.page.locator('#workspace-sidebar')
     await sidebar.getByRole('button', { name: 'Variables', exact: true }).click()
     for (const [category, selector] of [['Typography', '.li-type-body'], ['Spacing', '.li-var-value'], ['Color', '.li-var-color-row']]) {
-      const tab = sidebar.getByRole('button', { name: category, exact: true })
-      await tab.click()
+      await chooseCategory(sidebar, category)
+      const categoryTrigger = sidebar.locator('.li-var-category')
       const rows = sidebar.locator('button' + selector + ':visible')
       await rows.nth(1).waitFor()
-      await tab.press('ArrowDown')
+      await categoryTrigger.press('ArrowDown')
       assert.ok(await rows.first().evaluate(el => el.matches(':focus')))
       await h.page.keyboard.press('ArrowDown')
       assert.ok(await rows.nth(1).evaluate(el => el.matches(':focus')))
       await h.page.keyboard.press('ArrowUp')
       assert.ok(await rows.first().evaluate(el => el.matches(':focus')))
     }
+  } finally { await h.close() }
+})
+
+test('All text selects the live matches together and collapse keeps the style accessible', async () => {
+  const h = await createHarness({ canvas: true, dock: true })
+  try {
+    await h.app.evaluate(() => {
+      const sample = document.querySelector('#second-label')
+      const copy = sample.cloneNode(true)
+      copy.removeAttribute('id')
+      copy.style.font = getComputedStyle(sample).font
+      copy.textContent = 'Second use'
+      sample.after(copy)
+    })
+    await h.open()
+    const sidebar = h.page.locator('#workspace-sidebar')
+    await chooseCategory(sidebar, 'Text styles')
+    const fold = sidebar.locator('.li-audit-collapse')
+    await fold.click()
+    assert.equal(await sidebar.locator('.li-type-group[open]').count(), 0)
+    await fold.click()
+    await sidebar.locator('button.li-type-body').filter({ hasText: /· 32\// }).first().click()
+    const all = sidebar.getByRole('button', { name: /All text/ })
+    const rows = sidebar.locator('.li-type-use')
+    const count = await rows.count()
+    assert.ok(count >= 2)
+    await rows.first().hover()
+    await h.app.locator('#hover-outline').waitFor()
+    await all.click()
+    assert.equal(await all.getAttribute('aria-pressed'), 'true')
+    assert.equal(await h.app.locator('#related-outlines > div').count(), count)
+    await fold.click()
+    assert.equal(await rows.first().isVisible(), false)
+    await fold.click()
+    await rows.first().click()
+    assert.equal(await h.app.locator('#related-outlines > div').count(), 0)
+    assert.equal(await all.getAttribute('aria-pressed'), 'false')
   } finally { await h.close() }
 })

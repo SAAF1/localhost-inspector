@@ -10,6 +10,10 @@
     onSelect: () => {
       if (!selection.current && isFloating()) setOpen(false)
       renderSelection()
+      if (host.hasAttribute('data-workspace-toolbar')) {
+        const target = selection.current?.isConnected ? selection.current : document
+        ui.dispatchNodeList(target, 'workspace-inspector-selection', selection.group)
+      }
     },
     inspect: () => editsUI.showDesign(),
     openPanel: () => setOpen(true, isCanvasExpanded?.() && !host.ownerDocument.body.hasAttribute('data-sidebar-open')),
@@ -317,13 +321,15 @@
     const node = selection.current
     const hasSelection = Boolean(node?.isConnected)
     const canvasPaint = isCanvasExpanded?.() && ui.syncCanvasBackground(host, colorCatalog)
-    const canvasSection = !hasSelection && ui.canvasBackgroundSection({
+    const groupCount = selection.group.length
+    const canvasSection = !groupCount && !hasSelection && ui.canvasBackgroundSection({
       host, colorCatalog, paint: canvasPaint, refresh: () => renderFields({ keepPopup: true }), status,
     })
-    get('guidance').hidden = hasSelection || Boolean(canvasSection)
+    get('guidance').hidden = Boolean(groupCount) || hasSelection || Boolean(canvasSection)
     const name = get('selected-name')
-    name.hidden = !hasSelection
-    get('parent').parentElement.parentElement.toggleAttribute('data-no-selection', !hasSelection)
+    name.hidden = !hasSelection && !groupCount
+    if (groupCount) name.textContent = groupCount + ' text layers'
+    get('parent').parentElement.parentElement.toggleAttribute('data-no-selection', !hasSelection && !groupCount)
     if (hasSelection) {
       const label = node.getAttribute('aria-label') || (node.matches('a, button, h1, h2, h3, label') && node.textContent.trim()) ||
         node.getAttribute('data-slot') || ({ div: 'Container', span: 'Text', tr: 'Row', td: 'Cell' }[node.localName] ?? node.localName)
@@ -630,6 +636,15 @@
         }
       }, { background: true, keepPopup: true, rethrow: true }),
     })
+    document.addEventListener('preview-inspector-text', event => selection.previewText(ui.readNodeList(event)))
+    document.addEventListener('select-inspector-text', event => {
+      const nodes = ui.readNodeList(event)
+      if (busy || !nodes.length) return
+      event.preventDefault()
+      editsUI.showDesign()
+      setOpen(true)
+      selection.selectText(nodes)
+    })
     document.addEventListener('select-inspector-variable-use', event => {
       const node = event.composedPath()[0]
       if (!(node instanceof HTMLElement) || !node.isConnected || busy) return
@@ -648,7 +663,7 @@
     host.addEventListener('hide-workspace-inspector', () => { closeVariablesForm(); setWorkspaceOpen(false) })
     host.addEventListener('clear-workspace-selection', event => {
       if (root.querySelector('dialog[open]')) event.preventDefault()
-      else if (selection.current || isFloating()) selection.select(null)
+      else if (selection.current || selection.group.length || isFloating()) selection.select(null)
     })
   }
   get('parent').onclick = () => {

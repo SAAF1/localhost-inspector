@@ -12,6 +12,8 @@ const assets = new Map([
   ['color-preview.mjs', ['color-preview.mjs', 'text/javascript']],
   ['spacing-preview.mjs', ['spacing-preview.mjs', 'text/javascript']],
   ['workspace-sidebar.mjs', ['workspace-sidebar.mjs', 'text/javascript']],
+  ['workspace-layers.mjs', ['workspace-layers.mjs', 'text/javascript']],
+  ['workspace-layers.css', ['workspace-layers.css', 'text/css']],
   ['sidebar.css', ['sidebar.css', 'text/css']],
   ['view-controls.mjs', ['view-controls.mjs', 'text/javascript']],
   ['frame-view.mjs', ['frame-view.mjs', 'text/javascript']],

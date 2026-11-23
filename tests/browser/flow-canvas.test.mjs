@@ -231,6 +231,40 @@ test('flow headers disclose their screens and use the same names as the canvas',
   } finally { await h.close() }
 })
 
+test('File detail collapses Flows, remembers its split, and opens the same style in Variables', async () => {
+  const h = await createHarness({ canvas: true, dock: true })
+  try {
+    await h.open()
+    const sidebar = h.page.locator('#workspace-sidebar')
+    const flows = sidebar.getByRole('button', { name: 'Flows', exact: true })
+    const divider = sidebar.getByRole('separator', { name: 'Resize Flows' })
+    await divider.press('ArrowDown')
+    const height = (await sidebar.locator('.files').boundingBox()).height
+    await sidebar.getByRole('button', { name: 'Layers', exact: true }).click()
+    await sidebar.getByRole('menuitemradio', { name: 'Text styles' }).click()
+    const style = sidebar.locator('button.li-type-body').filter({ hasText: 'Bold' }).first()
+    await style.click()
+    const back = await sidebar.getByRole('button', { name: 'Back', exact: true }).boundingBox()
+    const detail = await sidebar.locator('.li-var-detail').boundingBox()
+    assert.ok(back.y + back.height <= detail.y, 'Back sits above the style header')
+    assert.equal(await flows.getAttribute('aria-expanded'), 'false')
+    assert.equal(await sidebar.locator('.li-var-category').count(), 0)
+    await flows.click()
+    assert.equal((await sidebar.locator('.files').boundingBox()).height, height)
+    await sidebar.getByRole('button', { name: 'Back', exact: true }).click()
+    await style.click()
+    await sidebar.getByRole('button', { name: 'Open in Variables' }).click()
+    await sidebar.locator('.li-type-page').first().waitFor()
+    assert.equal(await sidebar.locator('.li-var-category').count(), 0)
+    assert.equal(await sidebar.locator('.li-var-detail').innerText().then(text => text.includes('Bold')), true)
+    await sidebar.getByRole('button', { name: 'Back', exact: true }).click()
+    await sidebar.getByRole('button', { name: 'Typography', exact: true }).waitFor()
+    await sidebar.getByRole('button', { name: 'File', exact: true }).click()
+    assert.equal(await flows.getAttribute('aria-expanded'), 'true')
+    assert.equal((await sidebar.locator('.files').boundingBox()).height, height)
+  } finally { await h.close() }
+})
+
 test('canvas view settings resize the real app and reflow rows without moving the camera', async () => {
   const h = await createHarness({
     canvas: true, dock: true, flowFrames: lifecycleFrames,
@@ -646,5 +680,36 @@ test('frame switches show loading only after the grace period and clear it on ca
     await toggle.dispatchEvent('click')
     assert.equal(await slowCard.getAttribute('data-loading'), null)
     assert.equal(await settings.getAttribute('data-busy'), null)
+  } finally { await h.close() }
+})
+
+test('canvas and Layers share inspector selection and clearing', async () => {
+  const h = await createHarness({
+    canvas: true, dock: true, flowFrames: lifecycleFrames,
+    flowPages: { ...flowPages, '/': { body: '<main><h1>Home</h1><section><h2 id="layer-target">Layer target</h2><p>Another layer</p></section></main>' } },
+  })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    await h.open()
+    const tree = h.page.getByRole('tree', { name: 'Layers', exact: true })
+    await tree.waitFor()
+    const selected = tree.locator('[aria-selected="true"]')
+    assert.equal(await tree.getByRole('treeitem', { name: 'Layer target', exact: true }).count(), 0)
+    const fold = h.page.getByRole('button', { name: 'Collapse layers', exact: true })
+    await fold.click()
+    assert.equal(await tree.locator('[aria-expanded=true]').count(), 0)
+    assert.ok(await tree.getByRole('treeitem').count() > 0)
+    await h.page.getByRole('button', { name: 'Expand layers', exact: true }).click()
+    await tree.getByRole('treeitem', { name: 'Layer target', exact: true }).waitFor()
+    await fold.click()
+    await h.select('#layer-target')
+    await selected.filter({ hasText: 'Layer target' }).waitFor()
+    const other = tree.getByRole('treeitem', { name: 'Another layer', exact: true })
+    await other.press('Enter')
+    assert.equal(await other.getAttribute('aria-selected'), 'true')
+    assert.equal(await h.host.locator('#selected-name').textContent(), 'P')
+    await h.page.keyboard.press('Escape')
+    await selected.waitFor({ state: 'detached' })
+    await h.app.locator('#localhost-inspector-outlines #outline').waitFor({ state: 'hidden' })
   } finally { await h.close() }
 })

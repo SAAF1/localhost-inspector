@@ -140,7 +140,9 @@
     const related = ui.element('div')
     related.id = 'related-outlines'
     related.setAttribute('aria-hidden', 'true')
-    outlineRoot.append(related, hoverOutline, outline)
+    const textHover = ui.element('div')
+    textHover.id = 'text-hover-outlines'
+    outlineRoot.append(related, textHover, hoverOutline, outline)
     root.append(entry, pendingLauncher, panel)
     function setOpen(open, floating = false) {
       panel.hidden = !open

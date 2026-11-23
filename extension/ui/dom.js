@@ -1,5 +1,29 @@
 (() => {
   const ui = window.LocalhostInspector ||= {}
+  // Chrome isolates extension and page JavaScript. Event targets preserve node
+  // identity across that boundary, including for identical text on one page.
+  ui.dispatchNodeList = (target, type, nodes) => {
+    const doc = target.ownerDocument ?? target
+    const send = () => {
+      for (const node of nodes) node.dispatchEvent(new Event(type + '-node', { bubbles: true, composed: true }))
+    }
+    doc.addEventListener(type + '-read', send)
+    try { return !target.dispatchEvent(new Event(type, { bubbles: true, composed: true, cancelable: true })) }
+    finally { doc.removeEventListener(type + '-read', send) }
+  }
+  ui.readNodeList = event => {
+    const doc = event.currentTarget
+    const nodes = new Set()
+    const collect = item => {
+      const node = item.composedPath()[0]
+      if (node?.nodeType === 1 && node.ownerDocument === doc && node.isConnected) nodes.add(node)
+    }
+    doc.addEventListener(event.type + '-node', collect, true)
+    try { doc.dispatchEvent(new Event(event.type + '-read')) }
+    finally { doc.removeEventListener(event.type + '-node', collect, true) }
+    return [...nodes]
+  }
+
   ui.element = (tag, className = '', text) => {
     const element = document.createElement(tag)
     element.className = className

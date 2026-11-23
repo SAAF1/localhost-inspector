@@ -21,6 +21,23 @@
     word ? word[0].toUpperCase() + word.slice(1) : word).join(' ')
   const simpleLabel = id => id.replace(/^--(?:color-)?/, '')
   const compact = text => text.replace(/\s+/g, ' ').trim()
+  const componentLabel = slot => slot.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[-_]+/g, ' ').trim().replace(/\b[a-z]/g, letter => letter.toUpperCase()) || slot
+
+  function registeredDefinition(node) {
+    if (!node.hasAttribute('data-inspector-component')) return null
+    const descriptor = node.getAttribute('data-inspector-component-definition')
+    if (!descriptor) return null
+    try {
+      const parts = JSON.parse(descriptor)
+      if (!Array.isArray(parts) || parts.length !== 2) return null
+      const [library, name] = parts
+      return typeof library === 'string' && typeof name === 'string' && name.trim() ?
+        { library: library.trim(), name: name.trim() } : null
+    } catch {
+      return null
+    }
+  }
 
   function occurrenceLabel(node, text) {
     const accessible = node.getAttribute('aria-label') || node.getAttribute('alt')
@@ -138,6 +155,16 @@
         const add = (item, property, edges) => item.occurrences.push({
           pageId: page.id, label: label.slice(0, 120), property, node, key, ...(edges ? { edges } : {}),
         })
+        const slot = node.getAttribute('data-slot')?.trim()
+        const definition = registeredDefinition(node)
+        if (definition) {
+          const { library, name } = definition
+          const value = library ? name + ' · ' + library : name
+          add(entry('component', JSON.stringify(['definition', library, name]), name, value), 'component')
+        } else if (slot) {
+          // Keep the exact slot as identity; similarly formatted labels can name different slots.
+          add(entry('component', 'slot', componentLabel(slot), slot), 'component')
+        }
         if (text || controlText || (field && node.value)) {
           const textStyle = placeholder ? win.getComputedStyle(node, '::placeholder') : style
           const values = Object.fromEntries(cssKeys.map(key => [key, textStyle.getPropertyValue(key)]))
@@ -215,7 +242,7 @@
         occurrence.unique = counts.get(JSON.stringify([occurrence.property, occurrence.key])) === 1
       }
     }
-    return { page, entries: [...entries.values()] }
+    return { page, entries: [...entries.values()], componentCoverage: 'rendered-markers' }
   }
 
   ui.variablesInventory = scans => {

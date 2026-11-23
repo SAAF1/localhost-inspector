@@ -41,7 +41,7 @@
     for (const target of [box, short, long].filter(Boolean)) observer.observe(target)
   }
 
-  ui.typographyInventoryRow = (entry, count, family, openOccurrences, openDetails) => {
+  ui.typographyInventoryRow = (entry, count, family, openOccurrences, openDetails, jump) => {
     const value = entry.value
     const label = entry.name || [ui.weightName(value.fontWeight), value.fontStyle !== 'normal' && value.fontStyle].filter(Boolean).join(' ')
     const row = ui.element('div', 'li-type-row')
@@ -67,12 +67,13 @@
       button.classList.add('li-type-action', 'li-layout-settings-trigger')
       button.setAttribute('aria-haspopup', 'dialog')
       button.setAttribute('aria-expanded', 'false')
+      if (jump) row.append(jump)
       row.append(button)
     }
     return row
   }
 
-  ui.typeUsesList = ({ entry, pages, scopedPage, scope, expanded, countLabel, occurrenceRow, reveal }) => {
+  ui.typeUsesList = ({ entry, pages, scopedPage, expanded, countLabel, occurrenceRow, reveal, navigation, previewText, selectText }) => {
     const element = ui.element('section', 'li-type-uses')
     const toolbar = ui.element('div', 'li-type-use-toolbar')
     const byPage = new Map()
@@ -93,22 +94,25 @@
     const previous = ui.action('Previous use', 'chevronDown', () => stepTo(ordered[index - 1]))
     previous.classList.add('li-type-previous')
     const next = ui.action('Next use', 'chevronDown', () => stepTo(ordered[index + 1]))
-    if (scopedPage !== null) {
-      toolbar.append(countLabel(ordered.length))
-    }
-    toolbar.append(scope, previous, next)
-    element.setAttribute('aria-label', 'Text uses')
-    element.append(toolbar)
+    const text = entry.category === 'typography'
+    let all
+    if (text) {
+      navigation.append(previous, next)
+      if (scopedPage !== null) {
+        all = ui.element('button', 'li-all-text', 'All text')
+        all.type = 'button'
+        all.disabled = !ordered.length
+        all.append(countLabel(ordered.length))
+        all.onclick = () => selectText(ordered)
+        all.onpointerenter = () => previewText(ordered)
+        all.onpointerleave = () => previewText([])
+        element.append(all)
+      }
+    } else toolbar.append(countLabel(ordered.length), previous, next)
+    element.setAttribute('aria-label', entry.category === 'component' ? 'Component instances' : 'Text uses')
+    if (!text) element.append(toolbar)
     const groups = new Map()
     const rows = new Map()
-    const collapse = ui.action('Collapse all pages', 'collapsePages', () => {
-      expanded.clear()
-      for (const group of groups.values()) group.open = false
-      collapse.disabled = true
-    })
-    if (scopedPage === null && ordered.length) {
-      toolbar.append(collapse)
-    }
     for (const page of pages) {
       const hits = byPage.get(page.id)
       if (!hits) continue
@@ -123,7 +127,6 @@
           if (!element.isConnected) return
           if (group.open) expanded.add(page.id)
           else expanded.delete(page.id)
-          collapse.disabled = ![...groups.values()].some(item => item.open)
         }
         element.append(group)
         groups.set(page.id, group)
@@ -135,7 +138,6 @@
         rows.set(hit, row)
       }
     }
-    collapse.disabled = ![...groups.values()].some(item => item.open)
     if (!ordered.length) element.append(ui.element('p', 'li-var-message', 'No uses in this scope.'))
     element.onkeydown = event => {
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
@@ -155,13 +157,21 @@
       if (group) {
         expanded.add(hit.pageId)
         group.open = true
-        collapse.disabled = false
       }
       const row = rows.get(hit)
       row.scrollIntoView({ block: 'nearest', inline: 'nearest' })
       if (element.getRootNode().activeElement?.closest('.li-type-use')) row.focus({ preventScroll: true })
     }
-    return { element, select }
+    function markSelection(nodes) {
+      if (!text) return
+      const selected = new Set(nodes)
+      for (const [hit, row] of rows) {
+        if (selected.has(hit.node)) row.setAttribute('aria-current', 'true')
+        else row.removeAttribute('aria-current')
+      }
+      all?.setAttribute('aria-pressed', String(ordered.length > 0 && ordered.every(hit => selected.has(hit.node))))
+    }
+    return { element, select, markSelection }
   }
 
   ui.openInventoryTypeDetails = (anchor, entry, openCreate, finished, created) => {

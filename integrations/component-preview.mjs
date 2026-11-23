@@ -2,6 +2,7 @@
 // dispose on unmount. Slot writes must settle after the app commits its render.
 const binding = Symbol.for('localhost-inspector.component.v1')
 const marker = 'data-inspector-component'
+const definitionMarker = 'data-inspector-component-definition'
 
 function sameSlot(left, right) {
   return left.value === right.value && left.visible === right.visible
@@ -82,9 +83,15 @@ export function registerComponent(root, definition, instance) {
   const api = { inspect, preview }
   root[binding] = api
   root.setAttribute(marker, id)
+  if (typeof definition.name === 'string' && definition.name.trim()) {
+    root.setAttribute(definitionMarker, JSON.stringify([definition.library ?? '', definition.name]))
+  }
   return () => {
     if (root[binding] !== api) return
     delete root[binding]
-    if (root.getAttribute(marker) === id) root.removeAttribute(marker)
+    if (root.getAttribute(marker) === id) {
+      root.removeAttribute(marker)
+      root.removeAttribute(definitionMarker)
+    }
   }
 }

@@ -72,7 +72,7 @@
 
   ui.mountPopup = mountPopup
 
-  ui.openMenu = (anchor, options, current, onChoose, { label = 'Options', size = false, commands = false, description, parent, onPreview, onClose, below = false } = {}) => {
+  ui.openMenu = (anchor, options, current, onChoose, { label = 'Options', size = false, commands = false, description, parent, onPreview, onClose, below = false, align = 'end' } = {}) => {
     const root = anchor.getRootNode()
     const menu = ui.element('div', 'li-menu' + (size ? ' li-size-menu' : ''))
     if (parent) menu.classList.add('li-settings-menu')
@@ -141,7 +141,7 @@
     }
     const selected = Math.max(0, options.findIndex(([value]) => value === current))
     const close = mountPopup(anchor, menu, (rect, width) => [
-      rect.right - width, parent ? rect.bottom + 3 : rect.top - selected * 24 - 8,
+      align === 'start' ? rect.left : rect.right - width, parent ? rect.bottom + 3 : rect.top - selected * 24 - 8,
     ], { parent, onClose, below, closeOnPanelScroll: below })
     menu.tabIndex = -1
     const focusTarget = buttons[selected] ?? menu

@@ -1,3 +1,4 @@
+import { createWorkspaceLayers } from './workspace-layers.mjs'
 import { isolateColor } from './color-preview.mjs'
 import { previewSpacing } from './spacing-preview.mjs'
 import './tokens.js'
@@ -41,7 +42,46 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   const nextControl = inspectorToggle.nextElementSibling
   header.append(name)
   const files = ui.element('section', 'files')
-  files.append(ui.element('h2', '', 'Flows'))
+  const flowsToggle = ui.element('button', 'flows-toggle', 'Flows')
+  flowsToggle.prepend(ui.icon('chevronRight'))
+  const roster = ui.element('div', 'flow-roster')
+  files.append(flowsToggle, roster)
+  const split = ui.element('div', 'flow-split')
+  split.tabIndex = 0
+  split.setAttribute('role', 'separator')
+  split.setAttribute('aria-label', 'Resize Flows')
+  split.setAttribute('aria-orientation', 'horizontal')
+  let flowsExpanded = true
+  let savedHeight = 220
+  try { savedHeight = Number(sessionStorage.getItem('inspectorFlowsHeight')) || savedHeight } catch {}
+  function setFlowsExpanded(value) {
+    flowsExpanded = value
+    flowsToggle.setAttribute('aria-expanded', String(value))
+    roster.hidden = !value
+    files.style.height = value ? savedHeight + 'px' : 'auto'
+    split.setAttribute('aria-valuenow', String(value ? savedHeight : flowsToggle.offsetHeight))
+  }
+  function resizeFlows(height) {
+    savedHeight = Math.round(Math.max(64, Math.min(Math.max(64, pane.clientHeight - 148), height)))
+    try { sessionStorage.setItem('inspectorFlowsHeight', String(savedHeight)) } catch {}
+    setFlowsExpanded(true)
+  }
+  flowsToggle.onclick = () => setFlowsExpanded(!flowsExpanded)
+  split.onpointerdown = event => {
+    split.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+  split.onpointermove = event => {
+    if (split.hasPointerCapture(event.pointerId)) resizeFlows(event.clientY - files.getBoundingClientRect().top)
+  }
+  split.onkeydown = event => {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return
+    event.preventDefault()
+    resizeFlows(files.offsetHeight + (event.key === 'ArrowDown' ? 8 : -8))
+  }
+  setFlowsExpanded(true)
+  let fileDetail = false
+  let restoreExpanded = true
   const flowButtons = new Map()
   function screenButton(frame, label, className) {
     const button = ui.element('button', className, label)
@@ -52,7 +92,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   }
   for (const group of groups) {
     if (group.frames.length === 1) {
-      files.append(screenButton(group.frames[0], group.label, 'flow-group single-flow'))
+      roster.append(screenButton(group.frames[0], group.label, 'flow-group single-flow'))
       continue
     }
     const section = ui.sidebarDisclosure(group.label, 'flow-group')
@@ -61,7 +101,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       button.prepend(ui.icon('frame'))
       section.append(button)
     }
-    files.append(section)
+    roster.append(section)
   }
 
   let textStyleFormRequest = 0
@@ -107,9 +147,46 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       restoreColor = isolateColor(doc, liveScan.entries, entry.id, ui.colorChannels(entry.value))
     }
   }
+  const layers = createWorkspaceLayers({getDocument: () => getFrame().contentDocument, selectNode: focusResult})
+  let selectionDocument
+  function syncLayerSelection(event) {
+    if (event.currentTarget !== getFrame().contentDocument) return
+    const selected = event.composedPath()[0]
+    const group = ui.readNodeList(event)
+    layers.setSelected(selected === selectionDocument ? null : selected, group)
+    panel.setTextSelection(group.length ? group : selected === selectionDocument ? [] : [selected])
+  }
+  function watchLayerSelection() {
+    const doc = getFrame().contentDocument
+    if (doc === selectionDocument) return
+    selectionDocument?.removeEventListener('workspace-inspector-selection', syncLayerSelection, true)
+    selectionDocument = doc
+    selectionDocument?.addEventListener('workspace-inspector-selection', syncLayerSelection, true)
+  }
+  watchLayerSelection()
+  let destination = 'File'
+  const pageScope = () => selectedRoute() ?? livePage()?.id
   const panel = ui.createVariablesPanel({
+    renderLayers: layers.render,
+    onOpenProject: entry => show('Variables', entry),
+    onDetailChange(detail) {
+      if (destination !== 'File' || fileDetail === detail) return
+      fileDetail = detail
+      if (detail) restoreExpanded = flowsExpanded
+      setFlowsExpanded(detail ? false : restoreExpanded)
+    },
     currentPageId: () => selectedRoute() ?? livePage()?.id,
     onColorPreview: colorPreview,
+    onTextTargets(hits, select = false) {
+      const doc = getFrame().contentDocument
+      const nodes = [...new Set(hits.map(hit => hit.node))]
+      if (nodes.some(node => !node?.isConnected || node.ownerDocument !== doc)) {
+        if (select) invalidate()
+        else if (doc) ui.dispatchNodeList(doc, 'preview-inspector-text', [])
+        return false
+      }
+      return doc && ui.dispatchNodeList(doc, select ? 'select-inspector-text' : 'preview-inspector-text', nodes)
+    },
     onCreateTextStyle: openTextStyleForm,
     onSpacingPreview: hits => previewSpacing(getFrame().contentDocument, hits),
     onPage: async pageId => {
@@ -140,19 +217,20 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       }
       suppressScope++
       try { return focusResult(node) }
-      finally { activeScope = selectedRoute(); suppressScope-- }
+      finally { activeScope = pageScope(); suppressScope-- }
     },
   })
-  pane.append(header, files, panel.element)
+  pane.append(header, files, split, panel.element)
   const grip = ui.element('div', 'grip')
   grip.tabIndex = 0
   grip.setAttribute('role', 'separator')
   grip.setAttribute('aria-label', 'Resize workspace sidebar')
   grip.setAttribute('aria-orientation', 'vertical')
-  root.append(styles, layout, rail, pane, grip)
+  const layerStyles = layout.cloneNode()
+  layerStyles.href = './workspace-layers.css'
+  root.append(styles, layout, layerStyles, rail, pane, grip)
   ui.bindTooltips(root)
 
-  let destination = 'File'
   let open = false
   let navigation = 0
   let catalogs = {}
@@ -177,7 +255,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     suppressScope++
     try {
       return await navigate(frameId)
-    } finally { activeScope = selectedRoute(); suppressScope-- }
+    } finally { activeScope = pageScope(); suppressScope-- }
   }
 
   function publish() {
@@ -187,7 +265,9 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       canCreateTextStyle: catalogs.canCreateTextStyle === true,
     })
     const checked = [...mapped].filter(route => scans.has(route)).length
-    panel.setCoverage(checked < mapped.size ? checked + ' of ' + mapped.size + ' mapped pages inspected.' : '')
+    const componentsChecked = [...mapped].filter(route => scans.get(route)?.componentCoverage === 'rendered-markers').length
+    const coverage = count => count < mapped.size ? count + ' of ' + mapped.size + ' mapped pages inspected.' : ''
+    panel.setCoverage(coverage(checked), coverage(componentsChecked))
   }
 
   function observeRoot(root) {
@@ -217,15 +297,16 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   }
 
   function captureLive() {
-    if (!open || destination !== 'Variables') return
+    if (!open) return
     const page = livePage()
     const doc = getFrame().contentDocument
     if (!doc?.body || !page) return
+    if (doc !== observedDoc) panel.refreshLayers()
     observe(doc)
     if (!dirty && liveURL === doc.URL && liveScan?.page.frameId === page.frameId) return
     dirty = false
     liveURL = doc.URL
-    const scope = selectedRoute()
+    const scope = pageScope()
     const scopeChanged = !suppressScope && scope !== activeScope
     activeScope = scope
     // A cached page needs lookup evidence, not references to its detached DOM.
@@ -241,7 +322,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     else frames.delete(page.id)
     if (!data.projectName) name.textContent = doc.title || location.host
     publish()
-    if (scopeChanged) panel.setScope(scope)
+    if (scopeChanged && destination === 'File') panel.setScope(scope)
   }
 
   function invalidate() {
@@ -250,7 +331,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   }
 
   function schedule() {
-    if (!open || destination !== 'Variables' || timer) return
+    if (!open || timer) return
     // Paint the panel and any captured inventory before measuring the live app.
     timer = setTimeout(() => {
       timer = null
@@ -268,14 +349,19 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     invalidate()
   }, true)
   dock.addEventListener('variables-data-changed', () => {
-    if (open && destination === 'Variables') readCatalog()
+    if (open) readCatalog()
   }, true)
 
-  function show(view) {
+  function show(view, entry) {
+    if (destination === 'File' && view !== destination && fileDetail) {
+      setFlowsExpanded(restoreExpanded)
+      fileDetail = false
+    }
     destination = view
     if (open && view === 'File') updateFileList()
     files.hidden = view !== 'File'
-    panel.element.hidden = view !== 'Variables'
+    split.hidden = files.hidden
+    panel.element.hidden = !open
     file.setAttribute('aria-pressed', String(view === 'File'))
     variables.setAttribute('aria-pressed', String(view === 'Variables'))
     if (open && !captured) {
@@ -283,16 +369,18 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
         for (const scan of audit?.scans ?? []) {
           if (!scans.has(scan.page.id)) { scans.set(scan.page.id, scan); inventoryChanged = true }
         }
-        if (open && destination === 'Variables' && inventoryChanged) publish()
+        if (open && inventoryChanged) publish()
       }).catch(() => {}) // Legacy maps collect pages as the designer opens them.
     }
-    if (open && view === 'Variables') {
-      activeScope = selectedRoute()
+    if (open) {
+      activeScope = pageScope()
       if (inventoryChanged) publish()
-      panel.setScope(activeScope)
+      panel.setWorkspace(view === 'File', activeScope, entry)
+      panel.refreshLayers()
       readCatalog()
       schedule()
     } else {
+      layers.render(null)
       panel.clearPreview()
       panel.closePopup?.()
       clearTimeout(timer)
@@ -353,11 +441,12 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
 
   return {
     changed() {
+      watchLayerSelection()
       if (open && destination === 'File') updateFileList()
-      if (open && destination === 'Variables') queueMicrotask(() => {
-        if (!open || destination !== 'Variables') return
-        const scope = selectedRoute()
-        if (!suppressScope && scope !== activeScope) panel.setScope(scope)
+      if (open) queueMicrotask(() => {
+        if (!open) return
+        const scope = pageScope()
+        if (destination === 'File' && !suppressScope && scope !== activeScope) panel.setScope(scope)
         activeScope = scope
         schedule()
       })

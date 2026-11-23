@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { chromium } from 'playwright'
 import { join } from 'node:path'
@@ -67,5 +68,61 @@ test('Variables audits live page values, preserves named roles, and rejects ambi
     fixedLiteral: '6px', autoMargins: 0,
     pads: [['top', 'right', 'bottom', 'left'], ['top', 'right', 'bottom', 'left']],
     ambiguous: true, relocated: true, merged: 6,
+  })
+})
+
+test('Component audit keeps rendered slots and registered definitions distinct across scans', async t => {
+  const browser = await chromium.launch(process.env.INSPECTOR_BROWSER ? { executablePath: process.env.INSPECTOR_BROWSER } : {})
+  t.after(() => browser.close())
+  const page = await browser.newPage()
+  await page.route('https://app.test/', route => route.fulfill({ body: '<!doctype html>' }))
+  await page.goto('https://app.test/')
+  await page.setContent(`<button data-slot="checkbox" aria-label="Select all"></button>
+    <button data-slot="checkbox" aria-label="Select row"></button>
+    <button data-slot="checkbox" aria-label="Select row"></button>
+    <button data-slot="checkbox" hidden></button>
+    <button data-slot="icon-button">One</button><button data-slot="icon_button">Two</button>
+    <button id="first" data-slot="checkbox">First</button>
+    <button id="second">Second</button><button id="third">Third</button>
+    <button data-inspector-component="legacy-mount">Legacy</button>`)
+  const integration = await readFile(join(project, 'integrations/component-preview.mjs'), 'utf8')
+  await page.addScriptTag({ content: integration.replace('export function', 'function') })
+  await page.evaluate(() => { window.LocalhostInspector = {} })
+  for (const file of ['ui/authored-styles', 'ui/text-style-values', 'ui/color-bindings', 'ui/solid-color-picker', 'ui/spacing-gap', 'variables-audit']) {
+    await page.addScriptTag({ path: join(project, 'extension', file + '.js') })
+  }
+  const result = await page.evaluate(() => {
+    const ui = window.LocalhostInspector
+    const register = (id, library) =>
+      window.registerComponent(document.getElementById(id), { name: 'Checkbox', library }, {})
+    const dispose = register('first', 'Controls')
+    register('second', 'Controls')
+    register('third', 'Other Controls')
+    const scan = id => ui.scanVariablesPage(document, { id }).entries.filter(item => item.category === 'component')
+    const first = scan('/tasks')
+    const checkbox = first.find(item => item.value === 'checkbox')
+    const saved = structuredClone(checkbox.occurrences.map(({ node, ...hit }) => hit))
+    const live = scan('/tasks').find(item => item.id === checkbox.id)
+    const inventory = ui.variablesInventory([{ page: { id: '/tasks' }, entries: first },
+      { page: { id: '/users' }, entries: scan('/users') }])
+    dispose()
+    return {
+      types: Object.fromEntries(first.map(item => [item.value, [item.name, item.occurrences.length]])),
+      grouped: inventory.entries.find(item => item.id === checkbox.id).occurrences.length,
+      live: ui.findVariableOccurrence(live, checkbox.occurrences[1])?.node === checkbox.occurrences[1].node,
+      relocated: ui.findVariableOccurrence(live, saved[0])?.node.getAttribute('aria-label'),
+      ambiguous: ui.findVariableOccurrence(live, saved[1]) === null,
+      disposed: document.getElementById('first').hasAttribute('data-inspector-component-definition'),
+    }
+  })
+  assert.deepEqual(result, {
+    types: {
+      checkbox: ['Checkbox', 3],
+      'icon-button': ['Icon Button', 1],
+      icon_button: ['Icon Button', 1],
+      'Checkbox · Controls': ['Checkbox', 2],
+      'Checkbox · Other Controls': ['Checkbox', 1],
+    },
+    grouped: 6, live: true, relocated: 'Select all', ambiguous: true, disposed: false,
   })
 })

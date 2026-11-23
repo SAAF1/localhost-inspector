@@ -1,6 +1,8 @@
 (() => {
   const ui = window.LocalhostInspector
-  const categories = { typography: 'Typography', color: 'Color', spacing: 'Spacing' }
+  const projectCategories = { typography: 'Typography', color: 'Color', spacing: 'Spacing', component: 'Components' }
+  const fileCategories = { layers: 'Layers', component: 'Components', typography: 'Text styles', color: 'Colors', spacing: 'Spacing' }
+  const colorOrders = [['similarity', 'Similarity'], ['name', 'Name']]
   const colorProperties = { color: 'Text', 'background-color': 'Fill', 'border-color': 'Border', 'placeholder-color': 'Placeholder' }
 
   function control(className, handler, label) {
@@ -117,25 +119,27 @@
     return trailing
   }
 
-  function specimen(entry, hits, onOpen, openDetails) {
-    if (entry.category === 'typography') return ui.typographyInventoryRow(entry, countLabel(hits.length), familyNames(entry.value.fontFamily)[0] || '', onOpen, openDetails)
+  function specimen(entry, hits, onOpen, openDetails, jump) {
+    if (entry.category === 'typography') return ui.typographyInventoryRow(entry, countLabel(hits.length), familyNames(entry.value.fontFamily)[0] || '', onOpen, openDetails, jump)
     const row = onOpen ? control('li-var-value', onOpen) : ui.element('div', 'li-var-value')
     const line = ui.element('span', 'li-var-line')
     const value = entry.value
     const sample = ui.element('span', 'li-var-sample', entry.name || value)
     const properties = [...new Set(hits.map(hit => hit.property).filter(Boolean))].join(', ')
     const metadata = [entry.name && value, properties].filter(Boolean).join(' · ')
-    line.append(sample, countLabel(hits.length))
+    line.append(sample)
+    if (onOpen) line.append(countLabel(hits.length))
     row.append(line)
     if (metadata) row.append(ui.element('span', 'li-var-meta', metadata))
     return row
   }
 
-  ui.createVariablesPanel = ({ onReveal, onPage, currentPageId, onCreateTextStyle, onSpacingPreview, onColorPreview } = {}) => {
+  ui.createVariablesPanel = ({ onReveal, currentPageId, onCreateTextStyle, onSpacingPreview, onColorPreview, onTextTargets, onDetailChange, onOpenProject, renderLayers } = {}) => {
     const element = ui.element('section', 'li-variables')
     element.setAttribute('aria-label', 'Variables')
     const styles = ui.element('style', '', ui.variablesStyles)
     const body = ui.element('div', 'li-variables-body')
+    const layerMount = ui.element('div', 'li-variables-layers')
     body.addEventListener('keydown', event => {
       if (event.defaultPrevented || event.altKey || event.metaKey || event.ctrlKey || event.shiftKey ||
         !['ArrowUp', 'ArrowDown'].includes(event.key)) return
@@ -166,13 +170,24 @@
     const sharedFonts = new Set()
     let inventory = { pages: [], entries: [] }
     let category = 'typography'
+    let file = false
+    let fileCategory = 'layers'
+    let projectCategory = 'typography'
     let colorOrder = 'similarity'
-    let mode = 'all'
     let scopedPage = null
-    let automaticScope = false
+    let workspacePage = null
+    let detailVisible = false
+    let inventoryCoverage = ''
+    let componentCoverage = ''
+    let menuClose
+    let refreshAfterMenu = false
     let selectedEntry = null
+    const expandedColorPages = new Set()
+    const foldedLists = new Set()
     let resultPage = null
     let expandedTypePages = null
+    let textSelection = []
+    let markTextSelection
     let syncTypeSelection
     let selectedHit = null
     let revealRequest = 0
@@ -206,6 +221,7 @@
       if (entry?.category === 'spacing') stopPreview = onSpacingPreview?.(entry.occurrences.filter(hit => hit.pageId === scopedPage))
     }
     function clearPreview() {
+      onTextTargets?.([])
       pinnedEntry = null
       preview(null)
     }
@@ -233,8 +249,11 @@
     }
 
     function clearDetails() {
+      refreshAfterClose = false
       clearPreview()
       closePopup()
+      closeMenu()
+      expandedColorPages.clear()
       expandedTypePages = null
       selectedEntry = resultPage = selectedHit = null
       revealRequest++
@@ -249,9 +268,9 @@
       body.querySelector(focus)?.focus({ preventScroll: true })
     }
 
-    function back(label, handler) {
-      const button = control('li-var-back', () => navigate(handler, '.li-var-control'))
-      button.append(ui.icon('chevronRight'), ui.element('span', '', label))
+    function back(handler = clearDetails) {
+      const button = ui.action('Back', 'chevronRight', () => navigate(handler, '.li-var-category'))
+      button.classList.add('li-var-back')
       return button
     }
 
@@ -261,82 +280,93 @@
       return row
     }
 
-    function typeScopeTitle(detail = false) {
-      const options = detail ? [['screens', 'This page'], ['all', 'All pages']] : [['screens', 'Text on this page'], ['all', 'Text on all pages']]
-      const label = options.find(([key]) => key === mode)[1]
-      const scope = control('li-var-quiet li-type-scope', () => ui.openMenu(scope, options, mode, value => {
-        if (mode === value) return
-        navigate(() => {
-          closePopup()
-          clearPreview()
-          revealRequest++
-          mode = value
-          scopedPage = value === 'screens' ? currentPageId?.() ?? null : null
-          automaticScope = scopedPage !== null
-          resultPage = null
-          if (scopedPage && selectedHit?.pageId !== scopedPage) selectedHit = null
-          expandedTypePages = null
-        }, '.li-type-scope')
-      }, { label: 'Text scope', below: true }), label)
-      scope.setAttribute('aria-haspopup', 'menu')
-      scope.setAttribute('aria-expanded', 'false')
-      scope.append(ui.icon('chevronDown'))
-      if (detail) return scope
-      const heading = ui.element('h2', 'li-type-scope-title')
-      heading.append(scope)
-      return heading
+    function closeMenu() {
+      refreshAfterMenu = false
+      menuClose?.(false)
     }
 
-    function inventoryScope() {
-      const allScope = category === 'color' ? 'All screens' : 'All spacing'
-      const options = [['all', allScope], ['screens', 'By screen']]
-      const scope = control('li-var-quiet', () => ui.openMenu(scope, options, mode, value => {
-        navigate(() => { mode = value; scopedPage = null; automaticScope = false; clearDetails() }, '.li-var-quiet')
-      }, { label: 'Variable inventory scope', below: true }), mode === 'screens' ? 'By screen' : allScope)
-      scope.setAttribute('aria-haspopup', 'menu')
-      scope.setAttribute('aria-expanded', 'false')
-      scope.append(ui.icon('chevronDown'))
-      return scope
+    function openMenu(button, options, selected, choose, label, align) {
+      menuClose = ui.openMenu(button, options, selected, choose, { label, align, below: true, onClose: () => {
+        menuClose = null
+        if (!refreshAfterMenu) return
+        refreshAfterMenu = false
+        queueMicrotask(() => {
+          if (!button.isConnected || menuClose) return
+          const focused = button.getRootNode().activeElement === button
+          render()
+          if (focused) body.querySelector('.' + (button.classList.contains('li-var-category') ? 'li-var-category' : 'li-color-sort'))?.focus({ preventScroll: true })
+        })
+      } })
+    }
+
+    function menuTrigger(button) {
+      button.setAttribute('aria-haspopup', 'menu')
+      button.setAttribute('aria-expanded', 'false')
+      return button
     }
 
     function header() {
-      if (category !== 'typography') {
-        const top = ui.element('div', 'li-variables-header')
-        top.append(ui.element('h2', '', 'Variables'), inventoryScope())
-        body.append(top)
+      const categories = file ? fileCategories : projectCategories
+      const top = ui.element('div', 'li-variables-header')
+      const trigger = menuTrigger(control('li-var-category', () => openMenu(trigger, Object.entries(categories), category, key => {
+        if (key === category) return
+        navigate(() => {
+          clearDetails()
+          category = key
+          if (file) fileCategory = key
+          else projectCategory = key
+        }, '.li-var-category')
+      }, file ? 'File view' : 'Variable category', 'start'), categories[category]))
+      trigger.append(ui.icon('chevronDown'))
+      const title = ui.element('h2')
+      title.append(trigger)
+      top.append(title)
+      if (category === 'color') {
+        const sort = menuTrigger(ui.action('Sort colors by ' + colorOrder, 'launcherSliders', () => {
+          openMenu(sort, colorOrders, colorOrder, key => {
+            if (key !== colorOrder) navigate(() => { colorOrder = key }, '.li-color-sort')
+          }, 'Sort colors')
+        }))
+        sort.classList.add('li-color-sort')
+        top.append(sort)
       }
-      const tabs = ui.element('div', 'li-inspector-tabs')
-      tabs.setAttribute('role', 'group')
-      tabs.setAttribute('aria-label', 'Variable category')
-      for (const [key, title] of Object.entries(categories)) {
-        const tab = control('', () => navigate(() => { category = key; clearDetails() }, '[aria-pressed=true]'), title)
-        tab.className = ''
-        tab.setAttribute('aria-pressed', String(category === key))
-        tabs.append(tab)
-      }
-      body.append(tabs)
-      if (category === 'typography') body.append(typeScopeTitle())
+      body.append(top)
+      return top
+    }
+
+    function projectJump(entry) {
+      if (!file || !onOpenProject) return null
+      const jump = ui.action('Open in Variables', 'openOccurrences', () => onOpenProject(entry))
+      jump.classList.add('li-var-project-jump')
+      return jump
+    }
+
+    function detailHeader(content, entry, goBack, showJump = true) {
+      const header = ui.element('div', 'li-var-detail')
+      const navigation = ui.element('div', 'li-var-detail-nav')
+      navigation.append(back(goBack))
+      header.append(content)
+      const jump = showJump && projectJump(entry)
+      if (jump) header.append(jump)
+      body.append(navigation, header)
     }
 
     function showInventory() {
       const rows = inventory.entries.filter(entry => entry.category === category).map(entry => ({
-        entry, hits: scopedPage === null ? entry.occurrences : entry.occurrences.filter(hit => hit.pageId === scopedPage),
-      })).filter(row => scopedPage === null || row.hits.length)
-      if (!rows.length) body.append(ui.element('p', 'li-var-message', 'No ' + categories[category].toLowerCase() + ' found.'))
+        entry, hits: !file ? entry.occurrences : entry.occurrences.filter(hit => hit.pageId === scopedPage),
+      })).filter(row => !file || row.hits.length)
+      if (!rows.length) body.append(ui.element('p', 'li-var-message', 'No ' + (file ? fileCategories : projectCategories)[category].toLowerCase() + ' found.'))
+      if (category === 'component') {
+        const list = ui.element('div', 'li-var-list')
+        for (const { entry, hits } of rows) {
+          const trailing = colorTrailing(hits.length, 'chevronRight')
+          list.append(listRow(entry.name, trailing, () => navigate(() => { selectedEntry = entry })))
+        }
+        body.append(list)
+        return
+      }
       if (category === 'color' && rows.length) {
         const group = ui.element('section', 'li-var-group li-var-color-group')
-        const heading = ui.element('div', 'li-color-order')
-        const options = [['similarity', 'Similarity'], ['name', 'Name']]
-        const label = options.find(([key]) => key === colorOrder)[1]
-        const sort = control('li-var-quiet', () => ui.openMenu(sort, options, colorOrder, key => {
-          navigate(() => { colorOrder = key }, '.li-color-order button')
-        }, { label: 'Sort colors', below: true }), label)
-        sort.setAttribute('aria-label', 'Sort colors by ' + label.toLowerCase())
-        sort.setAttribute('aria-haspopup', 'menu')
-        sort.setAttribute('aria-expanded', 'false')
-        sort.append(ui.icon('chevronDown'))
-        heading.append(ui.element('h3', '', 'Selection colors'), sort)
-        group.append(heading)
         const swatches = orderedColors(rows, colorOrder)
         for (let start = 0; start < swatches.length;) {
           const { row, rgba } = swatches[start]
@@ -387,20 +417,6 @@
       })
     }
 
-    function showPages() {
-      const list = ui.element('div', 'li-var-list')
-      for (const page of inventory.pages) {
-        list.append(listRow(page.label, ui.icon('chevronRight'), () => {
-          navigate(() => { scopedPage = page.id }, category === 'typography' && !selectedEntry ? '.li-type-scope' : '.li-var-back')
-          Promise.resolve(onPage?.(page.id)).catch(() => {
-            if (scopedPage === page.id) status.textContent = 'This screen could not be opened.'
-          })
-        }))
-      }
-      if (!list.children.length) list.append(ui.element('p', 'li-var-message', 'No screens scanned yet.'))
-      body.append(list)
-    }
-
     async function reveal(hit, entry) {
       const request = ++revealRequest
       const isCurrent = () => request === revealRequest && !element.hidden
@@ -434,8 +450,12 @@
         row.setAttribute('aria-label', hit.label + ' ' + (colorProperties[hit.property] ?? hit.property))
       }
       if (entry.category === 'typography') {
+        row.onpointerenter = () => onTextTargets?.([hit])
+        row.onpointerleave = () => onTextTargets?.([])
+      }
+      if (entry.category === 'typography' || entry.category === 'component') {
         row.classList.add('li-type-use')
-        row.prepend(ui.icon('textLayer'))
+        row.prepend(ui.icon(entry.category === 'typography' ? 'textLayer' : 'frame'))
         ui.setTooltip(row, hit.label)
       }
       row.append(ui.element('span', '', label))
@@ -447,45 +467,45 @@
     function showColorEntry(entry) {
       const pageUses = new Map()
       for (const hit of entry.occurrences) {
-        if (scopedPage !== null && hit.pageId !== scopedPage) continue
+        if (file && hit.pageId !== scopedPage) continue
         if (!pageUses.has(hit.pageId)) pageUses.set(hit.pageId, [])
         pageUses.get(hit.pageId).push(hit)
       }
-      header()
-      body.append(back('All colors', clearDetails))
-      const detail = ui.element('div', 'li-var-color-detail')
-      detail.append(colorSpecimen(entry), ui.element('h3', '', 'Occurrences by screen'))
-      body.append(detail)
+      detailHeader(colorSpecimen(entry), entry)
       const list = ui.element('div', 'li-var-list')
-      for (const page of inventory.pages) {
-        const pageHits = pageUses.get(page.id)
-        if (!pageHits) continue
-        const multiple = pageHits.length > 1
-        const expanded = multiple && resultPage === page.id
-        const trailing = multiple ? colorTrailing(pageHits.length, expanded ? 'chevronDown' : 'chevronRight') : countLabel(pageHits.length)
-        const row = listRow(page.label, trailing, () => {
-          if (!multiple) { void reveal(pageHits[0], entry); return }
-          resultPage = expanded ? null : page.id
-          revealRequest++
-          status.textContent = ''
-          render()
-          body.querySelector('[data-color-page="' + CSS.escape(page.id) + '"]')?.focus({ preventScroll: true })
-        })
-        row.dataset.colorPage = page.id
-        row.classList.add('li-var-color-page')
-        if (multiple) row.setAttribute('aria-expanded', String(expanded))
-        else {
-          occurrenceRows.set(pageHits[0], row)
-          if (selectedHit === pageHits[0]) row.setAttribute('aria-current', 'true')
-        }
-        list.append(row)
-        if (expanded) {
-          for (const hit of pageHits) {
-            const use = occurrenceRow(hit, entry)
-            use.classList.add('li-var-color-use')
-            use.append(ui.element('span', 'li-var-use-property', colorProperties[hit.property] ?? hit.property))
-            list.append(use)
+      function appendUse(hit) {
+        const use = occurrenceRow(hit, entry)
+        use.classList.add('li-var-color-use')
+        use.append(ui.element('span', 'li-var-use-property', colorProperties[hit.property] ?? hit.property))
+        list.append(use)
+      }
+      if (file) {
+        for (const hit of pageUses.get(scopedPage) ?? []) appendUse(hit)
+      } else {
+        for (const page of inventory.pages) {
+          const pageHits = pageUses.get(page.id)
+          if (!pageHits) continue
+          const multiple = pageHits.length > 1
+          const expanded = multiple && expandedColorPages.has(page.id)
+          const trailing = multiple ? colorTrailing(pageHits.length, expanded ? 'chevronDown' : 'chevronRight') : countLabel(pageHits.length)
+          const row = listRow(page.label, trailing, () => {
+            if (!multiple) { void reveal(pageHits[0], entry); return }
+            if (expanded) expandedColorPages.delete(page.id)
+            else expandedColorPages.add(page.id)
+            revealRequest++
+            status.textContent = ''
+            render()
+            body.querySelector('[data-color-page="' + CSS.escape(page.id) + '"]')?.focus({ preventScroll: true })
+          })
+          row.dataset.colorPage = page.id
+          row.classList.add('li-var-color-page')
+          if (multiple) row.setAttribute('aria-expanded', String(expanded))
+          else {
+            occurrenceRows.set(pageHits[0], row)
+            if (selectedHit === pageHits[0]) row.setAttribute('aria-current', 'true')
           }
+          list.append(row)
+          if (expanded) for (const hit of pageHits) appendUse(hit)
         }
       }
       if (!list.children.length) list.append(ui.element('p', 'li-var-message', 'No occurrences on scanned screens.'))
@@ -493,33 +513,45 @@
     }
 
     function showTypeEntry(entry) {
-      body.append(back('Typography', clearDetails))
-      const header = ui.element('div', 'li-var-detail')
-      header.append(specimen(entry, [], null, anchor => openTypography(anchor, entry)))
-      body.append(header)
-      expandedTypePages ??= new Set([selectedHit?.pageId ?? currentPageId?.()])
+      const jump = projectJump(entry)
+      if (entry.category === 'typography') {
+        const row = specimen(entry, [], null, anchor => openTypography(anchor, entry), jump)
+        detailHeader(row, entry, clearDetails, false)
+      } else {
+        const labels = ui.element('div', 'li-type-labels li-component-details')
+        labels.append(ui.element('h2', '', entry.name), ui.element('span', 'li-var-meta', entry.value))
+        detailHeader(labels, entry)
+      }
+      expandedTypePages ??= new Set([selectedHit?.pageId ?? currentPageId?.() ?? workspacePage])
       const uses = ui.typeUsesList({
         entry, pages: inventory.pages, scopedPage, expanded: expandedTypePages, countLabel,
-        scope: typeScopeTitle(true), occurrenceRow: hit => occurrenceRow(hit, entry),
-        reveal: hit => reveal(hit, entry),
+        navigation: body.querySelector('.li-var-detail-nav'),
+        previewText: hits => onTextTargets?.(hits),
+        selectText: hits => {
+          if (!onTextTargets?.(hits, true)) {
+            status.textContent = 'These uses changed. Choose a current result.'
+            return
+          }
+          selectedHit = null
+          syncTypeSelection?.(null)
+          status.textContent = ''
+        },
+        occurrenceRow: hit => occurrenceRow(hit, entry), reveal: hit => reveal(hit, entry),
       })
       body.append(uses.element)
       syncTypeSelection = uses.select
       uses.select(selectedHit)
+      markTextSelection = uses.markSelection
+      markTextSelection(textSelection)
     }
 
     function showSpacingEntry(entry) {
-      const pageId = resultPage
+      const pageId = file ? scopedPage : resultPage
       const hits = pageId === null ? entry.occurrences : entry.occurrences.filter(hit => hit.pageId === pageId)
-      const pageLabel = inventory.pages.find(page => page.id === scopedPage)?.label
-      const backLabel = resultPage !== null ? 'Screen list' : pageLabel || 'All spacing'
-      body.append(back(backLabel, () => {
-        if (resultPage !== null) { resultPage = selectedHit = null; revealRequest++ }
+      detailHeader(specimen(entry, hits), entry, () => {
+        if (!file && resultPage !== null) { resultPage = selectedHit = null; revealRequest++ }
         else clearDetails()
-      }))
-      const summary = ui.element('div', 'li-var-detail')
-      summary.append(specimen(entry, hits))
-      body.append(summary)
+      })
       const list = ui.element('div', 'li-var-list')
       if (pageId !== null) {
         for (const hit of hits) {
@@ -544,54 +576,120 @@
       body.append(list)
     }
 
+    function addCollapseControl(entry) {
+      const header = body.querySelector(entry ? '.li-var-detail-nav' : '.li-variables-header')
+      const groups = [...body.querySelectorAll('details')]
+      const colorPages = [...body.querySelectorAll('.li-var-color-page[aria-expanded]')]
+      const key = JSON.stringify([file, scopedPage, category, entry?.id, resultPage])
+      const flat = !groups.length && !colorPages.length
+      const folded = () => flat ? foldedLists.has(key) :
+        !groups.some(group => group.open) && !colorPages.some(row => row.getAttribute('aria-expanded') === 'true')
+      body.classList.toggle('li-list-folded', flat && folded())
+      const button = ui.action('Collapse layers', 'collapsePages', () => {
+        const expand = folded()
+        if (flat) {
+          if (expand) foldedLists.delete(key)
+          else foldedLists.add(key)
+          body.classList.toggle('li-list-folded', !expand)
+        } else if (colorPages.length) {
+          for (const row of colorPages) {
+            if (expand) expandedColorPages.add(row.dataset.colorPage)
+            else expandedColorPages.delete(row.dataset.colorPage)
+          }
+          render()
+          body.querySelector('.li-audit-collapse')?.focus({ preventScroll: true })
+          return
+        } else {
+          for (const group of groups) group.open = expand
+        }
+        update()
+      })
+      function update() {
+        const label = folded() ? 'Expand layers' : 'Collapse layers'
+        button.setAttribute('aria-label', label)
+        ui.setTooltip(button, label)
+      }
+      button.classList.add('li-audit-collapse')
+      button.disabled = !body.querySelector('.li-var-list-row, .li-type-use, .li-var-value, .li-type-group, .li-var-color-row')
+      for (const group of groups) group.addEventListener('toggle', update)
+      header.append(button)
+      update()
+    }
+
+    function renderCoverage() {
+      coverage.textContent = file ? '' : category === 'component' ? componentCoverage : inventoryCoverage
+    }
+
     function render() {
+      renderCoverage()
+      const scroll = body.scrollTop
       pinnedEntry = pinnedEntry && inventory.entries.find(entry => entry.id === pinnedEntry.id)
       preview(pinnedEntry)
+      if (category !== 'layers' && layerMount.isConnected) renderLayers?.(null)
       body.replaceChildren()
       occurrenceRows.clear()
+      markTextSelection = null
+      onTextTargets?.([])
       syncTypeSelection = null
-      const entry = inventory.entries.find(item => item.id === selectedEntry?.id) ??
-        (selectedEntry?.category === 'color' ? { ...selectedEntry, occurrences: [] } : null)
-      if (entry && category === 'typography' && mode === 'screens' && scopedPage === null) {
-        header()
-        showPages()
-        return
+      const entry = selectedEntry && (inventory.entries.find(item => item.id === selectedEntry.id) ?? { ...selectedEntry, occurrences: [] })
+      if (detailVisible !== Boolean(entry)) {
+        detailVisible = Boolean(entry)
+        onDetailChange?.(detailVisible)
       }
       if (entry) {
         if (entry.category === 'color') showColorEntry(entry)
-        else if (entry.category === 'typography') showTypeEntry(entry)
-        else showSpacingEntry(entry)
-        return
+        else if (entry.category === 'spacing') showSpacingEntry(entry)
+        else showTypeEntry(entry)
+      } else {
+        const titleRow = header()
+        if (category === 'layers') {
+          body.append(layerMount)
+          renderLayers?.(layerMount, titleRow)
+        } else if (file && !inventory.pages.some(page => page.id === scopedPage)) {
+          body.append(ui.element('p', 'li-var-message', 'Waiting for this screen.'))
+        } else showInventory()
       }
-      if (selectedEntry !== null) clearDetails()
-      if (scopedPage !== null) {
-        const page = inventory.pages.find(page => page.id === scopedPage)
-        if (automaticScope || category === 'typography') header()
-        else body.append(back('All screens', () => { clearPreview(); scopedPage = null; mode = 'screens' }))
-        if (!page) { body.append(ui.element('p', 'li-var-message', 'Waiting for this screen.')); return }
-        if (category !== 'typography') body.append(ui.element('h2', 'li-var-detail-title', page.label))
-        showInventory()
-        return
-      }
-      header()
-      if (mode === 'screens') showPages()
-      else showInventory()
+      if (category !== 'layers') addCollapseControl(entry)
+      else body.classList.remove('li-list-folded')
+      body.scrollTop = scroll
     }
 
     function setScope(pageId) {
+      workspacePage = pageId ?? null
+      if (!file || scopedPage === (pageId ?? null)) return
       scopedPage = pageId ?? null
-      automaticScope = scopedPage !== null
-      mode = scopedPage === null ? 'all' : 'screens'
       clearDetails()
       render()
+      body.scrollTop = 0
+    }
+
+    function setWorkspace(isFile, pageId, entry) {
+      workspacePage = pageId ?? null
+      const current = selectedEntry?.id
+      const sameView = file === isFile && scopedPage === (isFile ? pageId ?? null : null)
+      if (sameView && current === entry?.id) return
+      clearDetails()
+      file = isFile
+      element.setAttribute('aria-label', file ? 'File inventory' : 'Variables')
+      scopedPage = file ? pageId ?? null : null
+      category = entry?.category ?? (file ? fileCategory : projectCategory)
+      if (file) fileCategory = category
+      else projectCategory = category
+      selectedEntry = entry ?? null
+      render()
+      body.scrollTop = 0
+      if (entry) body.querySelector('.li-var-back')?.focus({ preventScroll: true })
     }
 
     render()
     return {
-      element, setScope, closePopup, clearPreview,
+      element, setScope, setWorkspace, clearPreview,
+      setTextSelection(nodes) { textSelection = nodes; markTextSelection?.(nodes) },
+      closePopup() { closeMenu(); closePopup() },
+      refreshLayers() { if (file && category === 'layers') renderLayers?.(layerMount) },
       update(data, options = {}) {
         const active = element.getRootNode().activeElement
-        const restoreFocus = body.contains(active) ? active.textContent : null
+        const restoreFocus = body.contains(active) ? active.getAttribute('aria-label') ?? active.textContent : null
         inventory = data
         const nextCapability = options.canCreateTextStyle ?? canCreateTextStyle
         const capabilityChanged = nextCapability !== canCreateTextStyle
@@ -601,7 +699,9 @@
           selectedHit = ui.findVariableOccurrence(entry, selectedHit)
         }
         shareSpecimenFonts(data.entries, options.fontDocument, element.ownerDocument, sharedFonts)
-        if (Object.hasOwn(options, 'pageId')) setScope(options.pageId)
+        if (Object.hasOwn(options, 'pageId') && file && scopedPage !== (options.pageId ?? null)) setScope(options.pageId)
+        else if (category === 'layers') return
+        else if (menuClose) { refreshAfterMenu = true; return }
         else if (popup && !capabilityChanged && data.entries.some(entry => entry.id === popupEntry)) {
           refreshAfterClose = true
           return
@@ -611,17 +711,23 @@
         }
         if (restoreFocus !== null) {
           const buttons = body.querySelectorAll('button, .li-color-matches > summary')
-          const matching = [...buttons].filter(button => button.textContent === restoreFocus)
+          const matching = [...buttons].filter(button => (button.getAttribute('aria-label') ?? button.textContent) === restoreFocus)
           if (matching.length === 1) matching[0].focus({ preventScroll: true })
         }
       },
       dispose() {
+        renderLayers?.(null)
+        closeMenu()
         clearPreview()
         closePopup()
         for (const face of sharedFonts) element.ownerDocument.fonts.delete(face)
         sharedFonts.clear()
       },
-      setCoverage(message) { coverage.textContent = message || '' },
+      setCoverage(message = '', componentMessage = '') {
+        inventoryCoverage = message
+        componentCoverage = componentMessage
+        renderCoverage()
+      },
     }
   }
 })()
