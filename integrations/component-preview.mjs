@@ -36,6 +36,7 @@ export function registerComponent(root, definition, instance) {
     if (!mounted()) return null
     return {
       id, name: definition.name, library: definition.library ?? '',
+      description: typeof definition.description === 'string' ? definition.description : '',
       properties: properties.map(({ id, label, kind, options }) => ({
         id, label, kind, options, value: instance.readProperty(id),
       })),
@@ -83,8 +84,8 @@ export function registerComponent(root, definition, instance) {
   const api = { inspect, preview }
   root[binding] = api
   root.setAttribute(marker, id)
-  if (typeof definition.name === 'string' && definition.name.trim()) {
-    root.setAttribute(definitionMarker, JSON.stringify([definition.library ?? '', definition.name]))
+  if (ids.length && typeof definition.name === 'string' && definition.name.trim()) {
+    root.setAttribute(definitionMarker, JSON.stringify([definition.library ?? '', definition.name, ids.length]))
   }
   return () => {
     if (root[binding] !== api) return

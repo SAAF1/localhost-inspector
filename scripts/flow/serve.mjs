@@ -1,11 +1,14 @@
 import { createServer } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
-import { extname, resolve, sep } from 'node:path'
+import { extname, join, resolve, sep } from 'node:path'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import { serveWorkspaceAsset } from './workspace-assets.mjs'
 import { flowPath } from '../../extension/flow-attachment.js'
 
-const [builtApp, port, mapDirectory] = process.argv.slice(2)
-if (!builtApp || !/^\d+$/.test(port ?? '')) throw Error('Usage: node scripts/flow/serve.mjs APP_BUILD PORT [MAP_DIRECTORY]')
+const sourceMode = process.argv[2] === '--source'
+const [builtApp, port, mapDirectory] = process.argv.slice(sourceMode ? 3 : 2)
+if (!builtApp || !/^\d+$/.test(port ?? '')) throw Error('Usage: node scripts/flow/serve.mjs [--source] APP_DIRECTORY PORT [MAP_DIRECTORY]')
 const appRoot = resolve(builtApp)
 const mapRoot = mapDirectory ? resolve(mapDirectory) : null
 const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json',
@@ -41,6 +44,34 @@ async function serve(request, response) {
     'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(data)
 }
 
-createServer((request, response) => {
+function handleRequest(request, response) {
   void serve(request, response).catch(() => response.writeHead(404).end())
-}).listen(Number(port), '127.0.0.1', () => console.log('Flow fixture listening on ' + port))
+}
+
+if (sourceMode) {
+  // Use the project's own Vite configuration, aliases, React version and file watcher.
+  process.chdir(appRoot)
+  const localRequire = createRequire(join(appRoot, 'package.json'))
+  const { createServer: createViteServer } = await import(pathToFileURL(localRequire.resolve('vite')))
+  const { componentPreviewSites } = await import('./component-preview-sites.mjs')
+  const { tableRenderSites } = await import('./table-render-sites.mjs')
+  const workspace = {
+    name: 'localhost-inspector-workspace',
+    enforce: 'pre',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        if (request.url?.split('?')[0].startsWith(flowPath)) handleRequest(request, response)
+        else next()
+      })
+    },
+  }
+  const server = await createViteServer({
+    root: appRoot,
+    plugins: [workspace, componentPreviewSites(appRoot), tableRenderSites(appRoot)],
+    server: { host: '127.0.0.1', port: Number(port), strictPort: true, open: false },
+  })
+  await server.listen()
+  console.log('Inspector project preview listening on ' + port)
+} else {
+  createServer(handleRequest).listen(Number(port), '127.0.0.1', () => console.log('Flow fixture listening on ' + port))
+}

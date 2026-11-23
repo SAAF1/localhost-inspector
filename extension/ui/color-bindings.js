@@ -45,6 +45,74 @@
     return values.every(value => value === values[0]) ? values[0] : null
   }
 
+  const shapes = 'path,rect,circle,ellipse,polygon,polyline,line,text,tspan,use'
+  const exclusions = 'defs,symbol,clipPath,mask,pattern,marker,script,style,template'
+  const colorFunctions = /(?:rgba?|hsla?|hwb|oklch|oklab|lab|lch|color)\([^()]*\)/gi
+
+  ui.selectionPaints = roots => {
+    const rows = new Map()
+    const seen = new Set()
+    function add(node, property, value, editable = true, opacity = 1) {
+      if (!value || value === 'none' || !CSS.supports('color', value) ||
+          value === 'transparent' || (/^rgba\(.*?,\s*0\)$/.test(value) || /\/\s*0%?\)$/.test(value)) || opacity <= 0) return
+      const declared = editable && ui.authoredProperty(node, property)
+      const reference = declared && /^var\(\s*(--[\w-]+)\s*\)$/.exec(declared)?.[1]
+      const name = reference && ui.resolveColorVariable(node, reference) === value ? reference : ''
+      const key = JSON.stringify([name, value, opacity])
+      if (!rows.has(key)) rows.set(key, { key, name, value, opacity, paints: [], layers: new Set() })
+      const row = rows.get(key)
+      row.paints.push({ node, property, editable })
+      row.layers.add(node.ownerSVGElement?.closest('svg') ?? node)
+    }
+
+    function box(node, style, pseudo = false) {
+      add(node, 'background-color', style.backgroundColor, !pseudo)
+      for (const side of sides) {
+        const prefix = 'border-' + side + '-'
+        if (parseFloat(style.getPropertyValue(prefix + 'width')) > 0 &&
+            !['none', 'hidden'].includes(style.getPropertyValue(prefix + 'style'))) {
+          add(node, prefix + 'color', style.getPropertyValue(prefix + 'color'), !pseudo)
+        }
+      }
+      if (style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0) add(node, 'outline-color', style.outlineColor, !pseudo)
+      for (const property of ['background-image', 'box-shadow', 'text-shadow']) {
+        const raw = style.getPropertyValue(property).replace(/url\((?:"[^"]*"|'[^']*'|[^)]*)\)/gi, '')
+        for (const value of raw.match(colorFunctions) ?? []) add(node, property, value, false)
+      }
+    }
+    function visit(node) {
+      if (seen.has(node) || node.matches(exclusions) || node.matches('#localhost-inspector, #localhost-inspector-outlines')) return
+      seen.add(node)
+      const style = getComputedStyle(node)
+      if (style.display === 'none' || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return
+      if (style.position === 'absolute' && parseFloat(style.width) <= 1 && parseFloat(style.height) <= 1 &&
+          (style.clip !== 'auto' || style.clipPath !== 'none')) return
+      if (style.visibility === 'visible' && node.getClientRects().length) {
+        if (node.namespaceURI === 'http://www.w3.org/2000/svg') {
+          if (node.matches(shapes)) {
+            if (node.localName !== 'line') add(node, 'fill', style.fill, true, Number(style.fillOpacity))
+            if (parseFloat(style.strokeWidth) > 0) add(node, 'stroke', style.stroke, true, Number(style.strokeOpacity))
+          }
+          if (node.localName === 'svg') box(node, style)
+        } else {
+          box(node, style)
+          if ([...node.childNodes].some(child => child.nodeType === 3 && child.textContent.trim()) ||
+              (node.matches('input,textarea,select') && node.value)) add(node, 'color', style.color)
+          for (const pseudo of ['::before', '::after']) {
+            const generated = getComputedStyle(node, pseudo)
+            if (['none', 'normal'].includes(generated.content) || generated.display === 'none' ||
+                generated.visibility !== 'visible' || Number(generated.opacity) === 0) continue
+            box(node, generated, true)
+            if (generated.content !== '""') add(node, 'color', generated.color, false)
+          }
+        }
+      }
+      for (const child of node.children) visit(child)
+    }
+    for (const root of roots) visit(root)
+    return [...rows.values()]
+  }
+
   ui.colorBinding = (context, controls, { property, label, title = label, targets = [context.node] }) => {
     const { node, colorCatalog, run, commit, disabled, pendingColorFor } = context
     const literal = controls.color(property, label)

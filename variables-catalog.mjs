@@ -1,5 +1,6 @@
 // The audit reads exported design values. Registration remains authoritative for editing.
 import { opendir, readFile, stat } from 'node:fs/promises'
+import { discoverComponentCatalog } from './component-catalog.mjs'
 import { join, relative } from 'node:path'
 
 const fields = ['font-family', 'font-weight', 'font-size', 'line-height', 'letter-spacing']
@@ -49,7 +50,14 @@ export async function discoverVariablesCatalog(root, registered = {}) {
   const found = Object.fromEntries(kinds.map(kind => [kind, new Set(registered[kind]?.names)]))
   const sources = Object.fromEntries(kinds.map(kind => [kind, new Set()]))
   const known = new Map(Object.values(registered).filter(Boolean).map(file => [file.source, file]))
-  const files = known.size ? known.values() : styleSheets(root)
+  async function* sourceFiles() {
+    yield* known.values()
+    if (kinds.every(kind => registered[kind])) return
+    for await (const sheet of styleSheets(root)) {
+      if (!known.has(sheet.source)) yield sheet
+    }
+  }
+  const files = sourceFiles()
   for await (const { source, css } of files) {
     const declared = declaredVariables(css)
     for (const kind of kinds) {
@@ -58,8 +66,10 @@ export async function discoverVariablesCatalog(root, registered = {}) {
       for (const name of declared[kind]) found[kind].add(name)
     }
   }
-  return Object.fromEntries(kinds.map(kind => [kind, {
+  const catalog = Object.fromEntries(kinds.map(kind => [kind, {
     source: registered[kind]?.source ?? (sources[kind].size === 1 ? [...sources[kind]][0] : null),
     names: [...found[kind]].sort(),
   }]))
+  catalog.componentCatalog = await discoverComponentCatalog(root)
+  return catalog
 }

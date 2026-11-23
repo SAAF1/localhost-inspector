@@ -1,5 +1,5 @@
 // Inspector surfaces are siblings of the inspected app and never become layers.
-const ignored = 'script,style,template,noscript,#localhost-inspector,#localhost-inspector-outlines,#localhost-inspector-dock,#localhost-inspector-spacing-preview'
+const ignored = 'script,style,template,noscript,#localhost-inspector,#localhost-inspector-outlines,#localhost-inspector-dock,#localhost-inspector-spacing-preview,#localhost-inspector-text-editor'
 
 const names = {
   a: 'Link', article: 'Article', aside: 'Sidebar', blockquote: 'Quote',
@@ -28,6 +28,11 @@ function layerDetails(node, hasChildren) {
     .map(child => child.textContent).join(' ')
   const labelledBy = (node.getAttribute('aria-labelledby') || '').split(/\s+/)
     .map(id => node.ownerDocument.getElementById(id)?.textContent || '').join(' ')
+  if (tag === 'svg') {
+    const label = [node.getAttribute('aria-label'), labelledBy, node.querySelector(':scope > title')?.textContent]
+      .map(value => value?.trim()).find(Boolean)
+    return { label: label || 'Icon', icon: 'vectorLayer' }
+  }
   const isControl = ['button', 'a', 'summary', 'label'].includes(tag) || roleName === 'Button'
   const text = [node.getAttribute('aria-label'), labelledBy, node.getAttribute('alt'), directText,
     heading || isControl ? node.innerText : '', node.getAttribute('placeholder')]
@@ -45,13 +50,27 @@ function layerDetails(node, hasChildren) {
   return { label: (text || type).slice(0, 200), icon }
 }
 
-export function createWorkspaceLayers({ getDocument, selectNode }) {
+export function createWorkspaceLayers({ getDocument, selectNode, componentFor }) {
   const ui = window.LocalhostInspector
   let mount
   let source
   let sourceUrl
   let selected
   let selectedGroup = new Set()
+  const hiddenAttribute = 'data-localhost-inspector-layer-hidden'
+  const visibilitySheets = new WeakMap()
+  function toggleVisibility(node) {
+    const doc = node.ownerDocument
+    if (!visibilitySheets.has(doc)) {
+      const sheet = new doc.defaultView.CSSStyleSheet()
+      sheet.replaceSync('[' + hiddenAttribute + '] { display: none !important; }')
+      doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet]
+      visibilitySheets.set(doc, sheet)
+    }
+    node.toggleAttribute(hiddenAttribute)
+    focused = node
+    paint()
+  }
   let focused
   let disclosure = new WeakMap()
   let defaultExpanded
@@ -65,10 +84,15 @@ export function createWorkspaceLayers({ getDocument, selectNode }) {
   let pending
 
   function renderedChildren(parent) {
+    if (parent.localName === 'svg') return []
     const result = []
     const view = parent.ownerDocument.defaultView
     for (const child of parent.children) {
-      if (!(child instanceof view.HTMLElement) || child.matches(ignored)) continue
+      if (!(child instanceof view.HTMLElement || child instanceof view.SVGSVGElement) || child.matches(ignored)) continue
+      if (child.hasAttribute(hiddenAttribute)) {
+        result.push(child)
+        continue
+      }
       const style = view.getComputedStyle(child)
       if (style.display === 'none') continue
       if (style.display === 'contents' || style.visibility === 'hidden' || style.visibility === 'collapse') {
@@ -102,7 +126,7 @@ export function createWorkspaceLayers({ getDocument, selectNode }) {
       })) schedule()
     })
     observer.observe(doc.body, { subtree: true, childList: true, characterData: true, attributes: true,
-      attributeFilter: ['aria-label', 'aria-labelledby', 'role', 'alt', 'placeholder', 'data-slot', 'class', 'style', 'hidden', 'open'] })
+      attributeFilter: ['aria-label', 'aria-labelledby', 'role', 'alt', 'placeholder', 'data-slot', 'data-inspector-source', 'data-inspector-instance', 'class', 'style', 'hidden', 'open'] })
     doc.defaultView.addEventListener('resize', schedule)
   }
 
@@ -133,6 +157,7 @@ export function createWorkspaceLayers({ getDocument, selectNode }) {
     tree.setAttribute('aria-label', 'Layers')
     const previousFocus = mount.getRootNode().activeElement
     const restoreFocus = mount.contains(previousFocus)
+    const restoreEye = previousFocus?.classList.contains('workspace-layer-eye')
     const rows = []
 
     function focus(record) {
@@ -161,28 +186,37 @@ export function createWorkspaceLayers({ getDocument, selectNode }) {
         const item = ui.element('div', 'workspace-layer-item')
         item.setAttribute('role', 'treeitem')
         item.setAttribute('aria-level', String(level))
-        item.setAttribute('aria-selected', String(node === selected || selectedGroup.has(node)))
+        const inSelection = Boolean(parent?.inSelection || node === selected || selectedGroup.has(node))
+        item.setAttribute('aria-selected', String(inSelection))
         item.tabIndex = -1
         item.addEventListener('focus', () => { focused = node })
         if (branch) item.setAttribute('aria-expanded', String(expanded))
-        const { label, icon } = layerDetails(node, branch)
+        const { label: contentLabel, icon } = layerDetails(node, branch)
+        const component = componentFor(node)
+        const label = component || contentLabel
         item.setAttribute('aria-label', label)
         const line = ui.element('div', 'workspace-layer-line')
         line.style.setProperty('--layer-depth', String(level - 1))
         const caret = ui.element('span', 'workspace-layer-caret')
         if (branch) caret.append(ui.icon(expanded ? 'chevronDown' : 'chevronRight'))
-        const type = ui.icon(icon)
+        line.toggleAttribute('data-component', Boolean(component))
+        const type = ui.icon(component ? 'instance' : icon)
         type.classList.add('workspace-layer-kind')
         const text = ui.element('span', 'workspace-layer-label', label)
-        text.title = label
-        line.append(caret, type, text)
+        text.title = component && contentLabel !== component ? component + ' · ' + contentLabel : label
+        const hidden = node.hasAttribute(hiddenAttribute)
+        const eye = ui.action((hidden ? 'Show ' : 'Hide ') + label, hidden ? 'eyeClosed' : 'eye', () => toggleVisibility(node))
+        eye.classList.add('workspace-layer-eye')
+        line.toggleAttribute('data-layer-hidden', hidden)
+        line.append(caret, type, text, eye)
         item.append(line)
         container.append(item)
-        const record = { node, item, expanded, branch, parent }
+        const record = { node, item, eye, expanded, branch, parent, inSelection }
         rows.push(record)
 
         // The treeitem is the only keyboard stop; the chevron mirrors ArrowLeft/Right.
         line.addEventListener('click', event => {
+          if (eye.contains(event.target)) return
           focus(record)
           if (branch && caret.contains(event.target)) toggle(record)
           else select(record)
@@ -234,7 +268,7 @@ export function createWorkspaceLayers({ getDocument, selectNode }) {
     }
     nextFocus.item.tabIndex = 0
     mount.replaceChildren(tree)
-    if (restoreFocus) nextFocus.item.focus({ preventScroll: true })
+    if (restoreFocus) (restoreEye ? nextFocus.eye : nextFocus.item).focus({ preventScroll: true })
   }
 
   function render(container, header) {

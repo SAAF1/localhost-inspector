@@ -253,3 +253,34 @@ test('All text selects the live matches together and collapse keeps the style ac
     assert.equal(await all.getAttribute('aria-pressed'), 'false')
   } finally { await h.close() }
 })
+
+test('reopening Variables discovers new definitions and displays zero uses without rescanning on edits', async () => {
+  const h = await createHarness({ canvas: true, dock: true })
+  try {
+    await h.app.evaluate(() => {
+      const previous = window.phaseABridge
+      window.catalogNames = ['Tile']
+      window.catalogReads = 0
+      window.phaseABridge = message => {
+        if (message.type !== 'variablesCatalog') return previous(message)
+        window.catalogReads++
+        return Promise.resolve({ componentCatalog: { revision: window.catalogNames.join(','),
+          definitions: window.catalogNames.map(name => ({ name, source: name + '.tsx', fields: ['title'] })) } })
+      }
+    })
+    await h.open()
+    const sidebar = h.page.locator('#workspace-sidebar')
+    const tab = sidebar.getByRole('button', { name: 'Variables', exact: true })
+    await tab.click()
+    await chooseCategory(sidebar, 'Components')
+    const badge = name => sidebar.getByRole('button', { name: name + ' 0 uses' }).locator('.li-var-count')
+    await badge('Tile').waitFor()
+    const reads = await h.app.evaluate(() => window.catalogReads)
+    await h.page.locator('#localhost-inspector-dock').dispatchEvent('variables-data-changed')
+    assert.equal(await h.app.evaluate(() => window.catalogReads), reads)
+    await h.app.evaluate(() => window.catalogNames.push('Note'))
+    await sidebar.getByRole('button', { name: 'File', exact: true }).click()
+    await tab.click()
+    assert.equal(await badge('Note').innerText(), '0')
+  } finally { await h.close() }
+})

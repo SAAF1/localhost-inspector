@@ -93,7 +93,7 @@ export function buildSourceHandoff(binding, journal) {
   }
 
   const operations = Array.from(byOperation, ([id, edits]) => {
-    const instanceProof = edits.some(edit => edit.property === 'button-size')
+    const instanceProof = edits.some(edit => edit.property === 'button-size' || edit.target?.mount)
     const templateIntent = !instanceProof && edits.every(edit => edit.intent === featureTemplateScope)
     return {
       id,

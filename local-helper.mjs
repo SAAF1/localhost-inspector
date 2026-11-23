@@ -275,8 +275,10 @@ function validValue(property, value) {
   if (pixelProperties.has(property)) return /^-?\d+(\.\d+)?px$/.test(value)
   if (property === 'font-family') return validTextStyleValue(property, value)
   if (property === 'font-weight') return /^(normal|bold|[1-9]00)$/.test(value)
-  if (colors.has(property) && modernColor.test(value)) return true
-  if (colors.has(property)) return /^(#[0-9a-f]{3,8}|rgba?\([\d.,% /]+\)|[a-z]{3,20})$/i.test(value)
+  const solidPaint = colors.has(property) || ['fill', 'stroke', 'outline-color'].includes(property) ||
+    /^border-(top|right|bottom|left)-color$/.test(property)
+  if (solidPaint && modernColor.test(value)) return true
+  if (solidPaint) return /^(#[0-9a-f]{3,8}|rgba?\([\d.,% /]+\)|[a-z]{3,20})$/i.test(value)
   return Object.hasOwn(keywords, property) && keywords[property].includes(value)
 }
 function validTargetKey(key) {
@@ -494,6 +496,30 @@ async function textStyleEdits(records, catalog, journal) {
   }
   return edits
 }
+function componentPropertyEdit(record) {
+  const { id, route, beforeState, afterState, target, component } = record ?? {}
+  const uuid = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value)
+  const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max
+  const state = value => {
+    if (!value || typeof value !== 'object') return false
+    const scalar = value.value === null || typeof value.value === 'boolean' || Number.isFinite(value.value) ||
+      (typeof value.value === 'string' && value.value.length <= (target.kind === 'text' ? 16000 : 180))
+    return scalar && (target.kind === 'source' ? typeof value.overridden === 'boolean' : typeof value.visible === 'boolean')
+  }
+  if (!uuid(id) || !validRoute(route) || !uuid(target?.mount) || !['source', 'slot', 'text'].includes(target.kind) ||
+      !text(target.definition, 2048) || !text(target.field, 120) || !text(component?.name, 160) ||
+      !/^[a-z][a-z0-9-]{0,60}$/.test(target.tag) || !state(beforeState) || !state(afterState)) {
+    throw Error('Invalid component property edit')
+  }
+  const clean = value => target.kind === 'source' ? { value: value.value, overridden: value.overridden } :
+    { value: value.value, visible: value.visible }
+  const requested = String(afterState.value ?? 'None')
+  return { id, route: journalRoute(route), property: target.kind === 'text' ? 'text' : 'component-' + target.field, before: String(beforeState.value ?? 'None'),
+    requested, observed: requested, restore: 'session', intent: 'selected occurrence only',
+    target: { kind: target.kind, mount: target.mount, definition: target.definition, field: target.field,
+      tag: target.tag, slot: component.name, key: target.mount, id: null }, component: { name: component.name, prop: target.field },
+    beforeState: clean(beforeState), afterState: clean(afterState) }
+}
 function buttonSizeEdit(record, registration) {
   if (!registration || !record || !/^[a-f0-9-]{36}$/.test(record.id) || !validRoute(record.route) ||
       record.target?.key !== registration.key || !buttonSizes.includes(record.before) ||
@@ -565,6 +591,7 @@ async function handle(message) {
     return { revision: journal.revision, route, scopedPreviewTargets: true, landmarkPreviewTargets: true, sectionPreviewTargets: true, templatePreviews: true,
       templateSourcePreviews: true, templatePaddingPreviews: true, projectWideRevert: true, previewVisibility: true,
       textStyleDefinitions: journal.textStyleDefinitions ?? [],
+      ...(message.forComponentReset === true ? { componentEdits: journal.edits.filter(edit => edit.target.mount) } : {}),
       edits: journal.edits.filter(edit => edit.route === route || edit.template), pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
   }
   if (message.type === 'saveEvidence') {
@@ -607,8 +634,8 @@ async function handle(message) {
       }
     }
     journal.edits.push(edit)
-  } else if (message.type === 'saveButtonSize') {
-    const edit = buttonSizeEdit(message.record, await readButtonSize(binding))
+  } else if (message.type === 'saveButtonSize' || message.type === 'saveComponentProperty') {
+    const edit = message.type === 'saveButtonSize' ? buttonSizeEdit(message.record, await readButtonSize(binding)) : componentPropertyEdit(message.record)
     if (journal.edits.some(entry => entry.id === edit.id)) return { file, revision: journal.revision }
     journal.edits.push(edit)
   } else if (message.type === 'saveSharedPadding' || message.type === 'savePairedPadding') {

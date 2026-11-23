@@ -147,7 +147,8 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       restoreColor = isolateColor(doc, liveScan.entries, entry.id, ui.colorChannels(entry.value))
     }
   }
-  const layers = createWorkspaceLayers({getDocument: () => getFrame().contentDocument, selectNode: focusResult})
+  let componentNames = new WeakMap()
+  const layers = createWorkspaceLayers({componentFor: node => componentNames.get(node), getDocument: () => getFrame().contentDocument, selectNode: focusResult})
   let selectionDocument
   function syncLayerSelection(event) {
     if (event.currentTarget !== getFrame().contentDocument) return
@@ -260,14 +261,17 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
 
   function publish() {
     inventoryChanged = false
-    panel.update(ui.variablesInventory([...scans.values()]), {
+    panel.update(ui.variablesInventory([...scans.values()], catalogs.componentCatalog?.revision), {
       fontDocument: getFrame().contentDocument,
       canCreateTextStyle: catalogs.canCreateTextStyle === true,
     })
     const checked = [...mapped].filter(route => scans.has(route)).length
-    const componentsChecked = [...mapped].filter(route => scans.get(route)?.componentCoverage === 'rendered-markers').length
+    const componentsChecked = [...mapped].filter(route => scans.get(route)?.componentCoverage === 'configurable-definitions' &&
+      (!catalogs.componentCatalog || (scans.get(route).verifiedComponentRoots && scans.get(route).componentRevision === catalogs.componentCatalog.revision))).length
     const coverage = count => count < mapped.size ? count + ' of ' + mapped.size + ' mapped pages inspected.' : ''
-    panel.setCoverage(coverage(checked), coverage(componentsChecked))
+    const skipped = catalogs.componentCatalog?.skippedFiles?.length ?? 0
+    const componentMessage = [coverage(componentsChecked), skipped ? skipped + ' source files could not be indexed.' : ''].filter(Boolean).join(' ')
+    panel.setCoverage(coverage(checked), componentMessage)
   }
 
   function observeRoot(root) {
@@ -317,6 +321,10 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     observer.disconnect()
     observeRoot(doc.documentElement)
     liveScan = ui.scanVariablesPage(doc, page, catalogs, observeRoot)
+    componentNames = new WeakMap()
+    for (const entry of liveScan.entries) {
+      if (entry.category === 'component') for (const hit of entry.occurrences) componentNames.set(hit.node, entry.name)
+    }
     scans.set(page.id, liveScan)
     if (page.frameId) frames.set(page.id, page.frameId)
     else frames.delete(page.id)
@@ -339,8 +347,8 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     }, 100)
   }
 
-  function readCatalog() {
-    dock.firstElementChild?.dispatchEvent(new Event('request-variables-catalog'))
+  function readCatalog(refresh = false) {
+    dock.firstElementChild?.dispatchEvent(new CustomEvent('request-variables-catalog', { detail: refresh ? 'refresh' : null }))
   }
   dock.addEventListener('variables-catalog', event => {
     if (event.target !== dock.firstElementChild || typeof event.detail !== 'string' || catalogKey === event.detail) return
@@ -377,7 +385,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       if (inventoryChanged) publish()
       panel.setWorkspace(view === 'File', activeScope, entry)
       panel.refreshLayers()
-      readCatalog()
+      readCatalog(true)
       schedule()
     } else {
       layers.render(null)

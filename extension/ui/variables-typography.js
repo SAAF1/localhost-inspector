@@ -73,7 +73,7 @@
     return row
   }
 
-  ui.typeUsesList = ({ entry, pages, scopedPage, expanded, countLabel, occurrenceRow, reveal, navigation, previewText, selectText }) => {
+  ui.typeUsesList = ({ entry, pages, scopedPage, expanded, countLabel, occurrenceRow, reveal, previewText, selectText }) => {
     const element = ui.element('section', 'li-type-uses')
     const toolbar = ui.element('div', 'li-type-use-toolbar')
     const byPage = new Map()
@@ -91,26 +91,21 @@
       try { await reveal(hit) }
       finally { stepping = false }
     }
-    const previous = ui.action('Previous use', 'chevronDown', () => stepTo(ordered[index - 1]))
-    previous.classList.add('li-type-previous')
-    const next = ui.action('Next use', 'chevronDown', () => stepTo(ordered[index + 1]))
     const text = entry.category === 'typography'
     let all
-    if (text) {
-      navigation.append(previous, next)
-      if (scopedPage !== null) {
-        all = ui.element('button', 'li-all-text', 'All text')
-        all.type = 'button'
-        all.disabled = !ordered.length
-        all.append(countLabel(ordered.length))
-        all.onclick = () => selectText(ordered)
-        all.onpointerenter = () => previewText(ordered)
-        all.onpointerleave = () => previewText([])
-        element.append(all)
-      }
-    } else toolbar.append(countLabel(ordered.length), previous, next)
+    toolbar.classList.add('li-text-uses-header')
+    element.append(toolbar)
+    if (text && scopedPage !== null) {
+      all = ui.element('button', 'li-all-text', 'All text')
+      all.type = 'button'
+      all.disabled = !ordered.length
+      all.append(countLabel(ordered.length))
+      all.onclick = () => selectText(ordered)
+      all.onpointerenter = () => previewText(ordered)
+      all.onpointerleave = () => previewText([])
+      toolbar.append(all)
+    } else toolbar.append(ui.element('h3', '', text ? 'All text' : 'Instances'), countLabel(ordered.length))
     element.setAttribute('aria-label', entry.category === 'component' ? 'Component instances' : 'Text uses')
-    if (!text) element.append(toolbar)
     const groups = new Map()
     const rows = new Map()
     for (const page of pages) {
@@ -150,8 +145,6 @@
     }
     function select(hit, scroll) {
       index = ordered.indexOf(hit)
-      previous.disabled = index <= 0
-      next.disabled = index >= ordered.length - 1
       if (!scroll || index < 0) return
       const group = groups.get(hit.pageId)
       if (group) {

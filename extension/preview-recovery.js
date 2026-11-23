@@ -136,6 +136,7 @@
   }
 
   function matchesTarget(node, target, rebind = false) {
+    if (target?.mount) return node?.isConnected && ui.componentEdits.liveNode(target) === node
     if (!node?.isConnected || !target || node.localName !== target.tag ||
         node.getAttribute('data-slot') !== target.slot) return false
     const key = targetKey(node)
@@ -312,6 +313,8 @@
       return value === undefined ? undefined : value === edit.templateSourceFingerprint?.replace(/^v2:/, '')
     }
 
+    const sessionEntry = entry => entry?.property === 'button-size' || Boolean(entry?.target?.mount)
+
     function attach(id, entry) {
       attached.set(id, entry)
       if (!inlineStacks.has(entry.node)) inlineStacks.set(entry.node, new Map())
@@ -331,7 +334,7 @@
     function detach(id, preserveDeclaration = false) {
       const entry = attached.get(id)
       if (!entry) return
-      if (entry.property !== 'button-size' && !preserveDeclaration) remove(entry)
+      if (!sessionEntry(entry) && !preserveDeclaration) remove(entry)
       attached.delete(id)
       const stack = inlineStacks.get(entry.node).get(entry.property)
       stack.splice(stack.indexOf(entry), 1)
@@ -345,7 +348,7 @@
     function topEntries() {
       const byNode = new Map()
       for (const entry of attached.values()) {
-        if (entry.property === 'button-size') continue
+        if (sessionEntry(entry)) continue
         if (!byNode.has(entry.node)) byNode.set(entry.node, new Map())
         byNode.get(entry.node).set(entry.property, entry)
       }
@@ -371,7 +374,7 @@
     }
 
     function reconcileConflicts(entries = topEntries()) {
-      const lost = entries.filter(entry => entry.property !== 'button-size' && lostPreview(entry))
+      const lost = entries.filter(entry => !sessionEntry(entry) && lostPreview(entry))
       if (!lost.length) return
       const suppressed = new Map()
       const appOwned = new Map()
@@ -476,7 +479,7 @@
       const invalid = new Set()
       for (const [id, edits] of groups) if (!sharedGroupValid(edits)) invalid.add(id)
       for (const [id, entry] of Array.from(attached).reverse()) {
-        if (entry.property === 'button-size') continue
+        if (sessionEntry(entry)) continue
         const edit = saved.get(editId(id, entry))
         const pairedTemplateChanged = edit?.template && edit.group && groups.get(edit.group)?.some(member =>
           sameTemplateSource(member, entry.node) !== true)
@@ -591,6 +594,19 @@
         let complete = true
         for (const edit of edits) {
           if (attached.has(edit.id)) continue
+          if (edit.target.mount) {
+            const node = ui.componentEdits.liveNode(edit.target)
+            if (!node) { complete = false; break }
+            const actual = await ui.componentEdits.read(edit.target, savedRoute)
+            if (ui.componentEdits.equal(actual, edit.afterState)) {
+              applied.push([edit.id, { ...edit, node, liveTarget: edit.target, path: savedRoute }])
+            } else if (fromOriginal && ui.componentEdits.equal(actual, edit.beforeState)) {
+              const entry = await apply(node, edit, groupCurrent).catch(() => null)
+              if (entry) applied.push([edit.id, entry])
+              else complete = false
+            } else complete = false
+            break
+          }
           const exact = exactNodes.get(edit.id)
           if (edit.restore === 'session' && (!exact || !matchesTarget(exact.node, exact.target))) {
             complete = false
@@ -615,7 +631,7 @@
               pendingTextStyle ? { ...edit, pendingTextStyle } : edit
             const entry = await apply(node, replay, groupCurrent)
             if (!entry || !groupCurrent() || !matchesTarget(node, identity, true) || !isAttached(edit, entry)) {
-              if (entry?.property === 'button-size') await removeButtonSize(entry).catch(() => false)
+              if (sessionEntry(entry)) await removeButtonSize(entry).catch(() => false)
               else if (entry) remove(entry)
               complete = false
               break
@@ -628,7 +644,7 @@
         }
         if (!complete || !isCurrent() || !sharedGroupValid(edits)) {
           for (const [, entry] of applied.reverse()) {
-            if (entry.property === 'button-size') await removeButtonSize(entry).catch(() => false)
+            if (sessionEntry(entry)) await removeButtonSize(entry).catch(() => false)
             else remove(entry)
           }
           if (edits[0].group && isCurrent()) {
@@ -645,8 +661,8 @@
     }
 
     return {
-      buttonEntries(id) {
-        return Array.from(attached).reverse().filter(([key, entry]) => entry.property === 'button-size' && (!id || id === key))
+      componentEntries(id) {
+        return Array.from(attached).reverse().filter(([key, entry]) => sessionEntry(entry) && (!id || id === key))
           .map(([, entry]) => entry)
       },
       pendingColorFor(node) {
@@ -715,7 +731,7 @@
       get hasTemplateEdits() { return Array.from(saved.values()).some(edit => edit.template) },
       changedBaseline(id, node) {
         const edit = saved.get(id)
-        if (!edit || edit.property === 'button-size') return null
+        if (!edit || sessionEntry(edit)) return null
         const value = getComputedStyle(node).getPropertyValue(edit.property)
         return value !== edit.before && value !== edit.observed
           ? { label: edit.property.replaceAll('-', ' '), value } : null
@@ -745,7 +761,7 @@
           return edits.some(edit => {
             const entry = attached.get(edit.id)
             if (!inState(edit, state)) return Boolean(entry)
-            if (entry) return entry.property !== 'button-size' && !isAttached(edit, entry)
+            if (entry) return !sessionEntry(entry) && !isAttached(edit, entry)
             return !conflicts.has(edit.id) && edit.restore === 'unique' && candidatesFor(edit.target).length > 0
           })
         })

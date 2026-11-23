@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { mkdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { componentPreviewSites } from './component-preview-sites.mjs'
 import { tableRenderSites } from './table-render-sites.mjs'
 
 const [project, destination] = process.argv.slice(2)
@@ -15,4 +16,4 @@ const requireFromApp = createRequire(join(root, 'package.json'))
 const { build } = await import(pathToFileURL(requireFromApp.resolve('vite')))
 await mkdir(outDir) // Refuse to overwrite the app build or a previous preview.
 process.chdir(root)
-await build({ root, plugins: [tableRenderSites(root)], build: { outDir, emptyOutDir: false } })
+await build({ root, plugins: [tableRenderSites(root), componentPreviewSites(root)], build: { outDir, emptyOutDir: false } })

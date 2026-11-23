@@ -1,6 +1,6 @@
 (() => {
   const ui = window.LocalhostInspector
-  const handlers = ['onclick', 'onkeydown', 'oninput', 'onchange']
+  const handlers = ['onclick', 'onkeydown', 'oninput', 'onchange', 'onfocus']
   const validationAttributes = ['aria-invalid', 'aria-describedby']
 
   function sameControl(current, next) {

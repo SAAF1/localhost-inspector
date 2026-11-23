@@ -355,11 +355,11 @@
       const rows = inventory.entries.filter(entry => entry.category === category).map(entry => ({
         entry, hits: !file ? entry.occurrences : entry.occurrences.filter(hit => hit.pageId === scopedPage),
       })).filter(row => !file || row.hits.length)
-      if (!rows.length) body.append(ui.element('p', 'li-var-message', 'No ' + (file ? fileCategories : projectCategories)[category].toLowerCase() + ' found.'))
+      if (!rows.length) body.append(ui.element('p', 'li-var-message', category === 'component' ? 'No components with registered slots or properties found.' : 'No ' + (file ? fileCategories : projectCategories)[category].toLowerCase() + ' found.'))
       if (category === 'component') {
-        const list = ui.element('div', 'li-var-list')
+        const list = ui.element('div', 'li-var-list li-component-list')
         for (const { entry, hits } of rows) {
-          const trailing = colorTrailing(hits.length, 'chevronRight')
+          const trailing = countLabel(hits.length)
           list.append(listRow(entry.name, trailing, () => navigate(() => { selectedEntry = entry })))
         }
         body.append(list)
@@ -442,7 +442,7 @@
 
     function occurrenceRow(hit, entry) {
       const row = control('li-var-list-row', () => reveal(hit, entry))
-      let label = hit.label
+      let label = entry.category === 'component' ? entry.name : hit.label
       if (entry.category === 'color') {
         const parts = [...characters.segment(label)]
         if (parts.length > 16) label = label.slice(0, parts[16].index) + '…'
@@ -455,13 +455,24 @@
       }
       if (entry.category === 'typography' || entry.category === 'component') {
         row.classList.add('li-type-use')
-        row.prepend(ui.icon(entry.category === 'typography' ? 'textLayer' : 'frame'))
+        if (entry.category === 'component') {
+          row.classList.add('li-instance-use')
+          if (hit.label !== label) row.setAttribute('aria-description', hit.label)
+        }
+        row.prepend(ui.icon(entry.category === 'typography' ? 'textLayer' : 'instance'))
         ui.setTooltip(row, hit.label)
       }
       row.append(ui.element('span', '', label))
       occurrenceRows.set(hit, row)
       if (selectedHit === hit) row.setAttribute('aria-current', 'true')
       return row
+    }
+
+    function usageHeading(title, count) {
+      const heading = ui.element('div', 'li-type-use-toolbar li-text-uses-header')
+      heading.append(ui.element('h3', '', title))
+      if (count !== null) heading.append(countLabel(count))
+      body.append(heading)
     }
 
     function showColorEntry(entry) {
@@ -472,6 +483,7 @@
         pageUses.get(hit.pageId).push(hit)
       }
       detailHeader(colorSpecimen(entry), entry)
+      usageHeading('Uses', [...pageUses.values()].reduce((sum, hits) => sum + hits.length, 0))
       const list = ui.element('div', 'li-var-list')
       function appendUse(hit) {
         const use = occurrenceRow(hit, entry)
@@ -519,13 +531,18 @@
         detailHeader(row, entry, clearDetails, false)
       } else {
         const labels = ui.element('div', 'li-type-labels li-component-details')
-        labels.append(ui.element('h2', '', entry.name), ui.element('span', 'li-var-meta', entry.value))
+        labels.append(ui.element('h2', '', entry.name), ui.element('span', 'li-var-meta', entry.fields?.map(field => field === 'children' ? 'content' : field).join(', ') ?? entry.value))
+        if (entry.source) labels.append(ui.element('span', 'li-var-meta', entry.source))
         detailHeader(labels, entry)
+        if (entry.unmapped && !entry.occurrences.length) {
+          usageHeading('Instances', 0)
+          body.append(ui.element('p', 'li-var-message', 'Page uses could not be linked to this definition.'))
+          return
+        }
       }
       expandedTypePages ??= new Set([selectedHit?.pageId ?? currentPageId?.() ?? workspacePage])
       const uses = ui.typeUsesList({
         entry, pages: inventory.pages, scopedPage, expanded: expandedTypePages, countLabel,
-        navigation: body.querySelector('.li-var-detail-nav'),
         previewText: hits => onTextTargets?.(hits),
         selectText: hits => {
           if (!onTextTargets?.(hits, true)) {
@@ -553,6 +570,7 @@
         else clearDetails()
       })
       const list = ui.element('div', 'li-var-list')
+      usageHeading('Uses', hits.length)
       if (pageId !== null) {
         for (const hit of hits) {
           const row = occurrenceRow(hit, entry)
@@ -577,7 +595,7 @@
     }
 
     function addCollapseControl(entry) {
-      const header = body.querySelector(entry ? '.li-var-detail-nav' : '.li-variables-header')
+      const header = body.querySelector('.li-text-uses-header') ?? body.querySelector(entry ? '.li-var-detail-nav' : '.li-variables-header')
       const groups = [...body.querySelectorAll('details')]
       const colorPages = [...body.querySelectorAll('.li-var-color-page[aria-expanded]')]
       const key = JSON.stringify([file, scopedPage, category, entry?.id, resultPage])

@@ -1,0 +1,85 @@
+(() => {
+  const ui = window.LocalhostInspector
+  ui.createStylePreview = catalogs => {
+    const temporary = new Set()
+    function remove(entry) {
+      const { node, property, prior, priorPriority } = entry
+      if (!ui.ownsPreviewDeclaration(entry)) return
+      if (prior) node.style.setProperty(property, prior, priorPriority)
+      else node.style.removeProperty(property)
+    }
+    async function apply(node, property, requested, isCurrent, { colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle } = {}) {
+      const { colorCatalog, spacingCatalog, textStyleCatalog } = catalogs()
+      if (colorToken && (
+        !ui.supportsColorVariable(node, property) || requested !== ui.colorVariableValue(colorToken.name) ||
+        colorToken.source !== colorCatalog?.source || !colorCatalog.names.includes(colorToken.name) ||
+        !ui.resolveColorVariable(node, colorToken.name)
+      )) throw Error('This color variable is unavailable for the selected color.')
+      if (pendingColor && (
+        property !== 'background-color' || !ui.supportsColorVariable(node, property) ||
+        pendingColor.source !== colorCatalog?.source || requested !== pendingColor.value
+      )) throw Error('The color source is unavailable.')
+      if (spacingToken && (
+        requested !== ui.spacingVariableValue(spacingToken.name) ||
+        spacingToken.source !== spacingCatalog?.source || !spacingCatalog.names.includes(spacingToken.name) ||
+        !ui.supportsSpacingVariable(node, property) || ui.resolveSpacingLength(node, spacingToken.name) === null
+      )) throw Error('This spacing variable is unavailable for the selected field.')
+      if (textStyleToken && (
+        !ui.textStyleProperties.includes(property) || requested !== ui.textStyleReference(textStyleToken.name, property) ||
+        textStyleToken.source !== textStyleCatalog?.source || !textStyleCatalog.names.includes(textStyleToken.name) ||
+        !ui.supportsTextStyle(node) || !ui.textStyleValues(node, textStyleToken.name)
+      )) throw Error('This text style is unavailable for the selected text.')
+      if (pendingTextStyle && (
+        !ui.textStyleProperties.includes(property) ||
+        requested !== ui.textStyleReference(pendingTextStyle.name, property, pendingTextStyle.values[property]) ||
+        pendingTextStyle.source !== textStyleCatalog?.source || !ui.supportsTextStyle(node)
+      )) throw Error('This text style preview is unavailable for the selected text.')
+      if (!CSS.supports(property, requested)) throw Error('That value is not valid for this control')
+      const baseline = getComputedStyle(node).getPropertyValue(property)
+      const prior = node.style.getPropertyValue(property)
+      const priorPriority = node.style.getPropertyPriority(property)
+      if (property === 'padding' && [...node.style].some(key => /^padding-(top|right|bottom|left)$/.test(key))) {
+        throw Error('Use individual sides when padding is already set inline')
+      }
+      const measure = () => {
+        const box = node.getBoundingClientRect()
+        return property === 'height' ? box.height : box.width
+      }
+      const dimensions = property === 'width' || property === 'height'
+      const beforeSize = dimensions ? measure() : 0
+      node.style.setProperty(property, requested)
+      const declared = node.style.getPropertyValue(property)
+      const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle }
+      temporary.add(entry)
+      let observed = getComputedStyle(node).getPropertyValue(property)
+      const mode = ['100%', 'fit-content'].includes(requested)
+      const changedSize = () => Math.abs(measure() - beforeSize) > 0.5
+      const sameValue = () => observed === declared || observed === requested ||
+        (['min-width', 'min-height'].includes(property) && requested === 'auto' && observed === '0px')
+      const verified = () => {
+        if (colorToken) return ui.ownsPreviewDeclaration(entry) && observed === ui.resolveColorVariable(node, colorToken.name)
+        if (spacingToken) return ui.ownsPreviewDeclaration(entry) && ui.spacingVariableMatches(node, property, spacingToken.name, observed)
+        if (textStyleToken || pendingTextStyle) return ui.ownsPreviewDeclaration(entry) && ui.textStyleMatches(
+          observed, pendingTextStyle?.values[property] ?? ui.textStyleValues(node, textStyleToken.name)?.[property],
+        )
+        if (mode) return changedSize()
+        return sameValue() && (!dimensions || changedSize() || baseline === observed)
+      }
+      const deadline = performance.now() + 550
+      while (isCurrent() && node.isConnected && !verified() && performance.now() < deadline) {
+        await new Promise(requestAnimationFrame)
+        observed = getComputedStyle(node).getPropertyValue(property)
+      }
+      if (!isCurrent() || !node.isConnected || !verified()) {
+        discardTemporary(entry)
+        throw Error(dimensions ? 'The box did not resize as requested. Check its layout constraints.' : 'The browser kept a different value')
+      }
+      entry.observed = observed
+      return entry
+    }
+    function discardTemporary(entry) {
+      if (temporary.delete(entry)) remove(entry)
+    }
+    return { apply, remove, temporary, discardTemporary }
+  }
+})()

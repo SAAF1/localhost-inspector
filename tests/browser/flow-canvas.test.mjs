@@ -713,3 +713,79 @@ test('canvas and Layers share inspector selection and clearing', async () => {
     await h.app.locator('#localhost-inspector-outlines #outline').waitFor({ state: 'hidden' })
   } finally { await h.close() }
 })
+
+test('Layers can hide and restore a parent and show its descendants as selected', async () => {
+  const h = await createHarness({
+    canvas: true, dock: true, flowFrames: lifecycleFrames,
+    flowPages: { '/': { body: '<section aria-label="Actions"><button id="save-action">Save</button></section>' } },
+  })
+  try {
+    await h.open()
+    const tree = h.page.getByRole('tree', { name: 'Layers' })
+    const parent = tree.getByRole('treeitem', { name: 'Actions', exact: true })
+    const child = tree.getByRole('treeitem', { name: 'Save', exact: true })
+    await parent.press('Enter')
+    assert.equal(await parent.getAttribute('aria-selected'), 'true')
+    assert.equal(await child.getAttribute('aria-selected'), 'true')
+    await parent.locator(':scope > .workspace-layer-line').hover()
+    await parent.getByRole('button', { name: 'Hide Actions', exact: true }).click()
+    assert.equal(await h.app.locator('#save-action').isVisible(), false)
+    await parent.getByRole('button', { name: 'Show Actions', exact: true }).click()
+    assert.equal(await h.app.locator('#save-action').isVisible(), true)
+    await child.press('Enter')
+    assert.equal(await parent.getAttribute('aria-selected'), 'false')
+  } finally { await h.close() }
+})
+
+test('a decorative SVG is one independently selectable and hideable layer', async () => {
+  const body = `<main><button aria-label="Create"><span>Create</span>
+    <svg id="plus" aria-hidden="true" width="20" height="20" style="pointer-events:none" viewBox="0 0 20 20">
+      <title>Add icon</title><defs><path id="glyph" d="M0 10h20M10 0v20"/></defs>
+      <use href="#glyph" stroke="currentColor"/>
+    </svg></button></main>`
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages: { '/': { body } } })
+  try {
+    await h.open()
+    const tree = h.page.getByRole('tree', { name: 'Layers' })
+    const svg = h.app.locator('#plus')
+    const bounds = await svg.boundingBox()
+    await h.page.keyboard.down('Meta')
+    await h.page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+    await h.page.keyboard.up('Meta')
+    const layer = tree.getByRole('treeitem', { name: 'Add icon', exact: true })
+    await layer.waitFor()
+    assert.equal(await layer.getAttribute('aria-selected'), 'true')
+    assert.equal(await layer.getAttribute('aria-expanded'), null)
+    await layer.locator(':scope > .workspace-layer-line').hover()
+    await layer.getByRole('button', { name: 'Hide Add icon' }).click()
+    assert.equal(await svg.isVisible(), false)
+    assert.equal(await h.app.locator('button span').isVisible(), true)
+    await layer.getByRole('button', { name: 'Show Add icon' }).click()
+    assert.equal(await svg.isVisible(), true)
+    await h.select('button span')
+    await layer.press('Enter')
+    assert.equal(await layer.getAttribute('aria-selected'), 'true')
+    assert.equal(await layer.locator('..').locator('[aria-selected=false]').count(), 1)
+  } finally { await h.close() }
+})
+
+test('Layers follows rendered wrappers and omits hidden and inspector-only content', async () => {
+  const body = `<main>
+    <div aria-label="Transparent wrapper" style="display:contents"><p>Promoted text</p></div>
+    <div aria-label="Invisible wrapper" style="visibility:hidden"><p style="visibility:visible">Visible override</p></div>
+    <div hidden><p>Hidden descendant</p></div><img aria-label="Thumbnail" width="12" height="12">
+    <svg aria-label="Brand" width="16" height="16"><title>Alternate name</title><circle r="4"/></svg>
+    <svg width="16" height="16" aria-hidden="true"><path d="M0 0L16 16"/></svg>
+    <template><p>Template contents</p></template>
+    <textarea id="localhost-inspector-text-editor" aria-label="Transient editor"></textarea>
+  </main>`
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages: { '/': { body } } })
+  try {
+    await h.open()
+    const tree = h.page.getByRole('tree', { name: 'Layers' })
+    await tree.getByRole('treeitem', { name: 'Promoted text' }).waitFor()
+    const main = tree.getByRole('treeitem', { name: 'Main', exact: true })
+    assert.deepEqual(await main.getByRole('treeitem').evaluateAll(items => items.map(item => item.getAttribute('aria-label'))),
+      ['Promoted text', 'Visible override', 'Thumbnail', 'Brand', 'Icon'])
+  } finally { await h.close() }
+})

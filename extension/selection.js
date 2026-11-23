@@ -35,8 +35,7 @@
         positionOutline(layer.children[index], node)
       }
     }
-    function pointedElement() {
-      const { x, y } = pointer
+    function pointedElement({ x, y }) {
       let node = document.elementFromPoint(x, y)
       if (node === host) return null
       while (node?.shadowRoot) {
@@ -44,11 +43,25 @@
         if (!inner || inner === node) break
         node = inner
       }
-      while (node && !(node instanceof HTMLElement)) node = node.parentElement || node.getRootNode().host
+      if (node instanceof SVGElement) {
+        while (node.ownerSVGElement) node = node.ownerSVGElement
+        return node
+      }
+      if (!(node instanceof HTMLElement)) return null
+      // Decorative icons often pass pointer events through to their control.
+      const icons = node.querySelectorAll(node.matches('button,a,label,[role="button"]') ? 'svg' : ':scope > svg')
+      for (let i = icons.length - 1; i >= 0; i--) {
+        const icon = icons[i]
+        if (icon.ownerSVGElement) continue
+        const box = icon.getBoundingClientRect()
+        if (x < box.left || x >= box.right || y < box.top || y >= box.bottom) continue
+        const style = getComputedStyle(icon)
+        if (style.pointerEvents === 'none' && style.visibility === 'visible') return icon
+      }
       return node
     }
     function syncHoverOutline() {
-      hovered = !panel.hidden && commandHeld && pointer ? pointedElement() : null
+      hovered = !panel.hidden && commandHeld && pointer ? pointedElement(pointer) : null
       const target = menuTarget?.()
       const outline = get('hover-outline')
       outline.toggleAttribute('data-menu-preview', Boolean(target))
@@ -138,7 +151,7 @@
         return
       }
       if (!isSelectionGesture(event)) return
-      const node = event.composedPath().find(target => target instanceof HTMLElement)
+      const node = pointedElement({ x: event.clientX, y: event.clientY })
       if (!node) return
       event.preventDefault()
       event.stopImmediatePropagation()

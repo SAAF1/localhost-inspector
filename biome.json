@@ -2,11 +2,18 @@
   "files": {
     "includes": [
       "extension/**",
+      "integrations/**",
       "*.mjs",
       "tests/**",
       "scripts/**"
     ]
   },
+  "overrides": [{
+    "includes": ["extension/**", "integrations/**", "scripts/**", "*.mjs"],
+    "linter": { "rules": { "style": {
+      "noExcessiveLinesPerFile": { "level": "warn", "options": { "maxLines": 300 } }
+    } } }
+  }],
   "formatter": {
     "enabled": false
   },

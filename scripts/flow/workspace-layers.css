@@ -1,4 +1,5 @@
 .workspace-layers-tree {
+  padding-inline-start: var(--li-gap);
   display: flex;
   flex-direction: column;
   gap: var(--li-gap);
@@ -22,13 +23,20 @@
   min-width: 0;
   min-height: var(--li-field-height);
   padding-inline-end: var(--li-gap);
-  padding-inline-start: calc(4px + min(var(--layer-depth) * 16px, 40%));
+  padding-inline-start: calc(4px + min(var(--layer-depth) * 24px, 40%));
   border-radius: var(--li-radius);
   cursor: pointer;
 }
 
+.workspace-layer-item > .workspace-layer-line { border-start-end-radius: 0; border-end-end-radius: 0; }
+
 .workspace-layer-line:hover {
   background: var(--li-field);
+}
+
+.workspace-layer-item[aria-selected="true"] {
+  background: var(--li-control-selected-surface);
+  border-radius: var(--li-radius);
 }
 
 .workspace-layer-item[aria-selected="true"] > .workspace-layer-line {
@@ -58,7 +66,15 @@
 }
 
 .workspace-layer-item[aria-selected="true"] > .workspace-layer-line > .workspace-layer-kind {
-  color: var(--li-active);
+  color: var(--li-text);
+}
+
+.workspace-layer-item > .workspace-layer-line[data-component] > :is(.workspace-layer-kind,.workspace-layer-caret,.workspace-layer-label) {
+  color: var(--li-component);
+}
+
+.workspace-layer-item[aria-selected="false"] > .workspace-layer-line[data-component]:not(:hover, [data-layer-hidden]) > :is(.workspace-layer-kind,.workspace-layer-caret) {
+  opacity: .55;
 }
 
 .workspace-layer-label {
@@ -72,3 +88,21 @@
   margin: 0;
   color: var(--li-muted);
 }
+
+.workspace-layer-eye {
+  margin-inline-start: auto;
+  flex: none;
+  visibility: hidden;
+}
+.workspace-layer-line:hover > .workspace-layer-eye,
+.workspace-layer-item:focus > .workspace-layer-line > .workspace-layer-eye,
+.workspace-layer-eye:focus,
+.workspace-layer-line[data-layer-hidden] > .workspace-layer-eye {
+  visibility: visible;
+}
+.workspace-layer-item > .workspace-layer-line[data-layer-hidden] > :is(.workspace-layer-kind,.workspace-layer-label,.workspace-layer-caret) {
+  color: var(--li-muted);
+  opacity: .65;
+}
+.workspace-layer-line:not([data-component]) .workspace-layer-kind { padding: 2px; box-sizing: border-box; }
+@media (hover: none) { .workspace-layer-line > .workspace-layer-eye { visibility: visible; } }

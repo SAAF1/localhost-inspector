@@ -21,8 +21,6 @@
     word ? word[0].toUpperCase() + word.slice(1) : word).join(' ')
   const simpleLabel = id => id.replace(/^--(?:color-)?/, '')
   const compact = text => text.replace(/\s+/g, ' ').trim()
-  const componentLabel = slot => slot.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[-_]+/g, ' ').trim().replace(/\b[a-z]/g, letter => letter.toUpperCase()) || slot
 
   function registeredDefinition(node) {
     if (!node.hasAttribute('data-inspector-component')) return null
@@ -30,7 +28,12 @@
     if (!descriptor) return null
     try {
       const parts = JSON.parse(descriptor)
-      if (!Array.isArray(parts) || parts.length !== 2) return null
+      if (!Array.isArray(parts)) return null
+      if (parts.length === 2) {
+        // Older registrations published only the name. Verify their live definition.
+        const live = node[Symbol.for('localhost-inspector.component.v1')]?.inspect?.()
+        if (!live?.slots?.length && !live?.properties?.length) return null
+      } else if (!Number.isSafeInteger(parts[2]) || parts[2] < 1) return null
       const [library, name] = parts
       return typeof library === 'string' && typeof name === 'string' && name.trim() ?
         { library: library.trim(), name: name.trim() } : null
@@ -76,6 +79,14 @@
       return entries.get(id)
     }
 
+    const sourceById = new Map()
+    for (const def of catalogs.componentCatalog?.definitions ?? []) {
+      const item = entry('component', def.source, def.name, def.name)
+      item.source = def.source
+      item.fields = def.fields
+      item.unmapped = true
+      sourceById.set(JSON.stringify([def.source, def.name]), item)
+    }
     const definitions = []
     for (const name of catalogs.textStyleCatalog?.names ?? []) {
       const values = ui.textStyleValues(root, name)
@@ -84,13 +95,11 @@
         entry('typography', name, styleLabel(name), typography(values))
       }
     }
-    const projectStyleNames = new Set(catalogs.textStyleDefinitions?.map(style => style.name))
     for (const draft of catalogs.pendingTextStyles ?? []) {
       if (draft.source !== catalogs.textStyleCatalog?.source || definitions.some(item => item.name === draft.name)) continue
       if (!draft.values || !cssKeys.every(key => typeof draft.values[key] === 'string')) continue
       const label = draft.label || styleLabel(draft.name)
-      definitions.push({ name: draft.name, label, values: draft.values, pending: true,
-        requiresBinding: projectStyleNames.has(draft.name) })
+      definitions.push({ name: draft.name, label, values: draft.values, pending: true })
       entry('typography', draft.name, label, typography(draft.values))
     }
     const tokens = { color: new Map(), spacing: new Map() }
@@ -106,23 +115,22 @@
       for (const name of catalog?.names ?? []) {
         // Preserve roles even when the development build inlines their public alias.
         const alias = catalog.aliases?.[name]
+        for (const key of new Set([name, alias].filter(Boolean))) {
+          const names = tokens[category].get(key) ?? []
+          names.push(name)
+          tokens[category].set(key, names)
+        }
         const value = resolvers[category](root, name) ?? (alias && resolvers[category](root, alias))
-        if (!value) continue
-        const names = tokens[category].get(value) ?? []
-        names.push({ name, alias })
-        tokens[category].set(value, names)
-        entry(category, name, simpleLabel(name), value)
+        if (value) entry(category, name, simpleLabel(name), value)
       }
     }
 
     function measured(category, node, property, value, declaration) {
-      const candidates = tokens[category].get(value)
-      if (!candidates?.length) return entry(category, null, undefined, value)
+      if (!tokens[category].size) return entry(category, null, undefined, value)
       const authored = reference.exec((declaration === undefined ? ui.authoredProperty(node, property) : declaration) || '')?.[1]
-      const matches = candidates.filter(token => authored && (token.name === authored || token.alias === authored))
-      const token = matches.length === 1 ? matches[0] : null
-      // Equal measurements alone do not establish a variable binding.
-      return entry(category, token?.name, token ? simpleLabel(token.name) : undefined, value)
+      const names = tokens[category].get(authored)
+      const name = names?.length === 1 && resolvers[category](node, authored) === value ? names[0] : null
+      return entry(category, name, name ? simpleLabel(name) : undefined, value)
     }
 
     function spacing(node, property, value) {
@@ -155,31 +163,27 @@
         const add = (item, property, edges) => item.occurrences.push({
           pageId: page.id, label: label.slice(0, 120), property, node, key, ...(edges ? { edges } : {}),
         })
-        const slot = node.getAttribute('data-slot')?.trim()
+        const fromSource = node.hasAttribute('data-inspector-instance') && sourceById.get(node.getAttribute('data-inspector-source'))
+        if (fromSource) fromSource.unmapped = false
         const definition = registeredDefinition(node)
         if (definition) {
           const { library, name } = definition
           const value = library ? name + ' · ' + library : name
-          add(entry('component', JSON.stringify(['definition', library, name]), name, value), 'component')
-        } else if (slot) {
-          // Keep the exact slot as identity; similarly formatted labels can name different slots.
-          add(entry('component', 'slot', componentLabel(slot), slot), 'component')
-        }
+          const item = fromSource?.name === name ? fromSource : entry('component', JSON.stringify(['definition', library, name]), name, value)
+          add(item, 'component')
+        } else if (fromSource) add(fromSource, 'component')
         if (text || controlText || (field && node.value)) {
           const textStyle = placeholder ? win.getComputedStyle(node, '::placeholder') : style
           const values = Object.fromEntries(cssKeys.map(key => [key, textStyle.getPropertyValue(key)]))
           const recipe = typography(values, textStyle.fontStyle, textStyle.fontStretch)
-          let matches = []
-          if (textStyle.fontStyle === 'normal' && ['normal', '100%'].includes(textStyle.fontStretch)) {
-            matches = definitions.filter(definition => {
+          let match
+          if (!placeholder && textStyle.fontStyle === 'normal' && ['normal', '100%'].includes(textStyle.fontStretch)) {
+            match = definitions.find(definition => {
               const expected = definition.pending ? definition.values : ui.textStyleValues(node, definition.name)
               return expected && cssKeys.every(key => ui.textStyleMatches(values[key], expected[key]) &&
-                (!definition.requiresBinding || ui.authoredProperty(node, key) === ui.textStyleReference(definition.name, key, expected[key])))
+                ui.authoredProperty(node, key) === ui.textStyleReference(definition.name, key, definition.pending ? expected[key] : undefined))
             })
           }
-          const match = matches.length === 1 ? matches[0] : matches.find(definition =>
-            (!definition.pending || definition.requiresBinding) && cssKeys.every(key =>
-              ui.authoredProperty(node, key) === ui.textStyleReference(definition.name, key, definition.pending ? definition.values[key] : undefined)))
           add(entry('typography', match?.name, match?.label, recipe), 'typography')
           if (painted(textStyle.color)) {
             const item = placeholder ? entry('color', null, undefined, textStyle.color) :
@@ -242,20 +246,26 @@
         occurrence.unique = counts.get(JSON.stringify([occurrence.property, occurrence.key])) === 1
       }
     }
-    return { page, entries: [...entries.values()], componentCoverage: 'rendered-markers' }
+    return { page, entries: [...entries.values()], componentCoverage: 'configurable-definitions', verifiedComponentRoots: true, componentRevision: catalogs.componentCatalog?.revision }
   }
 
-  ui.variablesInventory = scans => {
+  ui.variablesInventory = (scans, componentRevision) => {
     // The latest scan replaces its previous counts after a route revisits.
     const latest = new Map(scans.map(scan => [scan.page.id, scan]))
     const entries = new Map()
     const rawColors = new Map()
     for (const scan of latest.values()) {
       for (const item of scan.entries) {
+        // Older captures counted DOM part labels and registrations with no controls.
+        if (item.category === 'component' && scan.componentCoverage !== 'configurable-definitions') continue
+        if (item.source && item.category === 'component' && (!scan.verifiedComponentRoots ||
+          (componentRevision && scan.componentRevision !== componentRevision))) continue
         // Older captures keyed raw colors by their original CSS spelling.
         const id = item.category === 'color' && !item.name ? rawColorId(item.value, rawColors) : item.id
         if (!entries.has(id)) entries.set(id, { ...item, id, occurrences: [] })
-        for (const occurrence of item.occurrences) entries.get(id).occurrences.push(occurrence)
+        const combined = entries.get(id)
+        if (item.source && item.unmapped === false) combined.unmapped = false
+        for (const occurrence of item.occurrences) combined.occurrences.push(occurrence)
       }
     }
     return { pages: [...latest.values()].map(scan => scan.page), entries: [...entries.values()] }

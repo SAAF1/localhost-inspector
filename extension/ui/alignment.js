@@ -116,14 +116,6 @@
       }
       alignment = ui.stack('Alignment', matrix)
     }
-    if (overflow.x || overflow.y) {
-      const dimension = overflow.x && overflow.y ? 'width and height' : overflow.x ? 'width' : 'height'
-      const note = ui.caption('Content exceeds the available ' + dimension + '.')
-      note.classList.add('li-alignment-overflow')
-      if (alignment) alignment.append(note)
-      else alignment = ui.stack('Alignment', note)
-    }
-
     const gapValue = controls.value('gap')
     const fixedGap = /^\d+(?:\.\d+)?px$/.test(gapValue) ? String(parseFloat(gapValue)) : null
     const gap = ui.spacingField(context, controls, 'gap', 'Gap', 'gapHorizontal', {

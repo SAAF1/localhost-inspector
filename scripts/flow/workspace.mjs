@@ -683,6 +683,7 @@ function watchLiveFrame(frame) {
     const appWindow = frame.contentWindow
     function lockAppClick(event) {
       if (!event.isTrusted || frame !== preview) return
+      if (event.target?.id === 'localhost-inspector-text-editor' || event.type === 'dblclick' && frame.dataset.inspectorDocument) return
       if (event.type === 'pointerdown' && candidate) cancelCandidate()
       if (expanded && event.type === 'click' && event.button === 0) setFrameSelected(true)
       if (!expanded || (event.metaKey && event.button === 0)) return
@@ -694,6 +695,7 @@ function watchLiveFrame(frame) {
     }
     function lockAppKey(event) {
       if (!event.isTrusted || frame !== preview) return
+      if (event.target?.id === 'localhost-inspector-text-editor') return
       if (event.type === 'keydown' && candidate && event.key !== 'Meta') cancelCandidate()
       updateInspectModifier(event)
       if (!expanded || event.key === 'Tab') return

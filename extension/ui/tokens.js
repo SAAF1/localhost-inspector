@@ -28,6 +28,7 @@
       --li-surface: #fff;
       --li-field: #f5f5f5;
       --li-text: #1c1c1c;
+      --li-component: #783cc5;
       --li-muted: #666;
       --li-alignment-hover: #666;
       --li-disabled: #aaa;
@@ -71,6 +72,7 @@
         --li-field: #383838;
         --li-text: #f5f5f5;
         --li-muted: #bdbdbd;
+        --li-component: #cba1ff;
         --li-alignment-hover: #bdbdbd;
         --li-disabled: #878787;
         --li-border: #515151;

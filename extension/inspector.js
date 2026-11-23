@@ -8,7 +8,7 @@
     host, panel, get,
     relatedPadding: () => paddingOutlineMembers,
     onSelect: () => {
-      if (!selection.current && isFloating()) setOpen(false)
+      if (!selection.current && !selection.group.length && isFloating()) setOpen(false)
       renderSelection()
       if (host.hasAttribute('data-workspace-toolbar')) {
         const target = selection.current?.isConnected ? selection.current : document
@@ -18,7 +18,96 @@
     inspect: () => editsUI.showDesign(),
     openPanel: () => setOpen(true, isCanvasExpanded?.() && !host.ownerDocument.body.hasAttribute('data-sidebar-open')),
   })
+  let discovered
+  let componentRead = 0
+  let hasOlderComponentOverrides = false
+  let currentComponent
+  let catalogRequest
+  async function getCatalog(refresh) {
+    if (!refresh && discovered && !catalogRequest) return discovered
+    catalogRequest ??= send({ type: 'variablesCatalog' }).then(result => {
+      discovered = result
+      return result
+    }).catch(() => discovered).finally(() => { catalogRequest = null })
+    return catalogRequest
+  }
+  async function inspectSelectedComponent(node, route) {
+    const request = ++componentRead
+    currentComponent = null
+    if (!node?.matches('[data-inspector-instance],[data-inspector-component]')) return
+    let component
+    if (node.hasAttribute('data-inspector-component')) {
+      const registered = await ui.inspectComponent(node, route)
+      if (registered) component = { ...registered, properties: [
+        ...registered.properties, ...registered.slots.map(slot => ({ ...slot, registeredSlot: true })),
+      ] }
+    }
+    if (!component && node.hasAttribute('data-inspector-instance')) {
+      const live = ui.sourceComponentRequest(node, { type: 'inspect' })
+      if (live?.source === node.getAttribute('data-inspector-source') && live.id === node.getAttribute('data-inspector-instance')) {
+        component = { ...live, sourcePreview: true }
+      }
+    }
+    if (!component) return
+    if (request !== componentRead || node !== selection.current || !node.isConnected || route !== currentRoute) return
+    currentComponent = component
+    renderFields({ keepPopup: true })
+  }
+  async function previewComponentProperty(node, component, property, next, reset = false) {
+    const path = currentRoute
+    const version = activeRouteVersion
+    if (selection.current !== node || !node.isConnected || comparing || !isCurrentRoute(path, version)) {
+      throw Error('Select the component again before changing its preview.')
+    }
+    const kind = component.sourcePreview ? 'source' : 'slot'
+    if (kind === 'slot' && !property.registeredSlot) throw Error('The slot is no longer available.')
+    const target = { kind, mount: component.id, field: property.id, tag: node.localName, id: null,
+      slot: component.name, key: component.id,
+      definition: node.getAttribute(kind === 'source' ? 'data-inspector-source' : 'data-inspector-component-definition') }
+    if (ui.componentEdits.liveNode(target) !== node) throw Error('Select the component again.')
+    const beforeState = ui.componentEdits.state(property, kind)
+    if (!reset && beforeState.value === next && (kind === 'source' || beforeState.visible === (next !== null))) return
+    const afterState = await ui.componentEdits.change(target, path, beforeState, kind === 'source'
+      ? { value: next, ...(reset ? { overridden: false } : {}) } : { value: next, visible: next !== null })
+    await saveInstanceChange(path, version, target, beforeState, afterState, component.name)
+    if (selection.current === node && isCurrentRoute(path, version)) {
+      if (node.isConnected) await inspectSelectedComponent(node, path)
+      else if (component.sourcePreview) {
+        const replacement = document.querySelector('[data-inspector-instance="' + CSS.escape(component.id) + '"]')
+        if (replacement?.getAttribute('data-inspector-source') === component.source) selection.select(replacement)
+      }
+    }
+  }
+  async function saveInstanceChange(path, version, target, beforeState, afterState, name) {
+    const edit = { id: crypto.randomUUID(), route: path, target, property: target.kind === 'text' ? 'text' : 'component-' + target.field,
+      before: String(beforeState.value ?? 'None'), requested: String(afterState.value ?? 'None'), restore: 'session',
+      beforeState, afterState, component: { name, prop: target.field } }
+    edit.observed = edit.requested
+    try {
+      if (!isCurrentRoute(path, version)) throw Error('The page changed while editing the component.')
+      await write({ type: 'saveComponentProperty', record: edit }, path, version)
+    } catch (error) {
+      if (ui.componentEdits.liveNode(target)) await ui.componentEdits.change(target, path, afterState, beforeState)
+      throw error
+    }
+    const mounted = ui.componentEdits.liveNode(target)
+    if (isCurrentRoute(path, version)) recovery.remember(edit, mounted ? { ...edit, node: mounted, liveTarget: target, path } : undefined)
+    reportRecovery()
+  }
+  function editText(text, before, next) {
+    const path = currentRoute, version = activeRouteVersion
+    return run(async () => {
+      if (comparing || !text.isConnected || text.data !== before || overlayFor(text.parentElement)) throw Error('Select the text again.')
+      const target = ui.textEditing.targetFor(text)
+      const original = { value: before, visible: true }
+      const updated = await ui.componentEdits.change(target, path, original, { value: next, visible: true })
+      await saveInstanceChange(path, version, target, original, updated, 'Text')
+    })
+  }
+  ui.textEditing.bind(() => !busy && !comparing && !loadingRoute && journalRevision !== null &&
+    (isCanvasExpanded?.() || !panel.hidden), editText)
   function renderSelection() {
+    void inspectSelectedComponent(selection.current, currentRoute).catch(() => {})
     renderFields()
     const node = selection.current
     const key = buttonSizeKey
@@ -34,10 +123,12 @@
     }).catch(() => {})
   }
   const revertDialog = ui.createRevertDialog(root)
-  const temporary = new Set()
+  const { apply, remove, temporary, discardTemporary } = ui.createStylePreview(() => ({
+    colorCatalog, spacingCatalog, textStyleCatalog,
+  }))
   const recovery = ui.createPreviewRecovery({
     apply: applyRestored, remove, canEdit, readFrameState, projectTextStyles: () => textStyleDefinitions,
-    removeButtonSize: entry => ui.buttonSize.setSize(entry.node, entry.target.key, entry.requested, entry.before, entry.path),
+    removeButtonSize: entry => changeSessionEntry(entry, false),
   })
   const fields = get('fields')
   let renderedSelection
@@ -226,6 +317,9 @@
         }
         return
       }
+      const savedIds = new Set(snapshot.edits.map(edit => edit.id))
+      const retired = recovery.componentEntries().filter(entry => entry.target.mount && !savedIds.has(entry.id))
+      if (retired.length) await rewindComponentEntries(retired, path, version)
       if (recovery.hasAttachedButtonSize) {
         pendingRows = Array.isArray(snapshot.pending) ? snapshot.pending : pendingRows
         journalRevision = null
@@ -243,8 +337,8 @@
 
   async function applyPreviewVisibility(changes, path, version, persist) {
     const local = [...changes.keys()].some(id => recovery.hasOperation(id))
-    const buttons = local && !comparing ? recovery.buttonEntries() : []
-    if (buttons.length) await rewindButtonSizes(buttons, path, version, persist)
+    const buttons = local && !comparing ? recovery.componentEntries() : []
+    if (buttons.length) await rewindComponentEntries(buttons, path, version, persist)
     else await persist()
     const current = () => isCurrentRoute(path, version)
     if (!current()) return
@@ -267,10 +361,10 @@
     }
     const path = currentRoute
     const version = activeRouteVersion
-    const entries = recovery.buttonEntries(id)
+    const entries = recovery.componentEntries(id)
     let result
     const persist = async () => { result = await write({ type: 'removeEdit', id }, path, version) }
-    if (entries.length) await rewindButtonSizes(entries, path, version, persist)
+    if (entries.length) await rewindComponentEntries(entries, path, version, persist)
     else await persist()
     if (!isCurrentRoute(path, version)) return
     await recovery.removeOperation(id, result.rebased ?? [], () => isCurrentRoute(path, version))
@@ -298,7 +392,7 @@
     const reset = get('reset')
     undo.disabled = writesUnavailable || comparing || !recovery.hasSaved
     compare.disabled = pageActionsUnavailable || (!comparing && !recovery.hasAttached)
-    const hasPendingEdits = pendingRows.length > 0 || recovery.hasSaved
+    const hasPendingEdits = pendingRows.length > 0 || recovery.hasSaved || hasOlderComponentOverrides
     reset.disabled = writesUnavailable || !hasPendingEdits || !projectWideRevert
     const pageBusy = pageActionsUnavailable ? 'Wait for the current page to finish updating' : ''
     const saveUnavailable = pageBusy || (journalRevision === null ? 'Reload to reconnect to saved edits' : '')
@@ -328,7 +422,7 @@
     get('guidance').hidden = Boolean(groupCount) || hasSelection || Boolean(canvasSection)
     const name = get('selected-name')
     name.hidden = !hasSelection && !groupCount
-    if (groupCount) name.textContent = groupCount + ' text layers'
+    if (groupCount) name.textContent = groupCount + (selection.group.every(item => ui.textTargets(item).length) ? ' text layers' : ' layers')
     get('parent').parentElement.parentElement.toggleAttribute('data-no-selection', !hasSelection && !groupCount)
     if (hasSelection) {
       const label = node.getAttribute('aria-label') || (node.matches('a, button, h1, h2, h3, label') && node.textContent.trim()) ||
@@ -341,20 +435,37 @@
       paddingOutlineMembers = []
       fields.replaceChildren()
     }
+    const version = activeRouteVersion
+    const roots = hasSelection ? [node] : [...selection.group]
+    const stillSelected = () => selection.current === node && isCurrentRoute(currentRoute, version) &&
+      (hasSelection || (roots.length === selection.group.length && roots.every((item, i) => item === selection.group[i])))
+    const palette = {
+      disabled: comparing || loadingRoute || journalRevision === null, run,
+      locate: targets => {
+        if (!stillSelected() || !targets.every(target => target.isConnected && roots.some(root => root.contains(target)))) return
+        if (targets.length === 1) selection.select(targets[0])
+        else selection.select(null, targets)
+      },
+      changePaints: (paints, value) => ui.commitChanges(async (property, requested, target) => {
+        if (!stillSelected() || !value || comparing || loadingRoute || journalRevision === null ||
+            !canEdit(target, property) || !roots.some(root => root.contains(target))) throw Error('Selection changed.')
+        await commitEdit(target, property, requested, undefined, true)
+      }, paints.map(paint => [paint.property, value, paint.node])),
+    }
     if (!hasSelection) {
-      ui.updateInspectorFields(fields, canvasSection ? [canvasSection] : [])
+      const section = groupCount ? ui.selectionColors(roots, palette) : canvasSection
+      ui.updateInspectorFields(fields, section ? [section] : [])
       return
     }
     if (overlayFor(node)) {
       ui.updateInspectorFields(fields, [ui.element('p', 'li-empty', 'Editing inside an open overlay is unavailable.')])
       return
     }
-    const version = activeRouteVersion
     const verticalPadding = paddingScope(node, 'vertical')
     paddingOutlineMembers = verticalPadding.members
     try {
       ui.renderInspector(fields, {
-        node, style: getComputedStyle(node), disabled: comparing || loadingRoute || journalRevision === null, run, colorCatalog, spacingCatalog,
+        palette, component: currentComponent, previewComponentProperty, editText, node, style: getComputedStyle(node), disabled: comparing || loadingRoute || journalRevision === null, run, colorCatalog, spacingCatalog,
         paddingCount: verticalPadding.members.length > 1 ? verticalPadding.members.length : 0,
         paddingTemplate: verticalPadding.template,
         previewRelated: resolve => selection.previewRelated(resolve && (() =>
@@ -398,84 +509,13 @@
       status(message, true)
     }
   }
-  function remove(entry) {
-    const { node, property, prior, priorPriority } = entry
-    if (!ui.ownsPreviewDeclaration(entry)) return
-    if (prior) node.style.setProperty(property, prior, priorPriority)
-    else node.style.removeProperty(property)
-  }
-  async function apply(node, property, requested, isCurrent, { colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle } = {}) {
-    if (colorToken && (
-      !ui.supportsColorVariable(node, property) || requested !== ui.colorVariableValue(colorToken.name) ||
-      colorToken.source !== colorCatalog?.source || !colorCatalog.names.includes(colorToken.name) ||
-      !ui.resolveColorVariable(node, colorToken.name)
-    )) throw Error('This color variable is unavailable for the selected color.')
-    if (pendingColor && (
-      property !== 'background-color' || !ui.supportsColorVariable(node, property) ||
-      pendingColor.source !== colorCatalog?.source || requested !== pendingColor.value
-    )) throw Error('The color source is unavailable.')
-    if (spacingToken && (
-      requested !== ui.spacingVariableValue(spacingToken.name) ||
-      spacingToken.source !== spacingCatalog?.source || !spacingCatalog.names.includes(spacingToken.name) ||
-      !ui.supportsSpacingVariable(node, property) || ui.resolveSpacingLength(node, spacingToken.name) === null
-    )) throw Error('This spacing variable is unavailable for the selected field.')
-    if (textStyleToken && (
-      !ui.textStyleProperties.includes(property) || requested !== ui.textStyleReference(textStyleToken.name, property) ||
-      textStyleToken.source !== textStyleCatalog?.source || !textStyleCatalog.names.includes(textStyleToken.name) ||
-      !ui.supportsTextStyle(node) || !ui.textStyleValues(node, textStyleToken.name)
-    )) throw Error('This text style is unavailable for the selected text.')
-    if (pendingTextStyle && (
-      !ui.textStyleProperties.includes(property) ||
-      requested !== ui.textStyleReference(pendingTextStyle.name, property, pendingTextStyle.values[property]) ||
-      pendingTextStyle.source !== textStyleCatalog?.source || !ui.supportsTextStyle(node)
-    )) throw Error('This text style preview is unavailable for the selected text.')
-    if (!CSS.supports(property, requested)) throw Error('That value is not valid for this control')
-    const baseline = getComputedStyle(node).getPropertyValue(property)
-    const prior = node.style.getPropertyValue(property)
-    const priorPriority = node.style.getPropertyPriority(property)
-    if (property === 'padding' && [...node.style].some(key => /^padding-(top|right|bottom|left)$/.test(key))) {
-      throw Error('Use individual sides when padding is already set inline')
-    }
-    const measure = () => {
-      const box = node.getBoundingClientRect()
-      return property === 'height' ? box.height : box.width
-    }
-    const dimensions = property === 'width' || property === 'height'
-    const beforeSize = dimensions ? measure() : 0
-    node.style.setProperty(property, requested)
-    const declared = node.style.getPropertyValue(property)
-    const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle }
-    temporary.add(entry)
-    let observed = getComputedStyle(node).getPropertyValue(property)
-    const mode = ['100%', 'fit-content'].includes(requested)
-    const changedSize = () => Math.abs(measure() - beforeSize) > 0.5
-    const sameValue = () => observed === declared || observed === requested ||
-      (['min-width', 'min-height'].includes(property) && requested === 'auto' && observed === '0px')
-    const verified = () => {
-      if (colorToken) return ui.ownsPreviewDeclaration(entry) && observed === ui.resolveColorVariable(node, colorToken.name)
-      if (spacingToken) return ui.ownsPreviewDeclaration(entry) && ui.spacingVariableMatches(node, property, spacingToken.name, observed)
-      if (textStyleToken || pendingTextStyle) return ui.ownsPreviewDeclaration(entry) && ui.textStyleMatches(
-        observed, pendingTextStyle?.values[property] ?? ui.textStyleValues(node, textStyleToken.name)?.[property],
-      )
-      if (mode) return changedSize()
-      return sameValue() && (!dimensions || changedSize() || baseline === observed)
-    }
-    const deadline = performance.now() + 550
-    while (isCurrent() && node.isConnected && !verified() && performance.now() < deadline) {
-      await new Promise(requestAnimationFrame)
-      observed = getComputedStyle(node).getPropertyValue(property)
-    }
-    if (!isCurrent() || !node.isConnected || !verified()) {
-      discardTemporary(entry)
-      throw Error(dimensions ? 'The box did not resize as requested. Check its layout constraints.' : 'The browser kept a different value')
-    }
-    entry.observed = observed
-    return entry
-  }
-  function discardTemporary(entry) {
-    if (temporary.delete(entry)) remove(entry)
-  }
   async function applyRestored(node, edit, isCurrent) {
+    if (edit.target.mount) {
+      if (!isCurrent()) return null
+      await changeSessionEntry(edit, true)
+      const live = ui.componentEdits.liveNode(edit.target)
+      return live ? { ...edit, node: live, liveTarget: edit.target, path: currentRoute } : null
+    }
     if (edit.property === 'button-size') {
       const path = currentRoute
       if (!isCurrent()) return null
@@ -545,6 +585,7 @@
     } finally {
       busy = false
       panel.setAttribute('aria-busy', 'false')
+      if (currentComponent && selection.current?.isConnected) await inspectSelectedComponent(selection.current, currentRoute).catch(() => {})
       renderFields({ keepPopup })
       selection.syncOutline()
       recoveryRequested ||= recovery.hasStyleConflict()
@@ -602,13 +643,10 @@
     new MutationObserver(() => renderFields()).observe(host.parentElement, {
       attributes: true, attributeFilter: ['data-canvas-page'],
     })
-    let discovered
-    host.addEventListener('request-variables-catalog', async () => {
+    host.addEventListener('request-variables-catalog', async event => {
       if (loadingRoute) return
-      discovered ??= send({ type: 'variablesCatalog' }).catch(() => null)
-      const catalog = await discovered
-      const available = catalog?.textStyleCatalog || catalog?.colorCatalog || catalog?.spacingCatalog
-        ? catalog : { textStyleCatalog, colorCatalog, spacingCatalog }
+      const catalog = await getCatalog(event.detail === 'refresh')
+      const available = catalog ?? { textStyleCatalog, colorCatalog, spacingCatalog }
       const detail = JSON.stringify({
         ...available,
         canCreateTextStyle: textStyleCatalog?.canCreateDefinition === true && journalRevision !== null,
@@ -647,7 +685,7 @@
     })
     document.addEventListener('select-inspector-variable-use', event => {
       const node = event.composedPath()[0]
-      if (!(node instanceof HTMLElement) || !node.isConnected || busy) return
+      if (!(node instanceof HTMLElement || node instanceof SVGSVGElement) || !node.isConnected || busy) return
       event.preventDefault()
       editsUI.showDesign()
       setOpen(true)
@@ -677,7 +715,7 @@
   }
   ui.bindInspectorShortcuts({ root, panel, selection, undo: get('undo'), parent: get('parent') })
   window.addEventListener('pagehide', () => { ui.dismissTooltip(); ui.closeMenu(); revertDialog.dismiss() })
-  async function commitEdit(node, property, requested, tokenOptions) {
+  async function commitEdit(node, property, requested, tokenOptions, selectionOnly = false) {
     if (comparing || !canEdit(node, property)) {
       if (tokenOptions) throw Error('The selected property cannot be edited.')
       return
@@ -686,7 +724,7 @@
     const version = activeRouteVersion
     const isCurrent = () => isCurrentRoute(editRoute, version)
     const target = ui.describePreviewTarget(node)
-    const marker = templatePreviews && !tokenOptions?.pendingColor ? ui.templatePreview.of(node) : undefined
+    const marker = !selectionOnly && templatePreviews && !tokenOptions?.pendingColor ? ui.templatePreview.of(node) : undefined
     const source = marker ? recovery.templateSource(node, property) : undefined
     const template = source !== null && (source === undefined || templateSourcePreviews) ? marker : undefined
     const sourceContext = ui.describeSourceContext(node)
@@ -704,6 +742,7 @@
     try {
       const templateSourceFingerprint = template ? await ui.templateSourceFingerprint(source) : undefined
       edit = await editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template, templateSourceFingerprint })
+      if (selectionOnly) edit.intent = 'selected occurrence only'
       if (!isCurrent() || !sameTarget()) throw Error('Selection changed. Try the edit again.')
       const result = await write({ type: 'save', record: edit }, editRoute, version)
       captureEnabled = result.visualEvidence === true
@@ -909,27 +948,33 @@
     reportRecovery()
   }
 
+  async function changeSessionEntry(entry, forward) {
+    if (entry.target.mount) {
+      if (!ui.componentEdits.liveNode(entry.target)) return true // Unmount discards the instance override.
+      const before = forward ? entry.beforeState : entry.afterState
+      const after = forward ? entry.afterState : entry.beforeState
+      const actual = await ui.componentEdits.change(entry.target, route(), before, after)
+      if (!ui.componentEdits.equal(actual, after)) throw Error('The component baseline changed. Select it again.')
+      return true
+    }
+    return ui.buttonSize.setSize(entry.node, entry.target.key, forward ? entry.before : entry.requested,
+      forward ? entry.requested : entry.before, entry.path)
+  }
+
   // Run only for attached component previews. CSS-only actions stay synchronous.
-  async function rewindButtonSizes(entries, path, version, persist = () => {}) {
+  async function rewindComponentEntries(entries, path, version, persist = () => {}) {
     const restored = []
     try {
       for (const entry of entries) {
         if (!isCurrentRoute(path, version)) throw Error('The page changed. Try again on the current page.')
-        const key = entry.target.key
-        if (ui.buttonSize.currentSize(entry.node, key) !== entry.requested) {
-          buttonSizeRequiresReload = true
-          throw Error('The registered Button changed. Reload the page before editing it again.')
-        }
-        if (!await ui.buttonSize.setSize(entry.node, key, entry.requested, entry.before, path)) {
-          throw Error('The registered Button did not confirm its restored Size.')
-        }
+        if (!await changeSessionEntry(entry, false)) throw Error('The component could not restore its original value.')
         restored.push(entry)
       }
       await persist()
     } catch (error) {
       if (isCurrentRoute(path, version)) {
         for (const entry of restored.reverse()) {
-          await ui.buttonSize.setSize(entry.node, entry.target.key, entry.before, entry.requested, path).catch(() => false)
+          await changeSessionEntry(entry, true).catch(() => false)
         }
       }
       throw error
@@ -1052,9 +1097,9 @@
     if (!id || comparing) return
     const requestedRoute = currentRoute
     const version = activeRouteVersion
-    const entries = recovery.buttonEntries(id)
+    const entries = recovery.componentEntries(id)
     const persist = () => write({ type: 'undo', id }, requestedRoute, version)
-    if (entries.length) await rewindButtonSizes(entries, requestedRoute, version, persist)
+    if (entries.length) await rewindComponentEntries(entries, requestedRoute, version, persist)
     else await persist()
     if (isCurrentRoute(requestedRoute, version)) {
       recovery.forget(id)
@@ -1067,8 +1112,8 @@
     if (!comparing) {
       const path = currentRoute
       const version = activeRouteVersion
-      const entries = recovery.buttonEntries()
-      if (entries.length) await rewindButtonSizes(entries, path, version)
+      const entries = recovery.componentEntries()
+      if (entries.length) await rewindComponentEntries(entries, path, version)
       if (!isCurrentRoute(path, version)) return
       comparing = true
       recovery.showOriginal()
@@ -1097,9 +1142,35 @@
     if (!isCurrentRoute(requestedRoute, version) || reset.disabled) return
     get(panel.hidden ? 'pending-order' : 'edits-tab').focus({ preventScroll: true })
     await run(async () => {
-      const entries = recovery.buttonEntries()
-      const persist = () => write({ type: 'resetAll' }, requestedRoute, version)
-      if (entries.length) await rewindButtonSizes(entries, requestedRoute, version, persist)
+      const entries = recovery.componentEntries().filter(entry => !entry.target.mount)
+      const persist = async () => {
+        const reset = []
+        try {
+          // A shared component can stay mounted when its original route closes.
+          // Read the journal across routes only for this project-wide action.
+          const snapshot = await send({ type: 'load', route: requestedRoute, forComponentReset: true })
+          if (snapshot?.revision !== journalRevision) throw Error('Saved edits changed. Try Revert all again.')
+          for (const entry of [...(snapshot.componentEdits ?? snapshot.edits.filter(edit => edit.target.mount))].reverse()) {
+            if (entry.previewHidden || !ui.componentEdits.liveNode(entry.target)) continue
+            const actual = await ui.componentEdits.read(entry.target, requestedRoute)
+            if (!ui.componentEdits.equal(actual, entry.afterState)) continue
+            const original = await ui.componentEdits.change(entry.target, requestedRoute, actual, entry.beforeState)
+            reset.push({ target: entry.target, original, state: actual })
+          }
+          for (const { target, state } of ui.componentEdits.activeOverrides()) {
+            const original = await ui.componentEdits.change(target, requestedRoute, state, { overridden: false })
+            reset.push({ target, original, state })
+          }
+          await write({ type: 'resetAll' }, requestedRoute, version)
+          hasOlderComponentOverrides = false
+        } catch (error) {
+          for (const { target, original, state } of reset.reverse()) {
+            await ui.componentEdits.change(target, requestedRoute, original, state)
+          }
+          throw error
+        }
+      }
+      if (entries.length) await rewindComponentEntries(entries, requestedRoute, version, persist)
       else await persist()
       comparing = false
       if (isCurrentRoute(requestedRoute, version)) {
@@ -1148,6 +1219,10 @@
     if (!isCurrentRoute(requestedRoute, version)) return null
     if (!validSnapshot(snapshot)) throw Error('Restart the local helper with the updated Inspector.')
     acceptSnapshot(snapshot)
+    hasOlderComponentOverrides = ui.componentEdits.activeOverrides().some(({ target }) => {
+      const firstEdit = snapshot.edits.find(edit => edit.target.mount === target.mount && edit.target.field === target.field)
+      return !firstEdit || firstEdit.beforeState.overridden
+    })
     recovery.load(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template), snapshot.route)
     return snapshot.revision
   }
@@ -1231,7 +1306,7 @@
     selection.select(null)
   }
   const observedAttributes = new Set(['id', 'data-slot', 'data-inspector-target', 'role', 'style', 'class', 'data-theme', 'hidden',
-    'aria-hidden', 'aria-labelledby', 'aria-label', 'aria-selected', 'open', 'data-state',
+    'fill', 'stroke', 'fill-opacity', 'stroke-opacity', 'opacity', 'visibility', 'data-localhost-inspector-layer-hidden', 'aria-hidden', 'aria-labelledby', 'aria-label', 'aria-selected', 'open', 'data-state',
     ui.sharedPadding.attribute, ui.templatePreview.attribute])
   new MutationObserver(mutations => {
     const records = mutations.filter(record => record.type !== 'attributes' ||
@@ -1256,10 +1331,16 @@
           [ui.sharedPadding.attribute, marker, 'data-inspector-target', 'hidden'].includes(record.attributeName)) &&
           (record.target === selected || record.target === selected.parentElement ||
             record.target.parentElement === selected.parentElement))
-      if (templateChanged || legacyChanged) renderFields({ keepPopup: true })
+      const selectionPaintChanged = records.some(record => selected.contains(record.target) ||
+        (record.type === 'attributes' && record.target.contains(selected)))
+      if (templateChanged || legacyChanged || selectionPaintChanged) renderFields({ keepPopup: true })
     }
     const styleChanges = records.filter(record => ['style', 'class', 'data-theme'].includes(record.attributeName))
     const node = selection.current
+    if (node && records.some(record => record.target === node &&
+      (record.type === 'childList' || ['class', 'data-slot', 'data-inspector-component'].includes(record.attributeName)))) {
+      void inspectSelectedComponent(node, currentRoute).catch(() => {})
+    }
     if (isCanvasExpanded?.() && colorCatalog && styleChanges.some(record =>
       record.target === document.documentElement || record.target === document.body)) {
       if (fields.querySelector('.li-canvas-section')) renderFields({ keepPopup: true })

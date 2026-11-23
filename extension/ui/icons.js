@@ -4,6 +4,7 @@
   const markup = {
   // Lucide External Link • https://lucide.dev/icons/external-link
   "openOccurrences": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
+  "instance": '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linejoin="round"><path d="m8 1.5 6.5 6.5L8 14.5 1.5 8z"/></svg>',
   "textLayer": '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M2.5 5V3h11v2M8 3v10m-2.5 0h5"/></svg>',
   "collapsePages": '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h7M2 8h7M2 12h7m1-9 2 2 2-2m-4 10 2-2 2 2"/></svg>',
   "workspaceFile": '<svg fill="none" viewBox="0 0 16 16" stroke="currentColor" stroke-linejoin="round"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>',
@@ -35,6 +36,7 @@
   "chevronDown": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.5 6.5 8 9l2.5-2.5\"/></svg>",
   "arrowRight": '<svg fill="none" viewBox="0 0 16 16"><path d="M3 8h9m-4-4 4 4-4 4" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   "chevronRight": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path d=\"m6.5 4 3.5 4-3.5 4\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+  "selectColorLayer": '<svg fill="none" viewBox="0 0 16 16" stroke="currentColor"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r="1" fill="currentColor"/></svg>',
   "search": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><circle cx=\"7\" cy=\"7\" r=\"4\" stroke=\"currentColor\"/><path stroke=\"currentColor\" stroke-linecap=\"round\" d=\"m10 10 3 3\"/></svg>",
   "link": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path d=\"m6 10 4-4M5.7 11.9l-1 1a2.6 2.6 0 0 1-3.7-3.7l3-3A2.6 2.6 0 0 1 7.7 6m2.6-1.9 1-1a2.6 2.6 0 0 1 3.7 3.7l-3 3a2.6 2.6 0 0 1-3.7.2\" stroke=\"currentColor\" stroke-linecap=\"round\"/></svg>",
   "unlink": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path d=\"m2.5 2.5 11 11M8 4l1.2-1.2a2.8 2.8 0 1 1 4 4L12 8m-4 4-1.2 1.2a2.8 2.8 0 1 1-4-4L4 8\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
@@ -49,6 +51,7 @@
   "dismiss": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" d=\"M3 3l10 10m0-10L3 13\"/></svg>",
   "minus": "<svg fill=\"none\" viewBox=\"0 0 16 16\"><path stroke=\"currentColor\" stroke-linecap=\"round\" d=\"M5 8h6\"/></svg>",
   "menuCheck": "<svg fill=\"none\" viewBox=\"0 0 12 12\"><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"m3.5 5.5 4 3.5L12 1.5\"/></svg>",
+  "vectorLayer": '<svg fill="none" viewBox="0 0 16 16" stroke="currentColor"><path d="M3 12c4 0 2-8 10-8"/><rect x="1.5" y="10.5" width="3" height="3"/><rect x="11.5" y="2.5" width="3" height="3"/></svg>',
   "frame": '<svg aria-hidden="true" fill="none" viewBox="0 0 16 16"><path d="M4.5 1.5v13m7-13v13m-10-10h13m-13 7h13" stroke="currentColor" stroke-linecap="round"/></svg>',
   "flowRow": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><rect width=\"4\" height=\"4\" x=\"2.5\" y=\"2.5\" stroke=\"currentColor\" rx=\"1\"/><rect width=\"4\" height=\"4\" x=\"9.5\" y=\"2.5\" stroke=\"currentColor\" rx=\"1\"/><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M2.5 11.5h11m-2-2 2 2-2 2\"/></svg>",
   "flowColumn": "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 16 16\"><rect width=\"4\" height=\"4\" x=\"2.5\" y=\"2.5\" stroke=\"currentColor\" rx=\"1\"/><rect width=\"4\" height=\"4\" x=\"2.5\" y=\"9.5\" stroke=\"currentColor\" rx=\"1\"/><path stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M11.5 2.5v11m-2-2 2 2 2-2\"/></svg>",
