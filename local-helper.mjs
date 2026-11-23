@@ -641,6 +641,17 @@ async function handle(message) {
   } else if (message.type === 'saveSharedPadding' || message.type === 'savePairedPadding') {
     const catalog = Array.isArray(message.records) && message.records.some(record => record?.spacingToken) ? await readCatalog(binding, 'spacing') : null
     journal.edits.push(...groupedPaddingEdits(message.records, catalog, journal, message.type === 'saveSharedPadding'))
+  } else if (message.type === 'saveSelectionPaint') {
+    if (!Array.isArray(message.records) || message.records.length < 2) throw Error('Invalid selection color edit')
+    const edits = message.records.map(record => editFrom(record, null))
+    const first = edits[0]
+    const ids = new Set(edits.map(edit => edit.id))
+    if (ids.size !== edits.length || journal.edits.some(edit => ids.has(edit.id)) || edits.some(edit =>
+      (edit.intent !== 'selected occurrence only' || edit.route !== first.route || edit.requested !== first.requested ||
+        edit.frameState !== first.frameState || !/^(color|fill|stroke|background-color|outline-color|border-(top|right|bottom|left)-color)$/.test(edit.property)))) {
+      throw Error('Invalid selection color edit')
+    }
+    for (const edit of edits) journal.edits.push({ ...edit, group: first.id })
   } else if (message.type === 'saveTextStyle') {
     const first = message.records?.[0]
     const catalog = first?.textStyleToken || first?.pendingTextStyle || first?.pendingTextStyleName ? await readCatalog(binding, 'text-styles') : null

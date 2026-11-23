@@ -446,11 +446,21 @@
         if (targets.length === 1) selection.select(targets[0])
         else selection.select(null, targets)
       },
-      changePaints: (paints, value) => ui.commitChanges(async (property, requested, target) => {
-        if (!stillSelected() || !value || comparing || loadingRoute || journalRevision === null ||
-            !canEdit(target, property) || !roots.some(root => root.contains(target))) throw Error('Selection changed.')
-        await commitEdit(target, property, requested, undefined, true)
-      }, paints.map(paint => [paint.property, value, paint.node])),
+      changePaints: async (paints, value) => {
+        const path = currentRoute
+        const valid = () => stillSelected() && value && !comparing && !loadingRoute && journalRevision !== null &&
+          paints.every(({ node, property }) => canEdit(node, property) && roots.some(root => root.contains(node)))
+        if (!valid()) throw Error('Selection changed.')
+        if (paints.length === 1) {
+          await commitEdit(paints[0].node, paints[0].property, value, undefined, true)
+          return
+        }
+        await ui.commitSelectionPaints(paints, value, {
+          valid, apply, discardTemporary, editRecord: (entry, target) => editRecord(entry, target, { editRoute: path }),
+          persist: records => write({ type: 'saveSelectionPaint', records }, path, version),
+          remember: (record, entry) => { temporary.delete(entry); recovery.remember(record, entry) },
+        })
+      },
     }
     if (!hasSelection) {
       const section = groupCount ? ui.selectionColors(roots, palette) : canvasSection

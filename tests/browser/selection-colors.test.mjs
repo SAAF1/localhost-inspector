@@ -9,7 +9,7 @@ test('Selection colors edits a descendant SVG paint, preserves the label, and un
       const box = document.createElement('button')
       box.id = 'color-sample'
       box.style.cssText = 'color:var(--ink);--ink:#112233;background:rgba(100,120,140,.5);border:none'
-      box.innerHTML = 'Save<svg width="18" height="18" fill="none" stroke="#aa2200"><path id="mark" d="M2 9h14m-7-7v14"/></svg><span hidden style="color:lime">Hidden</span>'
+      box.innerHTML = 'Save<svg width="18" height="18" fill="none" stroke="#aa2200"><path id="mark" d="M2 9h14"/><path id="second-mark" d="M9 2v14"/></svg><span hidden style="color:lime">Hidden</span>'
       document.body.prepend(box)
     })
     await h.open()
@@ -29,6 +29,8 @@ test('Selection colors edits a descendant SVG paint, preserves the label, and un
     await hex.press('Enter')
     await h.settled()
     assert.equal(await h.css('stroke', '#mark'), 'rgb(255, 255, 255)')
+    assert.equal(await h.css('stroke', '#second-mark'), 'rgb(255, 255, 255)')
+    assert.equal(new Set((await h.journal()).map(edit => edit.group)).size, 1)
     assert.equal(await h.css('color', '#color-sample'), 'rgb(17, 34, 51)')
     const edit = (await h.journal()).at(-1)
     assert.equal(edit.property, 'stroke')
@@ -36,5 +38,6 @@ test('Selection colors edits a descendant SVG paint, preserves the label, and un
     await h.previewAction('Undo last preview')
     await h.settled()
     assert.equal(await h.css('stroke', '#mark'), 'rgb(170, 34, 0)')
+    assert.equal(await h.css('stroke', '#second-mark'), 'rgb(170, 34, 0)')
   } finally { await h.close() }
 })

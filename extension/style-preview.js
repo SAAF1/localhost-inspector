@@ -1,5 +1,32 @@
 (() => {
   const ui = window.LocalhostInspector
+  ui.commitSelectionPaints = async (paints, value, context) => {
+    const entries = []
+    try {
+      for (const { node, property } of paints) {
+        if (!context.valid()) throw Error('Selection changed.')
+        const target = ui.describePreviewTarget(node)
+        const entry = await context.apply(node, property, value, context.valid)
+        entry.liveTarget = target
+        entries.push(entry)
+      }
+      const records = await Promise.all(entries.map(async entry => ({
+        ...await context.editRecord(entry, entry.liveTarget), intent: 'selected occurrence only',
+      })))
+      if (!context.valid() || entries.some(entry => !ui.matchesPreviewTarget(entry.node, entry.liveTarget) ||
+          !ui.ownsPreviewDeclaration(entry))) throw Error('Selection changed.')
+      await context.persist(records)
+      if (!context.valid()) {
+        for (const entry of entries.reverse()) context.discardTemporary(entry)
+        return
+      }
+      entries.forEach((entry, index) => context.remember({ ...records[index], group: records[0].id }, entry))
+    } catch (error) {
+      for (const entry of entries.reverse()) context.discardTemporary(entry)
+      throw error
+    }
+  }
+
   ui.createStylePreview = catalogs => {
     const temporary = new Set()
     function remove(entry) {

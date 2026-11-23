@@ -110,7 +110,7 @@ export async function createHarness(options = {}) {
           ? await window.summarizeFixtureJournal(window.__journal.filter(edit => !edit.undone))
           : undefined
         if (type === 'load') return { ...(message.forComponentReset ? { componentEdits: structuredClone(window.__journal.filter(edit => edit.target.mount)) } : {}), textStyleDefinitions: structuredClone(window.__textStyleDefinitions), revision: window.__revision, route: message.route, scopedPreviewTargets: !settings.legacyPreviewHelper, landmarkPreviewTargets: !settings.legacyPreviewHelper, sectionPreviewTargets: !settings.legacyPreviewHelper && !settings.legacySectionHelper, templatePreviews: !settings.legacyPreviewHelper, templateSourcePreviews: !settings.legacyPreviewHelper && !settings.legacyTemplateSourceHelper, templatePaddingPreviews: !settings.legacyPreviewHelper, previewVisibility: !settings.legacyPreviewHelper, projectWideRevert: !settings.legacyPreviewHelper, buttonSizeKey: settings.buttonSizeKey, pending: await pending(), edits: structuredClone(window.__journal.filter(edit => !edit.undone && (edit.route === message.route || edit.template))) }
-        if (['save', 'saveTextStyle', 'saveComponentProperty', 'saveButtonSize', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
+        if (['save', 'saveSelectionPaint', 'saveTextStyle', 'saveComponentProperty', 'saveButtonSize', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
           window.__saveCount++
           if (window.__settings.holdSave === window.__saveCount) await new Promise(resolve => { window.__releaseSave = resolve })
           if (window.__settings.failSave === window.__saveCount) {
@@ -139,7 +139,7 @@ export async function createHarness(options = {}) {
           return { revision: ++window.__revision, pending: await pending(), definition }
         }
         if (type === 'save' || type === 'saveButtonSize' || type === 'saveComponentProperty') window.__journal.push(message.record)
-        if (['saveTextStyle', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
+        if (['saveSelectionPaint', 'saveTextStyle', 'saveSharedPadding', 'savePairedPadding'].includes(type)) {
           window.__journal.push(...message.records.map(record => ({ ...record, group: message.records[0].id })))
         }
         if (type === 'undo') {
