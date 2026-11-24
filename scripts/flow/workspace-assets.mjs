@@ -4,6 +4,7 @@ import { flowPath } from '../../extension/flow-attachment.js'
 const assets = new Map([
   ['', ['workspace.html', 'text/html']],
   ['workspace.css', ['workspace.css', 'text/css']],
+  ['proposal-view.mjs', ['proposal-view.mjs', 'text/javascript']],
   ['workspace.mjs', ['workspace.mjs', 'text/javascript']],
   ...['tokens', 'styles', 'panel-styles', 'icons', 'tooltip', 'dom', 'menu', 'variables-panel',
     'variables-typography', 'variables-styles', 'authored-styles', 'policy', 'text-style-values', 'color-bindings', 'solid-color-picker', 'spacing-gap'].map(

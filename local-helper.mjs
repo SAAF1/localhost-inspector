@@ -21,10 +21,10 @@ const catalogKinds = new Map([
   ['register-font-families', 'font-families'],
   ['register-text-styles', 'text-styles'],
 ])
-if (!root || (!['bind', 'status', 'handoff', 'complete', 'serve', 'register-button-size', 'visual-evidence'].includes(mode) && !catalogKinds.has(mode))) {
-  throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors/register-spacing/register-font-families/register-text-styles <port> <relative.css> <name>... | register-button-size <port> <target-key> <relative-source> | status | handoff <port> | complete <port> <report.json> | visual-evidence <port> on|off | serve')
+if (!root || (!['bind', 'status', 'handoff', 'proposal-readiness', 'complete', 'serve', 'register-button-size', 'copy-registrations', 'visual-evidence'].includes(mode) && !catalogKinds.has(mode))) {
+  throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors/register-spacing/register-font-families/register-text-styles <port> <relative.css> <name>... | register-button-size <port> <target-key> <relative-source> | copy-registrations <original-port> <proposal-port> | status | handoff <port> | complete <port> <report.json> | visual-evidence <port> on|off | serve')
 }
-if (mode !== 'handoff' && mode !== 'complete') await mkdir(root, { recursive: true, mode: 0o700 })
+if (!['handoff', 'proposal-readiness', 'complete'].includes(mode)) await mkdir(root, { recursive: true, mode: 0o700 })
 const configPath = join(root, 'bindings.json')
 const keyPath = join(root, 'pairing-key')
 const read = async (file, fallback) => readFile(file, 'utf8').then(JSON.parse).catch(error => {
@@ -166,6 +166,30 @@ async function readButtonSize(binding) {
   return registration && verifiedButtonSize(binding, registration.key, registration.source)
 }
 
+// Seed an isolated proposal with the original project's explicit design controls.
+if (mode === 'copy-registrations') {
+  const bindings = await read(configPath, {})
+  const [original, proposal] = args.map(port => bindings[originFor(port)])
+  if (!original || !proposal || original.id === proposal.id || args.length !== 2) throw Error('Expected two distinct bound apps')
+  await Promise.all([verify(original), verify(proposal)])
+  const skipped = []
+  for (const kind of [...catalogKinds.values(), 'button-size']) {
+    const path = binding => kind === 'button-size' ? buttonSizePath(binding) : catalogPath(binding, kind)
+    const registration = await read(path(original), null)
+    if (!registration || await read(path(proposal), null)) continue
+    try {
+      if (kind === 'button-size') await verifiedButtonSize(proposal, registration.key, registration.source)
+      else await verifyCatalog(proposal, registration, kind)
+    } catch (error) {
+      skipped.push({ kind, reason: error.message })
+      continue
+    }
+    await atomic(path(proposal), registration)
+  }
+  await printJson({ skipped })
+  process.exit(0)
+}
+
 if (mode === 'register-button-size') {
   const [port, key, source] = args
   const bindings = await read(configPath, {})
@@ -202,12 +226,15 @@ if (mode === 'status') {
   process.exit(0)
 }
 
-if (mode === 'handoff') {
+if (mode === 'handoff' || mode === 'proposal-readiness') {
   const origin = originFor(args[0])
   const bindings = await read(configPath, {})
   const binding = bindings[origin]
   if (!binding) throw Error('No saved project connection for this origin')
-  await verify(binding)
+  // A retained proposal can be closed. Its saved journal still belongs to the
+  // original binding, independent of which process now owns the old port.
+  if (mode === 'handoff') await verify(binding)
+  else if (binding.id !== args[1] || binding.source !== await realpath(args[2])) throw Error('This journal belongs to a different proposal.')
   const file = join(root, binding.id + '-changes.json')
   const journal = await read(file, { version: 2, revision: 0, binding, edits: [] })
   assertJournalBinding(journal, binding)
@@ -222,6 +249,10 @@ if (mode === 'handoff') {
       handoff.instructions = [...handoff.instructions,
         'Publish textStyleDefinitions as reusable styles in their recorded source and register their names. Create no element bindings unless an operation calls for one.']
     }
+  }
+  if (mode === 'proposal-readiness') {
+    await printJson({ revision: journal.revision, pending: handoff.operations.length + (handoff.textStyleDefinitions?.length || 0) })
+    process.exit(0)
   }
   await addVisualEvidence(root, binding, handoff)
   await printJson(handoff)

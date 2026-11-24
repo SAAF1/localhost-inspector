@@ -1,4 +1,5 @@
 import './tooltip.js'
+import { connectProposalView, proposalEntry, trackContext } from './proposal-view.mjs'
 import { connectSidebar } from './workspace-sidebar.mjs'
 import { flowHeadingSpace, groupFlowFrames, renderFrames } from './render-frames.mjs'
 import { flowRoute, observeSurfaces } from './page-state.mjs'
@@ -45,6 +46,14 @@ const { cards, layout } = renderFrames(map, data, groups, activate, viewOf, prev
 const updateSharpPreviews = createSharpPreviews(cards)
 const framesById = new Map(data.frames.map(frame => [frame.id, frame]))
 const scenarioRoutes = new Set(data.frames.filter(frame => frame.steps.length).map(frame => frame.route))
+function mappedRoute(route) {
+  if (!route || framesByRoute.has(route)) return route
+  const address = new URL(route, location.origin)
+  address.search = ''
+  address.hash = address.hash.split('?')[0]
+  return flowRoute(address)
+}
+const framesByRoute = Map.groupBy(data.frames, frame => frame.route)
 const frameStates = new Map(await Promise.all(data.frames.filter(frame => scenarioRoutes.has(frame.route)).map(async frame => {
   const state = new TextEncoder().encode(JSON.stringify(frame.steps.length
     ? [frame.steps, frame.checkpoint] : [frame.route, frame.heading, frame.checkpoint]))
@@ -227,7 +236,7 @@ function currentFrame() {
   const route = routeOf(preview)
   const doc = preview.contentDocument
   if (!route || !doc?.body?.innerText.trim()) return
-  const onRoute = data.frames.filter(frame => frame.route === route)
+  const onRoute = framesByRoute.get(mappedRoute(route)) ?? []
   if (!onRoute.length && route.includes('?')) {
     return data.frames.find(frame => frame.route === route.split('?')[0] && !frame.steps.length)
   }
@@ -239,7 +248,7 @@ function currentFrame() {
 }
 
 function verifiedFrameState(frame) {
-  const route = routeOf(frame)
+  const route = mappedRoute(routeOf(frame))
   if (!scenarioRoutes.has(route)) return undefined
   const doc = frame.contentDocument
   if (!doc?.body) return 'unverified'
@@ -670,12 +679,19 @@ map.addEventListener('pointerout', event => {
   }
 })
 
+function comparisonContext() {
+  return { frame: currentFrame(), route: routeOf(preview), expanded }
+}
+
+let stopContextTracking
 function watchLiveFrame(frame) {
   let connected
   function connect() {
     const doc = frame.contentDocument
     if (frame !== preview || !doc || doc === connected) return
     connected = doc
+    stopContextTracking?.()
+    stopContextTracking = trackContext(frame, comparisonContext)
     sidebar?.changed()
     frame.contentWindow.navigation?.addEventListener('currententrychange', () => {
       if (preview === frame) sidebar?.changed()
@@ -787,6 +803,15 @@ const previewBounds = new ResizeObserver(schedulePreviewUpdate)
 previewBounds.observe(viewport)
 previewBounds.observe(dock)
 
+connectProposalView(data.comparison, comparisonContext, message)
 const entry = new URLSearchParams(location.search).get('page')
-preview.src = data.frames.some(frame => frame.route === entry) ? entry : '/'
+const comparisonEntry = proposalEntry(data, location.search)
+if (comparisonEntry?.unavailable) {
+  message('This comparison page is outside the flow map.')
+} else if (comparisonEntry) {
+  const opened = await activate(comparisonEntry.frame)
+  if (opened && comparisonEntry.expanded) toggleView()
+} else {
+  preview.src = data.frames.some(frame => frame.route === entry) ? entry : '/'
+}
 toggle.disabled = false

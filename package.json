@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "proposal": "node scripts/proposal.mjs",
+    "preview:proposal": "node scripts/preview-session.mjs",
     "preview:project": "node scripts/flow/serve.mjs --source",
     "lint": "biome lint",
     "test": "node --test tests/*.test.mjs",

@@ -7,6 +7,10 @@ body { margin: 0; }
   color: var(--li-text); background: var(--li-surface); border: 1px solid var(--li-border); border-radius: 12px;
   box-shadow: 0 1px 4px #0002;
 }
+#proposal-view {
+  max-width: 88px; min-height: var(--action-size); border: 0; border-radius: 6px;
+  background: var(--li-field); color: inherit; font: inherit; font-size: 12px; cursor: pointer;
+}
 #workspace-toolbar button { font: inherit; color: inherit; cursor: pointer; }
 #workspace-toolbar > button {
   width: var(--workspace-action-size); height: var(--workspace-action-size); border: 0;

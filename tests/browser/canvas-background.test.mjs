@@ -81,6 +81,7 @@ test('the blank Canvas uses shared color controls and keeps its background out o
     await flow.click()
     assert.deepEqual(await displayedColor(), [0, 0, 0, 0])
     assert.equal(await backgroundImage(), 'none')
+    assert.equal(new URLSearchParams(new URL(h.page.url()).hash.slice(1)).get('view'), null)
     await h.page.reload()
     await flow.click()
     assert.match(await backgroundImage(), /conic-gradient/)
