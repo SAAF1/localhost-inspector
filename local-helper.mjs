@@ -7,8 +7,10 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { discoverVariablesCatalog } from './variables-catalog.mjs'
 import { completeHandoff } from './complete-handoff.mjs'
-import { pendingEdits, removePendingEdit, setPreviewVisibility } from './journal-edits.mjs'
-import { buildSourceHandoff, featureTemplateScope, sourceContextFrom } from './source-handoff.mjs'
+import { declaresVariable, journalTarget, textStyleProperties, validRoute, variableName } from './journal-values.mjs'
+import { journalValidators } from './journal-records.mjs'
+import { applyJournalOperation, journalSnapshot, requireRevision } from './journal-operations.mjs'
+import { buildSourceHandoff } from './source-handoff.mjs'
 import { addVisualEvidence, maxEvidenceLength, removeVisualEvidence, saveVisualEvidence } from './visual-evidence.mjs'
 
 const exec = promisify(execFile)
@@ -72,14 +74,7 @@ if (mode === 'bind') {
   process.exit(0)
 }
 
-const variableName = /^--[a-zA-Z_][a-zA-Z0-9_-]{0,79}$/
 const catalogPath = (binding, kind) => join(root, binding.id + '-' + kind + '.json')
-const textStyleProperties = ['font-family', 'font-weight', 'font-size', 'line-height', 'letter-spacing']
-
-function declaresVariable(css, name) {
-  return new RegExp('(?:^|[;{])\\s*' + name + '\\s*:').test(css)
-}
-
 async function verifyCatalog(binding, catalog, kind) {
   const { source, names } = catalog
   if (typeof source !== 'string' || !source.endsWith('.css') || source.length > 400 || isAbsolute(source) ||
@@ -145,7 +140,6 @@ if (catalogKinds.has(mode)) {
   process.exit(0)
 }
 
-const buttonSizes = ['default', 'sm', 'lg', 'icon']
 const buttonSizePath = binding => join(root, binding.id + '-button-size.json')
 
 async function verifiedButtonSize(binding, key, source) {
@@ -286,48 +280,6 @@ const key = (await readFile(keyPath, 'utf8')).trim()
 let tail = Promise.resolve()
 const maxRequestLength = 64_000
 const maxEvidenceRequestLength = maxEvidenceLength + 4096
-const pixelProperties = new Set(['font-size','line-height','letter-spacing','gap','width','height','min-width','max-width',
-  'min-height','max-height','padding','padding-top','padding-right','padding-bottom','padding-left','border-radius','border-width'])
-const keywords = {
-  'flex-direction': ['row','column','row-reverse','column-reverse'],
-  'justify-content': ['normal','start','center','end','space-between','space-around','space-evenly','stretch','flex-start','flex-end'],
-  'align-items': ['normal','start','center','end','stretch','baseline','flex-start','flex-end'],
-  'justify-items': ['normal','start','center','end','stretch'],
-  'text-align': ['start','center','end','left','right','justify'],
-}
-// Chromium's serialized solid colors, including values used when detaching a token.
-const modernColor = /^(?:oklch|oklab|lch|lab|color)\((?:[a-z][a-z0-9-]* )?[-\d.%e+ /]+\)$/i
-const colors = new Set(['color','background-color','border-color'])
-function validValue(property, value) {
-  if (typeof value !== 'string' || value.length > (property === 'font-family' ? 512 : 100)) return false
-  if (property === 'width' && ['100%', 'fit-content'].includes(value)) return true
-  if (['min-width', 'min-height'].includes(property) && value === 'auto') return true
-  if (['max-width', 'max-height'].includes(property) && value === 'none') return true
-  if (pixelProperties.has(property)) return /^-?\d+(\.\d+)?px$/.test(value)
-  if (property === 'font-family') return validTextStyleValue(property, value)
-  if (property === 'font-weight') return /^(normal|bold|[1-9]00)$/.test(value)
-  const solidPaint = colors.has(property) || ['fill', 'stroke', 'outline-color'].includes(property) ||
-    /^border-(top|right|bottom|left)-color$/.test(property)
-  if (solidPaint && modernColor.test(value)) return true
-  if (solidPaint) return /^(#[0-9a-f]{3,8}|rgba?\([\d.,% /]+\)|[a-z]{3,20})$/i.test(value)
-  return Object.hasOwn(keywords, property) && keywords[property].includes(value)
-}
-function validTargetKey(key) {
-  return key == null || (typeof key === 'string' && key.length <= 120 && key.trim().length > 0)
-}
-function validTextStyleValue(property, value) {
-  if (typeof value !== 'string' || !value || value.length > (property === 'font-family' ? 512 : 100)) return false
-  if (property === 'font-family') {
-    // CSSOM family lists contain names and quoted names, not CSS functions.
-    const family = /(?:"[^"\r\n\\{};]+"|'[^'\r\n\\{};]+'|[\p{L}\p{N}_-]+(?: +[\p{L}\p{N}_-]+)*)/u
-    return new RegExp('^' + family.source + '(?: *, *' + family.source + ')*$', 'u').test(value)
-  }
-  if (property === 'font-weight') return /^\d+(?:\.\d+)?$/.test(value) && Number(value) >= 1 && Number(value) <= 1000
-  if (property === 'line-height' || property === 'letter-spacing') {
-    if (value === 'normal') return true
-  }
-  return /^-?\d+(?:\.\d+)?px$/.test(value) && (property === 'letter-spacing' || !value.startsWith('-'))
-}
 function journalRoute(route) {
   // Keep routes with different query values isolated without saving the values.
   // A hash router can have its own query as well as the document query.
@@ -340,30 +292,9 @@ function journalRoute(route) {
     return part.slice(0, index) + '?~' + digest
   }).join('#')
 }
-function validRoute(route) {
-  return typeof route === 'string' && route.startsWith('/') && route.length <= 2048
-}
 function assertJournalBinding(journal, binding) {
   if (journal.binding?.id !== binding.id || journal.binding.source !== binding.source ||
       journal.binding.origin !== binding.origin) throw Error('Journal binding mismatch')
-}
-const templateFingerprint = value => typeof value === 'string' && /^(?:v2:)?[a-f0-9]{64}$/.test(value)
-const targetFingerprint = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
-function validScopedTarget(target) {
-  const { anchor, id, key, tag, textFingerprint, regionFingerprint, classFingerprint } = target
-  if (anchor === undefined) return true
-  return !id && !key && anchor && ['id', 'key', 'main', 'landmark', 'section'].includes(anchor.kind) &&
-    (anchor.kind !== 'main' || anchor.value === 'main') &&
-    (anchor.kind !== 'section' || (anchor.value === 'section' && /^(h[1-6]|p)$/.test(tag))) &&
-    (anchor.kind !== 'landmark' || ['navigation', 'complementary'].includes(anchor.value)) &&
-    typeof anchor.value === 'string' && anchor.value.length > 0 && validTargetKey(anchor.value) &&
-    typeof anchor.path === 'string' && /^[a-z][a-z0-9-]{0,39}(>[a-z][a-z0-9-]{0,39}){0,7}$/.test(anchor.path) &&
-    anchor.path.split('>').at(-1) === tag &&
-    [textFingerprint, regionFingerprint, classFingerprint].every(targetFingerprint)
-}
-function journalTarget({ tag, id, slot, key, anchor, textFingerprint, regionFingerprint, classFingerprint, contextFingerprint }) {
-  return { tag, id, slot, key, ...(anchor ? { anchor: { kind: anchor.kind, value: anchor.value, path: anchor.path } } : {}),
-    textFingerprint, regionFingerprint, classFingerprint, contextFingerprint }
 }
 function migrateJournal(journal) {
   journal.edits = journal.edits.filter(edit => !edit.undone).map(edit => {
@@ -376,194 +307,18 @@ function migrateJournal(journal) {
   journal.version = 2
   journal.revision++
 }
-function editFrom(record, catalog, group, pendingTextStyle) {
-  const textStyle = record?.textStyleToken
-  const token = record?.colorToken
-  const spacing = record?.spacingToken
-  const pending = record?.pendingColor
-  const reference = token ?? spacing
-  const validTextStyleRequest = group && !reference && !pending &&
-    textStyleProperties.includes(record?.property) && (
-      pendingTextStyle
-        ? !Object.hasOwn(record, 'textStyleToken') &&
-          record.requested === 'var(' + pendingTextStyle.name + '-' + record.property + ', ' + pendingTextStyle.values[record.property] + ')' &&
-          record.observed === pendingTextStyle.values[record.property]
-        : Object.hasOwn(record, 'textStyleToken')
-          ? textStyle && catalog && textStyle.source === catalog.source && catalog.names.includes(textStyle.name) &&
-            record.requested === 'var(' + textStyle.name + '-' + record.property + ')'
-          : validTextStyleValue(record.property, record.requested)
-    )
-  const validRequest = group ? validTextStyleRequest : reference
-    ? !(token && spacing) && catalog && (spacing ? /^(gap|padding-(top|right|bottom|left))$/.test(record.property) : colors.has(record.property)) &&
-      reference.source === catalog.source && catalog.names.includes(reference.name) &&
-      record.requested === 'var(' + reference.name + ')' &&
-      (!spacing || /^(?:\d+\.?\d*|\.\d+)px$/.test(record.observed) && Number.parseFloat(record.observed) <= 2000)
-    : validValue(record?.property, record?.requested)
-  const validPending = !pending || (!reference && catalog && record.property === 'background-color' &&
-    typeof pending.label === 'string' && /^[a-z][a-z0-9 -]{0,79}$/i.test(pending.label) &&
-    typeof pending.name === 'string' && variableName.test(pending.name) &&
-    pending.name === '--' + pending.label.toLowerCase().replace(/ +/g, '-') &&
-    pending.source === catalog.source && pending.value === record.requested && pending.value === record.observed &&
-    /^(?:rgba?\(|(?:oklch|oklab|lch|lab|color)\()/i.test(pending.value))
-  const target = record?.target
-  if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || !validRoute(record.route) || !validRequest || !validPending ||
-      Object.hasOwn(record, 'group') || (!group && Object.hasOwn(record, 'textStyleToken')) ||
-      ((Object.hasOwn(record, 'pendingTextStyle') || Object.hasOwn(record, 'pendingTextStyleName')) && !pendingTextStyle) ||
-      !(group ? validTextStyleValue(record.property, record.observed) : validValue(record.property, record.observed)) ||
-      typeof record.before !== 'string' || record.before.length > (record.property === 'font-family' ? 512 : 100) ||
-      !['unique', 'ambiguous'].includes(record.restore) || !target || !/^[a-z][a-z0-9-]*$/.test(target.tag) ||
-      !validScopedTarget(target) || !validTargetKey(target.key) || [target.id, target.slot].some(value => value !== null && (typeof value !== 'string' || value.length > 120)) ||
-      (record.frameState !== undefined && !targetFingerprint(record.frameState)) ||
-      (record.template !== undefined && (group || pending || record.frameState !== undefined ||
-        record.restore !== 'unique' || record.intent !== featureTemplateScope ||
-        typeof record.template !== 'string' || !/^[a-z0-9][a-z0-9._:/-]{0,119}$/i.test(record.template))) ||
-      (record.templateSourceFingerprint !== undefined && (!record.template || !templateFingerprint(record.templateSourceFingerprint))) ||
-      [target.textFingerprint, target.regionFingerprint, target.classFingerprint, target.contextFingerprint].some(value =>
-        value !== undefined && !targetFingerprint(value))) {
-    throw Error('Invalid edit record')
-  }
-  const { id, route, property, requested, observed, before, restore } = record
-  // An older extension can still save previews, but only a current extension
-  // explicitly signals the template intent expected by the new handoff.
-  const intent = record.intent === featureTemplateScope ? featureTemplateScope : 'selected occurrence only'
-  const sourceContext = intent === featureTemplateScope ? sourceContextFrom(record.sourceContext) : undefined
-  const { width, height } = record.viewport ?? {}
-  const viewport = Number.isInteger(width) && Number.isInteger(height) ? { width, height } : undefined
-  const colorToken = token ? { source: token.source, name: token.name } : undefined
-  const spacingToken = spacing ? { source: spacing.source, name: spacing.name } : undefined
-  const pendingColor = pending ? { source: pending.source, name: pending.name, label: pending.label, value: pending.value } : undefined
-  const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
-  return {
-    id, route: journalRoute(route), property, requested, observed, before, restore,
-    target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,
-    templateSourceFingerprint: record.templateSourceFingerprint,
-    colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,
-  }
-}
-function groupedPaddingEdits(records, catalog, journal, shared) {
-  if (!Array.isArray(records) || (shared ? records.length < 4 || records.length > 40 || records.length % 2 : records.length !== 2)) {
-    throw Error('Invalid grouped padding operation')
-  }
-  const edits = records.map(record => editFrom(record, catalog))
-  const first = edits[0]
-  const name = records[0].sharedPadding
-  const horizontal = !shared && first.property === 'padding-left'
-  const [firstSide, secondSide] = horizontal ? ['padding-left', 'padding-right'] : ['padding-top', 'padding-bottom']
-  const keys = new Set()
-  const ids = new Set(edits.map(edit => edit.id))
-  if ((shared ? first.template || typeof name !== 'string' || !/^[a-z0-9_-]{1,80}$/i.test(name) : name !== undefined) ||
-      ids.size !== edits.length || journal.edits.some(edit => ids.has(edit.id))) {
-    throw Error('Invalid grouped padding operation')
-  }
-  for (let index = 0; index < edits.length; index += 2) {
-    const [top, bottom] = edits.slice(index, index + 2)
-    const { key, tag } = top.target
-    if ((shared && (!key || keys.has(key))) || tag !== first.target.tag || top.property !== firstSide ||
-      bottom.property !== secondSide || JSON.stringify(top.target) !== JSON.stringify(bottom.target) ||
-      [top, bottom].some((entry, offset) => entry.template !== first.template || entry.route !== first.route || entry.requested !== first.requested ||
-        Boolean(entry.spacingToken) !== Boolean(first.spacingToken) ||
-        (shared && entry.restore !== 'unique') || entry.intent !== featureTemplateScope || records[index + offset].sharedPadding !== name)) {
-      throw Error('Invalid grouped padding operation')
-    }
-    keys.add(key)
-  }
-  return edits.map(edit => ({ ...edit, group: first.id, sharedPadding: name }))
-}
+const validators = journalValidators(journalRoute)
 
-async function validateTextStyleDefinition(pending, catalog, journal) {
-  if (!pending || typeof pending !== 'object') throw Error('Invalid new text style')
-  const { name, label, description, source, values } = pending
-  if (!catalog || source !== catalog.source ||
-      typeof label !== 'string' || !/^[a-z][a-z0-9 -]{0,69}$/i.test(label) || label !== label.trim() ||
-      name !== '--text-' + label.toLowerCase().replace(/ +/g, '-') ||
-      typeof description !== 'string' || description.length > 240 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(description) ||
-      !values || textStyleProperties.some(property => !validTextStyleValue(property, values[property]) ||
-        (values[property].endsWith('px') && Math.abs(parseFloat(values[property])) > 2000))) {
-    throw Error('Invalid new text style')
+// Catalogs are independent source reads. Requests arriving during the same
+// listener check can share its result; later reads and all writes verify anew.
+const startupCatalogs = new Set(['colorCatalog', 'fontFamilyCatalog', 'spacingCatalog', 'textStyleCatalog'])
+const pendingVerifications = new Map()
+function verifyRead(binding) {
+  const key = JSON.stringify([binding.origin, binding.id, binding.source])
+  if (!pendingVerifications.has(key)) {
+    pendingVerifications.set(key, verify(binding).finally(() => pendingVerifications.delete(key)))
   }
-  await access(catalog.file, constants.W_OK).catch(() => { throw Error('The text style source is read-only.') })
-  if (catalog.names.includes(name) || declaresVariable(catalog.css, name) ||
-      textStyleProperties.some(property => declaresVariable(catalog.css, name + '-' + property)) ||
-      journal.edits.some(edit => edit.pendingTextStyle?.name === name) ||
-      journal.textStyleDefinitions?.some(style => style.name === name)) {
-    throw Error('That style name is already in use.')
-  }
-  return { name, label, description, source, values: Object.fromEntries(textStyleProperties.map(property => [property, values[property]])) }
-}
-async function textStyleEdits(records, catalog, journal) {
-  if (!Array.isArray(records) || !records.length || records.length > 50 || !records[0]?.id) {
-    throw Error('Expected 1 to 50 text style edits')
-  }
-  if (records.slice(1).some(record => record && (Object.hasOwn(record, 'pendingTextStyle') || Object.hasOwn(record, 'pendingTextStyleName')))) {
-    throw Error('Expected one text style definition per edit group')
-  }
-  const [record] = records
-  const reference = record.pendingTextStyleName
-  if (reference !== undefined && (typeof reference !== 'string' || !validRoute(record.route) || record.pendingTextStyle)) {
-    throw Error('Invalid pending text style reference')
-  }
-  const pending = reference === undefined
-    ? record.pendingTextStyle && await validateTextStyleDefinition(record.pendingTextStyle, catalog, journal)
-    : journal.textStyleDefinitions?.find(style => style.name === reference) ??
-      journal.edits.find(edit => edit.route === journalRoute(record.route) && edit.pendingTextStyle?.name === reference)?.pendingTextStyle
-  if (reference !== undefined && (!pending || pending.source !== catalog?.source || catalog.names.includes(reference))) {
-    throw Error('This pending text style is unavailable.')
-  }
-  const edits = records.map(record => editFrom(record, catalog, records[0].id, pending))
-  const [first] = edits
-  const ids = new Set(edits.map(edit => edit.id))
-  if (ids.size !== edits.length || journal.edits.some(edit => ids.has(edit.id)) ||
-      edits.some(edit => edit.route !== first.route || edit.textStyleToken?.name !== first.textStyleToken?.name)) {
-    throw Error('Text style edits must use unique IDs, one route and one style')
-  }
-  if (pending) {
-    if ((reference === undefined && (edits.length !== textStyleProperties.length || edits.some(edit => edit.before !== edit.observed))) ||
-        new Set(edits.map(edit => edit.property)).size !== edits.length ||
-        edits.some(edit => JSON.stringify(edit.target) !== JSON.stringify(first.target) || edit.restore !== first.restore)) {
-      throw Error('Expected one complete new style on one text layer')
-    }
-    if (reference === undefined) first.pendingTextStyle = pending
-    else first.pendingTextStyleName = reference
-  }
-  return edits
-}
-function componentPropertyEdit(record) {
-  const { id, route, beforeState, afterState, target, component } = record ?? {}
-  const uuid = value => typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value)
-  const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max
-  const state = value => {
-    if (!value || typeof value !== 'object') return false
-    const scalar = value.value === null || typeof value.value === 'boolean' || Number.isFinite(value.value) ||
-      (typeof value.value === 'string' && value.value.length <= (target.kind === 'text' ? 16000 : 180))
-    return scalar && (target.kind === 'source' ? typeof value.overridden === 'boolean' : typeof value.visible === 'boolean')
-  }
-  if (!uuid(id) || !validRoute(route) || !uuid(target?.mount) || !['source', 'slot', 'text'].includes(target.kind) ||
-      !text(target.definition, 2048) || !text(target.field, 120) || !text(component?.name, 160) ||
-      !/^[a-z][a-z0-9-]{0,60}$/.test(target.tag) || !state(beforeState) || !state(afterState)) {
-    throw Error('Invalid component property edit')
-  }
-  const clean = value => target.kind === 'source' ? { value: value.value, overridden: value.overridden } :
-    { value: value.value, visible: value.visible }
-  const requested = String(afterState.value ?? 'None')
-  return { id, route: journalRoute(route), property: target.kind === 'text' ? 'text' : 'component-' + target.field, before: String(beforeState.value ?? 'None'),
-    requested, observed: requested, restore: 'session', intent: 'selected occurrence only',
-    target: { kind: target.kind, mount: target.mount, definition: target.definition, field: target.field,
-      tag: target.tag, slot: component.name, key: target.mount, id: null }, component: { name: component.name, prop: target.field },
-    beforeState: clean(beforeState), afterState: clean(afterState) }
-}
-function buttonSizeEdit(record, registration) {
-  if (!registration || !record || !/^[a-f0-9-]{36}$/.test(record.id) || !validRoute(record.route) ||
-      record.target?.key !== registration.key || !buttonSizes.includes(record.before) ||
-      !buttonSizes.includes(record.requested) || record.requested === record.before) {
-    throw Error('Invalid Button Size edit')
-  }
-  return {
-    id: record.id, route: journalRoute(record.route), property: 'button-size',
-    target: { tag: 'button', id: null, slot: 'button', key: registration.key },
-    before: record.before, requested: record.requested, observed: record.requested,
-    restore: 'session', component: { name: 'Button', prop: 'size', source: registration.source },
-    intent: 'selected occurrence only',
-  }
+  return pendingVerifications.get(key)
 }
 
 async function handle(message) {
@@ -571,7 +326,9 @@ async function handle(message) {
   const bindings = await read(configPath, {})
   const binding = Object.hasOwn(bindings, message.origin) ? bindings[message.origin] : null
   if (!binding) throw Error('No saved project connection for this origin')
-  await verify(binding)
+  if (message.expectedBindingId && message.expectedBindingId !== binding.id) throw Error('Canvas helper binding changed')
+  if (startupCatalogs.has(message.type) || message.type === 'load') await verifyRead(binding)
+  else await verify(binding)
   if (message.type === 'variablesCatalog') {
     const [colorCatalog, spacingCatalog, textStyleCatalog] = await Promise.all([
       readCatalog(binding), readCatalog(binding, 'spacing'), readCatalog(binding, 'text-styles'),
@@ -616,24 +373,13 @@ async function handle(message) {
   }
   if (journal.version !== 2) throw Error('Unknown journal version')
   if (message.type === 'load') {
-    if (!validRoute(message.route)) throw Error('Expected a route')
-    const route = journalRoute(message.route)
-    const buttonSize = await readButtonSize(binding).catch(() => null)
-    return { revision: journal.revision, route, scopedPreviewTargets: true, landmarkPreviewTargets: true, sectionPreviewTargets: true, templatePreviews: true,
-      templateSourcePreviews: true, templatePaddingPreviews: true, projectWideRevert: true, previewVisibility: true,
-      textStyleDefinitions: journal.textStyleDefinitions ?? [],
-      ...(message.forComponentReset === true ? { componentEdits: journal.edits.filter(edit => edit.target.mount) } : {}),
-      edits: journal.edits.filter(edit => edit.route === route || edit.template), pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
+    return journalSnapshot(message, journal, journalRoute, await readButtonSize(binding).catch(() => null))
   }
   if (message.type === 'saveEvidence') {
     if (!validRoute(message.route)) return false
     return saveVisualEvidence(root, binding, journal, message.id, journalRoute(message.route), message.image)
   }
-  if (!Number.isSafeInteger(message.expectedRevision) || message.expectedRevision !== journal.revision) {
-    const error = Error('Saved previews changed in another tab. Reload the page and try again.')
-    error.code = 'STALE_JOURNAL'
-    throw error
-  }
+  requireRevision(message, journal)
   if (message.type === 'complete') {
     const originalEdits = journal.edits
     const { completed, retired } = completeHandoff(binding, journal, message.report, new Date().toISOString())
@@ -644,79 +390,12 @@ async function handle(message) {
     const imageCleanupFailed = await removeVisualEvidence(root, binding, retired)
     return { revision: journal.revision, completed, imageCleanupFailed, reloadInspector: true }
   }
-  let removed = []
-  let rebased
-  let definition
-  if (message.type === 'saveTextStyleDefinition') {
-    definition = await validateTextStyleDefinition(message.definition, await readCatalog(binding, 'text-styles'), journal)
-    journal.textStyleDefinitions ??= []
-    journal.textStyleDefinitions.push(definition)
-  } else if (message.type === 'save') {
-    const catalog = message.record?.spacingToken ? await readCatalog(binding, 'spacing') :
-      message.record?.colorToken || message.record?.pendingColor ? await readCatalog(binding) : null
-    const edit = editFrom(message.record, catalog)
-    if (journal.edits.some(e => e.id === edit.id)) return { file, revision: journal.revision }
-    if (edit.pendingColor) {
-      const { name } = edit.pendingColor
-      await access(catalog.file, constants.W_OK).catch(() => { throw Error('The color source is read-only.') })
-      if (declaresVariable(catalog.css, name) ||
-        journal.edits.some(entry => entry.pendingColor?.name === name)) {
-        throw Error('That variable name is already in use.')
-      }
-    }
-    journal.edits.push(edit)
-  } else if (message.type === 'saveButtonSize' || message.type === 'saveComponentProperty') {
-    const edit = message.type === 'saveButtonSize' ? buttonSizeEdit(message.record, await readButtonSize(binding)) : componentPropertyEdit(message.record)
-    if (journal.edits.some(entry => entry.id === edit.id)) return { file, revision: journal.revision }
-    journal.edits.push(edit)
-  } else if (message.type === 'saveSharedPadding' || message.type === 'savePairedPadding') {
-    const catalog = Array.isArray(message.records) && message.records.some(record => record?.spacingToken) ? await readCatalog(binding, 'spacing') : null
-    journal.edits.push(...groupedPaddingEdits(message.records, catalog, journal, message.type === 'saveSharedPadding'))
-  } else if (message.type === 'saveSelectionPaint') {
-    if (!Array.isArray(message.records) || message.records.length < 2) throw Error('Invalid selection color edit')
-    const edits = message.records.map(record => editFrom(record, null))
-    const first = edits[0]
-    const ids = new Set(edits.map(edit => edit.id))
-    if (ids.size !== edits.length || journal.edits.some(edit => ids.has(edit.id)) || edits.some(edit =>
-      (edit.intent !== 'selected occurrence only' || edit.route !== first.route || edit.requested !== first.requested ||
-        edit.frameState !== first.frameState || !/^(color|fill|stroke|background-color|outline-color|border-(top|right|bottom|left)-color)$/.test(edit.property)))) {
-      throw Error('Invalid selection color edit')
-    }
-    for (const edit of edits) journal.edits.push({ ...edit, group: first.id })
-  } else if (message.type === 'saveTextStyle') {
-    const first = message.records?.[0]
-    const catalog = first?.textStyleToken || first?.pendingTextStyle || first?.pendingTextStyleName ? await readCatalog(binding, 'text-styles') : null
-    journal.edits.push(...await textStyleEdits(message.records, catalog, journal))
-  } else if (message.type === 'setPreviewVisibility') {
-    const edits = setPreviewVisibility(journal.edits, message.id, message.hidden)
-    if (edits === journal.edits) return { file, revision: journal.revision, pending: pendingEdits(edits) }
-    journal.edits = edits
-  } else if (message.type === 'removeEdit') {
-    const result = removePendingEdit(journal.edits, message.id)
-    journal.edits = result.edits
-    removed = result.removed
-    rebased = result.rebased
-  } else if (message.type === 'undo') {
-    const edit = journal.edits.find(e => e.id === message.id)
-    if (!edit) throw Error('Edit was not found')
-    const matches = member => member === edit || (edit.group && member.group === edit.group)
-    removed = journal.edits.filter(matches)
-    journal.edits = journal.edits.filter(member => !matches(member))
-  } else if (message.type === 'resetAll') {
-    removed = journal.edits
-    journal.edits = []
-  } else if (message.type === 'reset') {
-    if (!validRoute(message.route)) throw Error('Expected a route')
-    const route = journalRoute(message.route)
-    const visible = Array.isArray(message.templateIds) ? new Set(message.templateIds) : new Set()
-    const matches = edit => edit.route === route || (edit.template && visible.has(edit.id))
-    removed = journal.edits.filter(matches)
-    journal.edits = journal.edits.filter(edit => !matches(edit))
-  } else throw Error('Unknown operation')
-  journal.revision++
+  const { changed, removed, value } = await applyJournalOperation(message, journal, { validators, journalRoute,
+    readCatalog: kind => readCatalog(binding, kind), readButtonSize: () => readButtonSize(binding) })
+  if (!changed) return { file, ...value }
   await atomic(file, journal)
   if (removed.length) await removeVisualEvidence(root, binding, removed.map(edit => edit.id))
-  return { file, revision: journal.revision, pending: pendingEdits(journal.edits), rebased, definition,
+  return { file, ...value,
     ...(binding.visualEvidence === true && ['save', 'saveTextStyle', 'saveSharedPadding', 'savePairedPadding'].includes(message.type) ? { visualEvidence: true } : {}),
   }
 }
@@ -737,6 +416,10 @@ createServer(async (req, res) => {
     }
     const message = JSON.parse(body)
     if (body.length > maxRequestLength && message?.type !== 'saveEvidence') throw Error('Request too large')
+    if (startupCatalogs.has(message.type)) {
+      reply(200, { value: await handle(message) })
+      return
+    }
     const task = tail.then(() => handle(message))
     tail = task.catch(() => {})
     reply(200, { value: await task })

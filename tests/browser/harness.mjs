@@ -35,7 +35,7 @@ export async function createHarness(options = {}) {
           response.writeHead(200, { 'content-type': 'application/json' })
           response.end(JSON.stringify({ origin, viewport: { width: 1100, height: 1356 },
             frames: options.flowFrames ?? [{ id: 'first', route: '/', label: 'Fixture', steps: [], checkpoint: [], image: 'frame-1.png' }],
-            connections: [] }))
+            connections: [], variants: options.flowVariants?.map(variant => ({ origin, ...variant })) }))
           return
         }
       } else if (options.dock && servePreviewDock(request, response, origin)) return

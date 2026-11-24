@@ -1,6 +1,8 @@
 export const flowPath = '/__inspector-flow/'
 
 export function watchFlowFrame() {
+  // A saved canvas owns its journal in every browser, including paired Chrome.
+  if (document.body.hasAttribute('data-canvas-editor')) return
   if (window.localhostInspectorWatchFrame) {
     window.localhostInspectorWatchFrame()
     return
@@ -42,7 +44,7 @@ export function watchFlowFrame() {
 
 export function isFlowChild(path) {
   try {
-    return window.parent !== window && window.parent === window.top &&
+    return window.parent !== window && window.parent === window.top && !window.parent.document.body.hasAttribute('data-canvas-editor') &&
       window.parent.location.pathname === path && window.frameElement === window.parent.document.querySelector('#app-preview') &&
       location.origin === window.parent.location.origin
   } catch { return false }

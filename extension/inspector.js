@@ -1,14 +1,25 @@
 (() => {
   if (!window.phaseABridge) return
+  const dock = window.localhostInspectorDock
+  // The extension and the built-in editor can request the same document.
+  // Keep the mounted editor, along with its selection, when it already owns this dock.
+  if (dock && !document.dispatchEvent(new Event('check-workspace-inspector', { cancelable: true }))) return
   const ui = window.LocalhostInspector
   const { host, root, panel, setOpen, get } = ui.createPanel()
+  if (dock) document.addEventListener('check-workspace-inspector', event => {
+    if (dock.firstElementChild === host && host.isConnected) event.preventDefault()
+  })
   const isCanvasExpanded = window.localhostInspectorIsCanvasExpanded
-  const isFloating = () => host.parentElement?.hasAttribute('data-inspector-floating')
   const selection = ui.createSelection({
     host, panel, get,
     relatedPadding: () => paddingOutlineMembers,
+    onHover(node) {
+      if (host.isConnected && host.hasAttribute('data-workspace-toolbar')) {
+        (node || document).dispatchEvent(new Event('workspace-inspector-hover', { bubbles: true, composed: true }))
+      }
+    },
     onSelect: () => {
-      if (!selection.current && !selection.group.length && isFloating()) setOpen(false)
+      if (!host.isConnected) return
       renderSelection()
       if (host.hasAttribute('data-workspace-toolbar')) {
         const target = selection.current?.isConnected ? selection.current : document
@@ -16,7 +27,7 @@
       }
     },
     inspect: () => editsUI.showDesign(),
-    openPanel: () => setOpen(true, isCanvasExpanded?.() && !host.ownerDocument.body.hasAttribute('data-sidebar-open')),
+    openPanel: () => setOpen(true),
   })
   let discovered
   let componentRead = 0
@@ -185,7 +196,7 @@
     status('')
     if (edit.template || edit.route === savedRoute) {
       if (await selectEditTarget(edit.id, navigation)) {
-        if (panel.hidden) setOpen(true, isCanvasExpanded?.())
+        if (panel.hidden) setOpen(true)
         if (isCanvasExpanded?.()) openEditRoute(route())
         selection.syncOutlines()
         return true
@@ -277,7 +288,7 @@
     if (destination?.route !== savedRoute) return
     sessionStorage.removeItem(editDestinationKey)
     if (!pendingRows.some(edit => edit.id === destination.id)) return
-    if (panel.hidden) setOpen(true, isCanvasExpanded?.())
+    if (panel.hidden) setOpen(true)
     editsUI.showEdits()
     const navigation = ++editNavigation
     if (await selectEditTarget(destination.id, navigation)) editsUI.markSelected(destination.id)
@@ -647,12 +658,10 @@
   const entry = get('entry')
   const closeInspector = get('close-inspector')
   function toggleInspector(moveFocus = true) {
-    const canvas = isCanvasExpanded?.()
-    const open = panel.hidden || (canvas && isFloating())
-    const floating = !open && canvas && Boolean(selection.current)
+    const open = panel.hidden
     ui.dismissTooltip()
     ui.closeMenu()
-    setOpen(open || floating, floating)
+    setOpen(open)
     selection.syncOutlines()
     if (moveFocus) (open ? closeInspector : entry).focus({ preventScroll: true })
   }
@@ -696,7 +705,7 @@
     document.addEventListener('preview-inspector-text', event => selection.previewText(ui.readNodeList(event)))
     document.addEventListener('select-inspector-text', event => {
       const nodes = ui.readNodeList(event)
-      if (busy || !nodes.length) return
+      if (!host.isConnected || busy || !nodes.length) return
       event.preventDefault()
       editsUI.showDesign()
       setOpen(true)
@@ -704,7 +713,7 @@
     })
     document.addEventListener('select-inspector-variable-use', event => {
       const node = event.composedPath()[0]
-      if (!(node instanceof HTMLElement || node instanceof SVGSVGElement) || !node.isConnected || busy) return
+      if (!host.isConnected || !(node instanceof HTMLElement || node instanceof SVGSVGElement) || !node.isConnected || busy) return
       event.preventDefault()
       editsUI.showDesign()
       setOpen(true)
@@ -720,7 +729,7 @@
     host.addEventListener('hide-workspace-inspector', () => { closeVariablesForm(); setWorkspaceOpen(false) })
     host.addEventListener('clear-workspace-selection', event => {
       if (root.querySelector('dialog[open]')) event.preventDefault()
-      else if (selection.current || selection.group.length || isFloating()) selection.select(null)
+      else if (selection.current || selection.group.length) selection.select(null)
     })
   }
   get('parent').onclick = () => {
@@ -1402,4 +1411,7 @@
   window.addEventListener('hashchange', onRouteChange)
   window.navigation?.addEventListener('currententrychange', onRouteChange)
   window.phaseAInspectorReady = loadRoute()
+  // Selection can display the live node while saved edits and tokens load.
+  // Mutation controls continue to follow loadRoute's existing readiness gate.
+  if (dock) document.dispatchEvent(new Event('workspace-inspector-listening'))
 })()

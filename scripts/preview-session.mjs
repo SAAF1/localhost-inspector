@@ -31,9 +31,11 @@ async function start(directory, mapDirectory, stateDirectory, port, activeUrl) {
   const proposal = existsSync(metadata) ? readProposal(directory) : createProposal(basis.project.source, directory)
   if (proposal.sourceRoot !== basis.project.source || proposal.status === 'accepted') throw Error('Expected an open proposal from this app.')
   const source = realpathSync(join(directory, 'app'))
-  const context = proposalContext(map, activeUrl, saved?.context ?? proposal.context)
+  const retained = saved?.context ?? proposal.context
+  const entry = activeUrl || (!retained && map.frames.find(frame => !frame.steps?.length)?.route)
+  const context = proposalContext(map, entry, retained)
   const origin = 'http://127.0.0.1:' + port
-  const workspace = reviewUrl(origin, context)
+  const workspace = reviewUrl(original.origin, { ...context, expanded: true })
   const server = spawn(process.execPath, [host, '--source', source, port, mapRoot, '--original-port', original.port], {
     stdio: ['ignore', 'pipe', 'inherit'],
   })
@@ -46,7 +48,7 @@ async function start(directory, mapDirectory, stateDirectory, port, activeUrl) {
   process.on('SIGTERM', stop)
   process.on('SIGINT', stop)
   const linkPath = join(mapRoot, 'proposal-preview.json')
-  const linkData = JSON.stringify({ originalOrigin: original.origin, proposalOrigin: origin })
+  const linkData = JSON.stringify({ originalOrigin: original.origin, proposalOrigin: origin, context })
   let linked = false
   try {
     let readyText = ''
@@ -77,7 +79,7 @@ async function start(directory, mapDirectory, stateDirectory, port, activeUrl) {
       await writeFile(replacement, JSON.stringify(record), { flag: 'wx', mode: 0o600 })
       await rename(replacement, sessionFile(directory))
     }
-    console.log(JSON.stringify({ workspace, skippedRegistrations: registrationWarnings, candidateSource: source, originalSource: basis.project.source,
+    console.log(JSON.stringify({ workspace, candidateWorkspace: reviewUrl(origin, context), skippedRegistrations: registrationWarnings, candidateSource: source, originalSource: basis.project.source,
       originalPendingOperations: basis.operations.length, originalPendingStyles: basis.textStyleDefinitions?.length ?? 0 }))
     const [code, signal] = await exit
     if (!stopping && code !== 0 && !['SIGINT', 'SIGTERM'].includes(signal)) throw Error('Proposal server stopped unexpectedly.')

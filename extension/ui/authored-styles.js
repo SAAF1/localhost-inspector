@@ -90,6 +90,23 @@
     return result
   }
 
+  // Full-page audits repeatedly visit the same stylesheet. Skip ordinary
+  // selectors that match nothing in this document during this synchronous scan.
+  ui.withAuditRules = (doc, scan) => {
+    const rules = sourceRules(doc)
+    if (!rules) return scan()
+    const all = rules.other
+    try {
+      rules.other = all.filter(({ rule }) => {
+        const selector = rule.selectorText
+        if (selector.includes(':') || selector.includes('\\')) return true
+        try { return Boolean(doc.querySelector(selector)) }
+        catch { return true }
+      })
+      return scan()
+    } finally { rules.other = all }
+  }
+
   function candidates(node) {
     if (matched.has(node)) return matched.get(node)
     const rules = sourceRules(node.ownerDocument)

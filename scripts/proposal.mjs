@@ -1,3 +1,4 @@
+import { authoringGuidance } from './flow/authoring-guidance.mjs'
 import {
   chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
   readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync,
@@ -181,7 +182,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const [command, ...args] = process.argv.slice(2)
   try {
     let record
-    if (command === 'create' && args.length === 2) record = createProposal(...args)
+    if (command === 'create' && args.length === 2) record = { ...createProposal(...args), authoringGuidance }
     else if (command === 'status' && args.length === 1) record = proposalStatus(...args)
     else if (command === 'refresh' && args.length === 2) record = await refreshProposal(...args)
     else if (command === 'accept' && args.length === 1) record = await acceptProposal(...args)

@@ -1,4 +1,5 @@
-import { workspaceInspectorState } from './view-controls.mjs'
+import { flowRoute } from './page-state.mjs'
+import { createVariantPanels } from './variant-panels.mjs'
 import { createWorkspaceLayers } from './workspace-layers.mjs'
 import { isolateColor } from './color-preview.mjs'
 import { previewSpacing } from './spacing-preview.mjs'
@@ -22,7 +23,7 @@ import './variables-audit.js'
 
 const ui = window.LocalhostInspector
 
-export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, livePage, navigate, focusResult }) {
+export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, livePage, navigate, warmNavigation, focusResult, showConnectionHelp, getOutline, onOpenOutline }) {
   const host = document.querySelector('#workspace-sidebar')
   const root = host.attachShadow({ mode: 'open' })
   const styles = ui.element('style')
@@ -84,10 +85,19 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   let fileDetail = false
   let restoreExpanded = true
   const flowButtons = new Map()
+  function warmOnHover(node, frameId) {
+    node.addEventListener('pointerenter', event => {
+      if (event.pointerType === 'mouse') warmNavigation?.(frameId())
+    })
+    node.addEventListener('pointerleave', event => {
+      if (event.pointerType === 'mouse') warmNavigation?.(null)
+    })
+  }
   function screenButton(frame, label, className) {
     const button = ui.element('button', className, label)
     button.type = 'button'
-    button.onclick = () => void navigate(frame.id)
+    button.onclick = () => { variantPanels.leave(); void navigate(frame.id) }
+    warmOnHover(button, () => frame.id)
     flowButtons.set(frame.id, button)
     return button
   }
@@ -97,10 +107,20 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       continue
     }
     const section = ui.sidebarDisclosure(group.label, 'flow-group')
+    warmOnHover(section.firstElementChild, () => section.open ? null : group.baseId)
+    section.firstElementChild.addEventListener('click', event => {
+      if (section.open) return
+      event.preventDefault()
+      section.open = true
+      variantPanels.leave()
+      void navigate(group.baseId)
+    })
+    const children = ui.element('div', 'flow-children')
+    section.append(children)
     for (const frame of group.frames) {
       const button = screenButton(frame, frame.label || frame.route, 'flow-screen')
       button.prepend(ui.icon('frame'))
-      section.append(button)
+      children.append(button)
     }
     roster.append(section)
   }
@@ -148,21 +168,35 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       restoreColor = isolateColor(doc, liveScan.entries, entry.id, ui.colorChannels(entry.value))
     }
   }
-  let componentNames = new WeakMap()
-  const layers = createWorkspaceLayers({componentFor: node => componentNames.get(node), getDocument: () => getFrame().contentDocument, selectNode: focusResult})
+  let sourceComponentNames = new Map()
+  const layers = createWorkspaceLayers({
+    componentFor: node => ui.registeredComponentName(node) ||
+      (node.hasAttribute('data-inspector-instance') && sourceComponentNames.get(node.getAttribute('data-inspector-source'))),
+    getDocument: () => getFrame().contentDocument,
+    selectNode: focusResult,
+    getOutline,
+    onOpenOutline,
+  })
   let selectionDocument
+  function syncLayerHover(event) {
+    if (event.currentTarget !== getFrame().contentDocument) return
+    const target = event.composedPath()[0]
+    layers.setHovered(target === selectionDocument ? null : target)
+  }
   function syncLayerSelection(event) {
     if (event.currentTarget !== getFrame().contentDocument) return
     const selected = event.composedPath()[0]
     const group = ui.readNodeList(event)
-    layers.setSelected(selected === selectionDocument ? null : selected, group)
+    layers.setSelected(selected === selectionDocument ? null : selected, group, true)
     panel.setTextSelection(group.length ? group : selected === selectionDocument ? [] : [selected])
   }
   function watchLayerSelection() {
     const doc = getFrame().contentDocument
     if (doc === selectionDocument) return
+    selectionDocument?.removeEventListener('workspace-inspector-hover', syncLayerHover, true)
     selectionDocument?.removeEventListener('workspace-inspector-selection', syncLayerSelection, true)
     selectionDocument = doc
+    selectionDocument?.addEventListener('workspace-inspector-hover', syncLayerHover, true)
     selectionDocument?.addEventListener('workspace-inspector-selection', syncLayerSelection, true)
   }
   watchLayerSelection()
@@ -170,6 +204,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   const pageScope = () => selectedRoute() ?? livePage()?.id
   const panel = ui.createVariablesPanel({
     renderLayers: layers.render,
+    onInventoryOpen: () => schedule(true),
     onOpenProject: entry => show('Variables', entry),
     onDetailChange(detail) {
       if (destination !== 'File' || fileDetail === detail) return
@@ -244,6 +279,10 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   let observedDoc
   let observer
   let timer
+  let idle
+  let scheduledDoc
+  let scheduledRoute
+  let backgroundScan
   let activeScope
   let liveScan
   let liveURL
@@ -306,7 +345,6 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     const page = livePage()
     const doc = getFrame().contentDocument
     if (!doc?.body || !page) return
-    if (doc !== observedDoc) panel.refreshLayers()
     observe(doc)
     if (!dirty && liveURL === doc.URL && liveScan?.page.frameId === page.frameId) return
     dirty = false
@@ -322,10 +360,6 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     observer.disconnect()
     observeRoot(doc.documentElement)
     liveScan = ui.scanVariablesPage(doc, page, catalogs, observeRoot)
-    componentNames = new WeakMap()
-    for (const entry of liveScan.entries) {
-      if (entry.category === 'component') for (const hit of entry.occurrences) componentNames.set(hit.node, entry.name)
-    }
     scans.set(page.id, liveScan)
     if (page.frameId) frames.set(page.id, page.frameId)
     else frames.delete(page.id)
@@ -339,13 +373,37 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     schedule()
   }
 
-  function schedule() {
-    if (!open || timer) return
-    // Paint the panel and any captured inventory before measuring the live app.
+  function cancelScan() {
+    clearTimeout(timer)
+    if (idle != null) window.cancelIdleCallback(idle)
+    idle = timer = null
+  }
+
+  function schedule(demand = false) {
+    if (!open) return
+    const doc = getFrame().contentDocument
+    if (!doc?.body || doc.URL === 'about:blank') return
+    const route = flowRoute(doc.location)
+    // Keep the first survey of each visited route and changes inside the open
+    // app on the original schedule. A replacement for an already-surveyed
+    // route can wait until the user stops switching screens.
+    const background = panel.showingLayers && scans.has(route) && doc !== observedDoc
+    if (!demand && (timer || idle != null) && doc === scheduledDoc && route === scheduledRoute && background === backgroundScan) return
+    cancelScan()
+    scheduledDoc = doc
+    scheduledRoute = route
+    backgroundScan = background
+    // Let fast navigation settle before measuring an entire app for a hidden
+    // inventory. Opening an inventory supersedes the pending background scan.
     timer = setTimeout(() => {
       timer = null
-      captureLive()
-    }, 100)
+      if (background && window.requestIdleCallback) {
+        idle = window.requestIdleCallback(() => {
+          idle = null
+          captureLive()
+        }, { timeout: 750 })
+      } else captureLive()
+    }, demand ? 0 : background ? 500 : 100)
   }
 
   function readCatalog(refresh = false) {
@@ -354,6 +412,11 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   dock.addEventListener('variables-catalog', event => {
     if (event.target !== dock.firstElementChild || typeof event.detail !== 'string' || catalogKey === event.detail) return
     catalogs = JSON.parse(event.detail)
+    const names = new Map((catalogs.componentCatalog?.definitions ?? [])
+      .map(def => [JSON.stringify([def.source, def.name]), def.name]))
+    const namesChanged = names.size !== sourceComponentNames.size || [...names.keys()].some(key => !sourceComponentNames.has(key))
+    sourceComponentNames = names
+    if (open && namesChanged && !variantPanels.active) panel.refreshLayers()
     catalogKey = event.detail
     invalidate()
   }, true)
@@ -387,36 +450,62 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       panel.setWorkspace(view === 'File', activeScope, entry)
       panel.refreshLayers()
       readCatalog(true)
-      schedule()
+      schedule(!panel.showingLayers)
     } else {
       layers.render(null)
       panel.clearPreview()
       panel.closePopup?.()
-      clearTimeout(timer)
-      timer = null
+      cancelScan()
     }
   }
-  file.onclick = () => show('File')
-  variables.onclick = () => show('Variables')
+  const variantPanels = createVariantPanels(pane, dock, syncDock, { getOutline, onOpenOutline })
+  file.onclick = () => { variantPanels.leave(); show('File') }
+  variables.onclick = () => { variantPanels.leave(); show('Variables') }
   show('File')
 
-  inspectorToggle.addEventListener('click', () => {
-    open = workspaceInspectorState(dock) !== 'docked'
+  const preferenceKey = data.canvasId ? 'inspectorWorkspaceOpen:' + data.canvasId : 'inspectorWorkspaceOpen'
+  function remember(value) {
+    try { (data.canvasId ? localStorage : sessionStorage).setItem(preferenceKey, String(value)) } catch {}
+  }
+  function syncDock() {
+    const visible = Boolean(variantPanels.active) || Boolean(dock.firstElementChild) && dock.hasAttribute('data-inspector-open')
+    if (open === visible) return
+    open = visible
     if (open) header.append(inspectorToggle)
     else toolbar.insertBefore(inspectorToggle, nextControl)
     host.hidden = !open
     document.body.toggleAttribute('data-sidebar-open', open)
-    dock.firstElementChild?.dispatchEvent(new Event(open ? 'open-workspace-inspector' : 'hide-workspace-inspector'))
     show(destination)
-    if (!open) inspectorToggle.focus({ preventScroll: true })
+    if (!variantPanels.active && dock.firstElementChild && !dock.inert) remember(open)
+  }
+  inspectorToggle.addEventListener('click', () => {
+    if (variantPanels.active) { variantPanels.leave(); return }
+    if (!dock.firstElementChild) {
+      restoreOpen = true
+      remember(true)
+      showConnectionHelp(true)
+      return
+    }
+    const closing = dock.hasAttribute('data-inspector-open')
+    remember(!closing)
+    dock.firstElementChild?.dispatchEvent(new Event(closing ? 'hide-workspace-inspector' : 'open-workspace-inspector'))
+    if (closing && dock.inert) dock.removeAttribute('data-inspector-open')
+    syncDock()
+    if (closing) inspectorToggle.focus({ preventScroll: true })
   })
-  function syncDock() {
-    if (open && dock.firstElementChild && !dock.inert && !dock.hasAttribute('data-inspector-open')) {
+  let restoreOpen = false
+  try { restoreOpen = (data.canvasId ? localStorage : sessionStorage).getItem(preferenceKey) === 'true' } catch {}
+  function onDockChanged() {
+    if (restoreOpen && dock.firstElementChild) {
+      restoreOpen = false
+      showConnectionHelp(false)
       dock.firstElementChild.dispatchEvent(new Event('open-workspace-inspector'))
     }
+    syncDock()
   }
-  new MutationObserver(syncDock).observe(dock, { childList: true, attributes: true,
-    attributeFilter: ['data-inspector-open', 'inert'] })
+  new MutationObserver(onDockChanged).observe(dock, { childList: true, attributes: true,
+    attributeFilter: ['data-inspector-open'] })
+  onDockChanged()
   function width(value) {
     const max = Math.min(480, Math.max(172, innerWidth - 320))
     const next = Math.min(max, Math.max(172, value))
@@ -440,15 +529,51 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   }
   window.addEventListener('resize', () => width(Number(grip.getAttribute('aria-valuenow'))))
 
+  let openingFrameId
+  let lastFlowId
   function updateFileList() {
-    const page = livePage()
-    if (!data.projectName) name.textContent = getFrame().contentDocument?.title || location.host
-    for (const [id, button] of flowButtons) {
-      button.setAttribute('aria-current', String(id === page?.frameId))
+    if (!data.projectName) {
+      const title = getFrame().contentDocument?.title || location.host
+      if (name.textContent !== title) name.textContent = title
     }
+    const currentId = openingFrameId ?? getOutline?.()?.flowFrameId ?? livePage()?.frameId
+    if (lastFlowId === currentId) return
+    flowButtons.get(lastFlowId)?.removeAttribute('aria-current')
+    flowButtons.get(currentId)?.setAttribute('aria-current', 'true')
+    lastFlowId = currentId
   }
 
+  let outlineRefreshQueued = false
   return {
+    indicateDestination(id) {
+      if (openingFrameId === id) return
+      openingFrameId = id
+      if (open && destination === 'File') updateFileList()
+    },
+    revealFlowFrame(id) {
+      const row = flowButtons.get(id)
+      if (!row) return
+      const group = row.closest('details')
+      if (group) group.open = true
+      if (open && destination === 'File' && flowsExpanded) {
+        row.scrollIntoView({ block: 'nearest', inline: 'nearest', container: 'nearest' })
+      }
+    },
+    inspectVariant: variantPanels.update,
+    leaveVariant: variantPanels.leave,
+    setOutlineHover() {
+      if (variantPanels.active) variantPanels.setOutlineHover()
+      else if (open) layers.syncOutlineHover()
+    },
+    refreshOutline() {
+      if (!open || outlineRefreshQueued) return
+      outlineRefreshQueued = true
+      queueMicrotask(() => {
+        outlineRefreshQueued = false
+        if (variantPanels.active) variantPanels.refreshOutline()
+        else if (open) panel.refreshLayers()
+      })
+    },
     changed() {
       watchLayerSelection()
       if (open && destination === 'File') updateFileList()

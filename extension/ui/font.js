@@ -103,7 +103,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     ui.fontReady = Promise.resolve(true)
     return
   }
-  const url = chrome.runtime.getURL('assets/inter-latin.woff2')
+  const url = window.localhostInspectorFontURL ?? chrome.runtime.getURL('assets/inter-latin.woff2')
   const controller = new AbortController()
   let timeout
   const load = async () => {

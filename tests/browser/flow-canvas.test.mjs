@@ -67,30 +67,24 @@ test('Inspector selects, edits, and undoes on the real page at canvas scale', as
     await toggle.click()
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true')
     assert.equal(await h.app.evaluate(() => innerWidth), originalWidth)
-    const frameBounds = await h.page.locator('#app-preview').boundingBox()
-    await h.select()
-    await h.page.getByRole('button', { name: 'Dock Inspector', exact: true }).waitFor()
-    const floating = await dock.boundingBox()
-    const size = h.page.viewportSize()
-    assert.deepEqual([floating.y, size.width - floating.x - floating.width,
-      size.height - floating.y - floating.height], [12, 12, 12])
-    const floatingToolbar = await h.page.locator('#workspace-toolbar').boundingBox()
-    assert.deepEqual([floatingToolbar.x, floatingToolbar.y, floatingToolbar.width],
-      [floating.x, floating.y, floating.width])
     const live = h.page.locator('#app-preview')
     const frame = h.page.locator('.flow-frame.active')
-    assert.deepEqual(await live.boundingBox(), frameBounds)
+    const sidebar = h.page.locator('#workspace-sidebar')
     await live.evaluate(node => { node.dataset.testFrame = 'same' })
-    await h.page.mouse.click(80, 60)
-    await h.page.getByRole('button', { name: 'Open Inspector', exact: true }).waitFor()
+    await h.select()
+    await sidebar.waitFor()
+    assert.ok(await layout() > 0)
+    assert.equal(await panelToggle.getAttribute('aria-expanded'), 'true')
+    assert.equal(await h.app.evaluate(() => innerWidth), originalWidth)
+    const canvas = await h.page.locator('#viewport').boundingBox()
+    await h.page.mouse.click(canvas.x + 8, canvas.y + 8)
     assert.equal(await frame.getAttribute('aria-pressed'), 'false')
     assert.equal(await live.evaluate(node => getComputedStyle(node).outlineStyle), 'none')
     assert.equal(await live.getAttribute('data-test-frame'), 'same')
-    await h.select()
-    await h.page.getByRole('button', { name: 'Dock Inspector', exact: true }).waitFor()
-    assert.equal(await frame.getAttribute('aria-pressed'), 'true')
-    await panelToggle.click()
+    assert.ok(await sidebar.isVisible())
     assert.ok(await layout() > 0)
+    await h.select()
+    assert.equal(await frame.getAttribute('aria-pressed'), 'true')
     await h.app.locator('#localhost-inspector-outlines #outline').waitFor({ state: 'visible' })
     await panelToggle.click()
     await h.page.locator('#workspace-sidebar').waitFor({ state: 'hidden' })
@@ -190,17 +184,17 @@ async function chooseCard(page, id) {
   const viewport = page.locator('#viewport')
   const rect = await card.boundingBox()
   const view = await viewport.boundingBox()
-  await viewport.dispatchEvent('wheel', { deltaX: rect.x - view.x - 75,
-    deltaY: rect.y - view.y - 75, bubbles: true, cancelable: true })
+  await viewport.dispatchEvent('wheel', { deltaX: (rect.x - view.x - 75) / 2,
+    deltaY: (rect.y - view.y - 75) / 2, bubbles: true, cancelable: true })
   await card.locator('span').click()
 }
 
-test('flow headers disclose their screens and use the same names as the canvas', async () => {
+test('flow headings are one disclosure row and canvas selection reveals its current screen', async () => {
   const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
   try {
     await h.open()
     const sidebar = h.page.locator('#workspace-sidebar')
-    const headers = sidebar.locator('.flow-group summary, .single-flow')
+    const headers = sidebar.locator('.flow-group > summary, .single-flow')
     assert.deepEqual(await headers.allTextContents(), ['Home', 'Details', 'Missing'])
     const home = headers.first()
     const detail = headers.nth(1)
@@ -208,12 +202,17 @@ test('flow headers disclose their screens and use the same names as the canvas',
     const screen = sidebar.getByRole('button', { name: 'View', exact: true })
     assert.equal(await screen.count(), 0)
     await home.click()
+    await screen.waitFor()
+    const caret = home.locator('svg')
+    const [labelBox, iconBox] = await Promise.all([home.boundingBox(), caret.boundingBox()])
+    assert.ok(Math.abs(labelBox.y + labelBox.height / 2 - iconBox.y - iconBox.height / 2) < 1)
     assert.ok((await detail.boundingBox()).y > before)
     assert.equal(await screen.locator('svg').count(), 1)
     await screen.click()
     await h.page.frameLocator('#app-preview').getByRole('menu', { name: 'View' }).waitFor()
-    await home.press('Space')
+    await caret.click()
     assert.equal((await detail.boundingBox()).y, before)
+    await h.page.frameLocator('#app-preview').getByRole('menu', { name: 'View' }).waitFor()
     await h.page.locator('#flow-toggle').click()
     assert.deepEqual(await h.page.locator('#map .flow-heading').allTextContents(), await headers.allTextContents())
     const single = h.page.locator('[data-frame="other"]')
@@ -222,12 +221,44 @@ test('flow headers disclose their screens and use the same names as the canvas',
     const artwork = await single.locator('img').boundingBox()
     assert.equal(artwork.y, (await single.boundingBox()).y)
     assert.equal(await detail.locator('svg').count(), 0)
+    // Model the extension's frame watcher while independently controlling
+    // when the new Inspector reports that its document is ready.
+    await h.page.locator('body').evaluate(body => { body.dataset.inspectorWatching = 'true' })
+    await detail.hover()
+    const staged = h.page.locator('iframe.flow-candidate')
+    await staged.waitFor({ state: 'attached' })
+    await h.page.getByRole('button', { name: 'Flows', exact: true }).hover()
+    await staged.waitFor({ state: 'detached' })
+    await detail.hover()
+    await staged.waitFor({ state: 'attached' })
+    await staged.evaluate(frame => { frame.dataset.fromSidebarHover = 'true' })
     await detail.click()
     await h.page.locator('[data-frame="other"][aria-pressed="true"]').waitFor()
+    assert.equal(await h.page.locator('#app-preview').getAttribute('data-from-sidebar-hover'), 'true')
+    assert.equal(await h.page.locator('#zoom').textContent(), '50%')
     assert.equal(await detail.getAttribute('aria-current'), 'true')
+    // A new app document is live, but the harness attaches the extension only
+    // to the first document. Check the shell while the second is reconnecting.
+    await h.page.frameLocator('#app-preview').getByRole('heading', { name: 'Details' }).waitFor()
+    const dock = h.page.locator('#localhost-inspector-dock')
+    assert.equal(await sidebar.isVisible(), true)
+    assert.ok((await dock.boundingBox()).width > 0)
+    assert.equal(await dock.getAttribute('inert'), '')
+    assert.ok(await dock.getAttribute('data-attachment-status'))
+    assert.ok(await h.page.getByRole('button', { name: 'Collapse Inspector' }).isEnabled())
+    await h.page.locator('#app-preview').evaluate(frame => { frame.dataset.inspectorDocument = 'details' })
+    await h.page.waitForFunction(() => !document.querySelector('#localhost-inspector-dock').inert)
+    assert.ok((await dock.boundingBox()).width > 0)
+    // Activate the offscreen frame via its canvas card's keyboard control.
+    await h.page.locator('[data-frame="visible"]').press('Enter')
+    await h.page.locator('[data-frame="visible"][aria-pressed="true"]').waitFor()
+    await screen.waitFor()
+    assert.equal(await screen.getAttribute('aria-current'), 'true')
     await home.press('Enter')
-    await sidebar.getByRole('button', { name: 'Home', exact: true }).click()
+    assert.equal(await screen.isVisible(), false)
+    await home.press('Enter')
     await h.page.locator('[data-frame="home"][aria-pressed="true"]').waitFor()
+    assert.equal(await screen.isVisible(), true)
   } finally { await h.close() }
 })
 
@@ -441,6 +472,14 @@ test('wheel pans over a live frame and Command-wheel scrolls its app content', a
       }, { previous, dx, dy }, { timeout: 3000 })
     }
 
+    const initial = await scene()
+    await table.dispatchEvent('wheel', { deltaX: -12, deltaY: 15, bubbles: true, cancelable: true })
+    await map.evaluate((node, initial) => {
+      const before = new DOMMatrix(initial)
+      const after = new DOMMatrix(getComputedStyle(node).transform)
+      if (after.e !== before.e + 24 || after.f !== before.f - 30) throw Error('Expected double-distance diagonal pan')
+    }, initial)
+
     await pan(30, 0)
     await pan(0, 24)
     assert.deepEqual(await offset(), [0, 0])
@@ -498,14 +537,20 @@ test('inspect mode blocks menu activation and saved states still replay', async 
   } finally { await h.close() }
 })
 
-test('pinching crosses between the live page and its centered canvas frame', async () => {
+test('only Command-pinch crosses between the live page and its centered canvas frame', async () => {
   const h = await createHarness({ canvas: true, dock: true })
   try {
     await h.page.setViewportSize({ width: 1000, height: 740 })
     await h.app.evaluate(() => { document.body.dataset.gestureState = 'preserved' })
-    const pinch = deltaY => h.app.locator('body').dispatchEvent('wheel', { deltaY, ctrlKey: true, cancelable: true })
-    await pinch(8)
+    const pinch = (deltaY, metaKey = true) => h.app.locator('body').dispatchEvent('wheel', {
+      deltaY, ctrlKey: true, metaKey, cancelable: true,
+    })
     const toggle = h.page.locator('#flow-toggle')
+    assert.equal(await h.app.evaluate(() => document.body.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: 8, ctrlKey: true, bubbles: true, cancelable: true }),
+    )), true)
+    assert.notEqual(await toggle.getAttribute('aria-pressed'), 'true')
+    await pinch(8)
     assert.equal(await toggle.getAttribute('aria-pressed'), 'true')
     await pinch(6)
     assert.equal(await h.page.locator('#zoom-preset').inputValue(), '0.5')
@@ -515,8 +560,10 @@ test('pinching crosses between the live page and its centered canvas frame', asy
     assert.ok(Math.abs(bounds.x + bounds.width / 2 - viewport.x - viewport.width / 2) < 2)
     // Start a separate pinch after the first gesture has settled.
     await new Promise(resolve => setTimeout(resolve, 250))
+    await pinch(-35, false)
+    assert.equal(await toggle.getAttribute('aria-pressed'), 'true')
     await h.app.locator('body').dispatchEvent('wheel', {
-      deltaY: -17, ctrlKey: true, cancelable: true,
+      deltaY: -17, ctrlKey: true, metaKey: true, cancelable: true,
       clientX: bounds.width, clientY: bounds.height,
     })
     assert.equal(await toggle.getAttribute('aria-pressed'), 'false')
@@ -526,15 +573,41 @@ test('pinching crosses between the live page and its centered canvas frame', asy
   } finally { await h.close() }
 })
 
+test('sideways wheel momentum waits until rest to prepare the hovered app', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    const viewport = h.page.locator('#viewport')
+    await viewport.dispatchEvent('wheel', { deltaY: -18, ctrlKey: true, clientX: 200, clientY: 150, cancelable: true })
+    const card = h.page.locator('[data-frame="other"]')
+    const box = await card.boundingBox()
+    await viewport.dispatchEvent('wheel', { deltaX: (box.x - 70) / 2, deltaY: (box.y - 70) / 2, cancelable: true })
+    await h.page.mouse.move(150, 140)
+    const loadedWhileMoving = await viewport.evaluate(async node => {
+      const loads = []
+      for (let i = 0; i < 12; i++) {
+        node.dispatchEvent(new WheelEvent('wheel', {
+          deltaX: 1, clientX: 150, clientY: 140, bubbles: true, cancelable: true,
+        }))
+        await new Promise(resolve => setTimeout(resolve, 20))
+        loads.push(Boolean(node.querySelector('.flow-candidate')))
+      }
+      return loads.some(Boolean)
+    })
+    assert.equal(loadedWhileMoving, false)
+    await h.page.locator('.flow-candidate').waitFor({ state: 'attached', timeout: 2500 })
+  } finally { await h.close() }
+})
+
 test('moderate zoom prepares one frame and further zoom and click reuse it', async () => {
   const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
   try {
     await h.page.locator('#flow-toggle').click()
     const viewport = h.page.locator('#viewport')
     const card = h.page.locator('[data-frame="other"] span')
-    await viewport.dispatchEvent('wheel', { deltaY: -66, ctrlKey: true, clientX: 200, clientY: 150, cancelable: true })
+    await viewport.dispatchEvent('wheel', { deltaY: -18, ctrlKey: true, clientX: 200, clientY: 150, cancelable: true })
     const rect = await card.boundingBox()
-    await viewport.dispatchEvent('wheel', { deltaX: rect.x - 90, deltaY: rect.y - 110, cancelable: true })
+    await viewport.dispatchEvent('wheel', { deltaX: (rect.x - 90) / 2, deltaY: (rect.y - 110) / 2, cancelable: true })
     await card.hover()
     const staged = h.page.locator('.flow-candidate')
     await staged.waitFor({ state: 'attached' })
@@ -542,7 +615,7 @@ test('moderate zoom prepares one frame and further zoom and click reuse it', asy
     assert.equal(await h.page.locator('[data-frame="home"]').getAttribute('aria-pressed'), 'true')
     await staged.evaluate(node => { node.dataset.prepared = 'yes' })
     const point = await card.boundingBox()
-    await viewport.dispatchEvent('wheel', { deltaY: -45, ctrlKey: true, clientX: point.x + 10, clientY: point.y + 5, cancelable: true })
+    await viewport.dispatchEvent('wheel', { deltaY: -12, ctrlKey: true, clientX: point.x + 10, clientY: point.y + 5, cancelable: true })
     assert.equal(await staged.getAttribute('data-prepared'), 'yes')
     await card.click()
     const live = h.page.locator('#app-preview')
@@ -574,17 +647,44 @@ test('zoomed-in frame finishes finite browser animations without waiting on app 
     const card = h.page.locator('[data-frame="other"]')
     await viewport.dispatchEvent('wheel', { deltaY: -190, ctrlKey: true, clientX: 200, clientY: 150, cancelable: true })
     const rect = await card.boundingBox()
-    await viewport.dispatchEvent('wheel', { deltaX: rect.x - 10, deltaY: rect.y - 10, cancelable: true })
+    await viewport.dispatchEvent('wheel', { deltaX: (rect.x - 10) / 2, deltaY: (rect.y - 10) / 2, cancelable: true })
     await h.page.mouse.move(200, 210)
-    await h.page.locator('.flow-candidate').waitFor({ state: 'attached' })
-    assert.equal(await card.getAttribute('aria-pressed'), 'false')
-    await h.page.locator('[data-frame="other"][aria-pressed="true"]').waitFor()
+    // Preparation is brief; observe its state at a render frame rather than
+    // relying on a locator poll to land between preparation and activation.
+    await h.page.waitForFunction(() => document.querySelector('.flow-candidate') &&
+      document.querySelector('[data-frame="other"]').getAttribute('aria-pressed') === 'false')
+    await h.page.locator('[data-frame="other"].active').waitFor()
     const chart = h.page.frameLocator('#app-preview').locator('svg[role="application"] rect')
     assert.equal(await chart.evaluate(node => getComputedStyle(node.parentElement).opacity), '1')
     assert.equal(await h.page.locator('.flow-candidate').count(), 0)
     const initial = Number(await chart.getAttribute('width'))
     await h.page.waitForFunction(width => Number(document.querySelector('#app-preview').contentDocument.querySelector('#entrance rect').getAttribute('width')) > width, initial)
   } finally { await h.close() }
+})
+
+test('overview frames distinguish loading, loaded and unavailable previews', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages,
+    flowPreviews: { other: { desktop: { fixed: 'other.webp' } }, missing: { desktop: { fixed: 'missing.webp' } } },
+  })
+  let release
+  try {
+    const pending = new Promise(resolve => { release = resolve })
+    await h.page.route('**/missing.webp', route => route.abort())
+    await h.page.route('**/other.webp', async route => {
+      await pending
+      await route.continue()
+    })
+    await h.page.reload()
+    await h.page.locator('#flow-toggle').click()
+    const card = h.page.locator('[data-frame="other"]')
+    await card.getByText('Loading preview…', { exact: true }).waitFor()
+    release()
+    await card.locator('.flow-preview-unavailable').waitFor({ state: 'hidden' })
+    assert.ok(await card.locator('img').evaluate(image => image.naturalWidth > 0))
+    const missing = h.page.locator('[data-frame="missing"]')
+    await missing.locator('img').evaluate(img => { img.loading = 'eager' })
+    await missing.getByText('Couldn’t load preview', { exact: true }).waitFor()
+  } finally { release?.(); await h.close() }
 })
 
 test('continuous zoom upgrades a nearby image after decode and releases it at overview zoom', async () => {
@@ -594,7 +694,12 @@ test('continuous zoom upgrades a nearby image after decode and releases it at ov
   try {
     let resume
     const blocked = new Promise(resolve => { resume = resolve })
-    await h.page.route('**/other-2x.webp', async route => { await blocked; await route.continue() })
+    let sharpRequested = false
+    await h.page.route('**/other-2x.webp', async route => {
+      sharpRequested = true
+      await blocked
+      await route.continue()
+    })
     await h.page.locator('#flow-toggle').click()
     const card = h.page.locator('[data-frame="other"]')
     const image = card.locator('img')
@@ -602,16 +707,24 @@ test('continuous zoom upgrades a nearby image after decode and releases it at ov
     const wheel = deltaY => viewport.dispatchEvent('wheel', { deltaY, ctrlKey: true,
       clientX: 100, clientY: 130, cancelable: true })
     const requested = h.page.waitForRequest('**/other-2x.webp')
-    await wheel(-16)
+    await wheel(-5)
+    // Keep a tiny pinch moving across several paint opportunities.
+    await viewport.evaluate(async target => {
+      for (let i = 0; i < 8; i++) {
+        await new Promise(requestAnimationFrame)
+        target.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: -.01, cancelable: true }))
+      }
+    })
+    assert.equal(sharpRequested, false)
     await requested
-    await wheel(-35)
+    await wheel(-9)
     assert.match(await image.getAttribute('src'), /\/other\.webp$/)
     const before = await image.boundingBox()
     resume()
     await card.locator('img[src="./other-2x.webp"]').waitFor()
     assert.deepEqual(await image.boundingBox(), before)
     assert.equal(await h.page.locator('#app-preview').count(), 1)
-    await wheel(110)
+    await wheel(30)
     await card.locator('img[src="./other.webp"]').waitFor()
   } finally { await h.close() }
 })
@@ -623,7 +736,7 @@ test('Command hover activates a frame at overview zoom and aborts if Command is 
     const viewport = h.page.locator('#viewport')
     const label = h.page.locator('[data-frame="other"] span')
     const box = await label.boundingBox()
-    await viewport.dispatchEvent('wheel', { deltaX: box.x - 90, deltaY: box.y - 110, cancelable: true })
+    await viewport.dispatchEvent('wheel', { deltaX: (box.x - 90) / 2, deltaY: (box.y - 110) / 2, cancelable: true })
     let release
     const blocked = new Promise(resolve => { release = resolve })
     await h.page.route('**/other?view=details', async route => {
@@ -640,11 +753,53 @@ test('Command hover activates a frame at overview zoom and aborts if Command is 
     assert.equal(await h.page.locator('.flow-frame.active').getAttribute('data-frame'), 'home')
     await h.page.keyboard.down('Meta')
     await label.hover()
-    await h.page.locator('[data-frame="other"][aria-pressed="true"]').waitFor()
+    await h.page.locator('[data-frame="other"].active[aria-pressed="false"]').waitFor()
+    assert.equal(await h.page.locator('[data-frame="home"]').getAttribute('aria-pressed'), 'true')
     await h.page.keyboard.up('Meta')
     assert.equal(await h.page.locator('#zoom').textContent(), '36%')
     assert.equal(await h.page.locator('#app-preview').count(), 1)
     assert.equal(await h.page.locator('.flow-candidate').count(), 0)
+  } finally { await h.close() }
+})
+
+test('Command hovering an unselected live frame reveals its layer without selecting it', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    await h.open()
+    await h.page.keyboard.press('Escape')
+    const tree = h.page.getByRole('tree', { name: 'Layers' })
+    const selected = tree.locator('[aria-selected="true"]')
+    assert.equal(await selected.count(), 0)
+    const control = h.app.getByRole('button', { name: 'Open View', exact: true })
+    await control.hover()
+    await h.page.keyboard.down('Meta')
+    const row = tree.getByRole('treeitem', { name: 'Open View', exact: true })
+    await row.and(tree.locator('[data-hovered]')).waitFor({ timeout: 2000 })
+    assert.equal(await selected.count(), 0)
+    await control.click({ modifiers: ['Meta'] })
+    await row.and(selected).waitFor()
+    await h.page.keyboard.up('Meta')
+    await tree.locator('[data-hovered]').waitFor({ state: 'detached' })
+    assert.equal(await row.getAttribute('aria-selected'), 'true')
+  } finally { await h.close() }
+})
+
+test('hovering a saved sidebar state warms its route without running its controls', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    await h.open()
+    const row = h.page.locator('#workspace-sidebar').getByRole('button', { name: 'View', exact: true })
+    if (!await row.isVisible()) await h.page.locator('.flow-group > summary').first().click()
+    await row.hover()
+    const candidate = h.page.frameLocator('.flow-candidate')
+    await candidate.getByRole('button', { name: 'Open View' }).waitFor({ state: 'attached' })
+    // The route has finished mounting and the control is available to replay.
+    await candidate.locator('body').evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await candidate.locator('#view-options').getAttribute('hidden'), '')
+    await row.click()
+    await h.page.frameLocator('#app-preview').getByRole('menu', { name: 'View' }).waitFor()
   } finally { await h.close() }
 })
 
@@ -661,6 +816,9 @@ test('frame switches show loading only after the grace period and clear it on ca
     await h.page.clock.pauseAt(new Date(start.valueOf() + 1000))
 
     await fastCard.dispatchEvent('click')
+    const dock = h.page.locator('#localhost-inspector-dock')
+    assert.equal(await dock.getAttribute('data-opening-frame'), 'Details')
+    assert.equal(await fastCard.locator('img').evaluate(img => getComputedStyle(img).outlineColor), 'rgb(37, 99, 201)')
     assert.equal(await fastCard.getAttribute('aria-busy'), 'true')
     assert.equal(await fastCard.getAttribute('data-loading'), null)
     assert.equal(await settings.getAttribute('aria-disabled'), 'true')
@@ -672,12 +830,18 @@ test('frame switches show loading only after the grace period and clear it on ca
     assert.equal(await fastCard.getAttribute('data-loading'), null)
 
     await slowCard.dispatchEvent('click')
+    assert.equal(await dock.getAttribute('data-opening-frame'), 'Missing')
+    await fastCard.dispatchEvent('click')
+    assert.equal(await slowCard.getAttribute('aria-busy'), null)
+    assert.equal(await slowCard.getAttribute('data-opening'), null)
+    await slowCard.dispatchEvent('click')
     await h.page.clock.runFor(200)
     assert.equal(await slowCard.getAttribute('data-loading'), null)
     await h.page.clock.runFor(50)
     assert.equal(await slowCard.getAttribute('data-loading'), '')
     assert.equal(await settings.getAttribute('data-busy'), '')
     await toggle.dispatchEvent('click')
+    assert.equal(await dock.getAttribute('data-opening-frame'), null)
     assert.equal(await slowCard.getAttribute('data-loading'), null)
     assert.equal(await settings.getAttribute('data-busy'), null)
   } finally { await h.close() }
@@ -787,5 +951,62 @@ test('Layers follows rendered wrappers and omits hidden and inspector-only conte
     const main = tree.getByRole('treeitem', { name: 'Main', exact: true })
     assert.deepEqual(await main.getByRole('treeitem').evaluateAll(items => items.map(item => item.getAttribute('aria-label'))),
       ['Promoted text', 'Visible override', 'Thumbnail', 'Brand', 'Icon'])
+  } finally { await h.close() }
+})
+
+test('canvas zoom reaches one percent with presets and pinch, and fit can go below twelve percent', async () => {
+  const h = await createHarness({ canvas: true, dock: true })
+  try {
+    await h.open()
+    await h.page.locator('#flow-toggle').click()
+    const presets = h.page.getByRole('combobox', { name: 'Canvas zoom' })
+    const scale = () => h.page.locator('#map').evaluate(node => new DOMMatrixReadOnly(getComputedStyle(node).transform).a)
+    await presets.selectOption('0.1')
+    const viewport = h.page.locator('#viewport')
+    const pinch = deltaY => viewport.dispatchEvent('wheel', { deltaY, ctrlKey: true, cancelable: true })
+    await pinch(-32)
+    assert.ok(await scale() > .20 && await scale() < .22)
+    await pinch(32)
+    assert.ok(Math.abs(await scale() - .1) < .00001)
+    for (const value of ['0.1', '0.05', '0.01']) {
+      await presets.selectOption(value)
+      assert.ok(Math.abs(await scale() - Number(value)) < .00001)
+    }
+    await h.page.locator('#viewport').dispatchEvent('wheel', { deltaY: 500, ctrlKey: true, cancelable: true })
+    assert.ok(Math.abs(await scale() - .01) < .00001)
+    await h.page.setViewportSize({ width: 1000, height: 150 })
+    await presets.selectOption('fit')
+    assert.ok(await scale() >= .01 && await scale() < .12)
+  } finally { await h.close() }
+})
+
+test('Layers follows the selected flow, including same-named sections, and keeps it after deselecting', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages,
+    flowVariants: [
+      { id: 'home-draft', label: 'Overview draft', section: 'Alternatives', anchor: 'home', route: '/' },
+      { id: 'other-draft', label: 'Detail draft', section: 'Alternatives', anchor: 'other', route: '/other?view=details' },
+    ] })
+  try {
+    const page = h.page
+    await page.locator('#flow-toggle').click()
+    await h.open()
+    const tree = page.getByRole('tree', { name: 'Layers', exact: true })
+    const row = (name, selected) => tree.getByRole('treeitem', { name, exact: true, selected })
+    const frameRoots = () => tree.locator('[aria-level="1"][aria-roledescription="frame"]').evaluateAll(items => items.map(item => item.getAttribute('aria-label')))
+    await row('Overview draft').waitFor()
+    assert.deepEqual(await frameRoots(), ['Home', 'View', 'Hidden dialog'])
+    assert.equal(await row('Detail draft').count(), 0)
+    await page.locator('[data-anchor="other"] .variant-section-surface button').press('Enter')
+    await row('Alternatives', true).waitFor()
+    assert.deepEqual(await frameRoots(), ['Details'])
+    assert.equal(await row('Overview draft').count(), 0)
+    await row('Detail draft').waitFor()
+    await page.keyboard.press('Escape')
+    await row('Alternatives', false).waitFor()
+    assert.deepEqual(await frameRoots(), ['Details'])
+    await page.locator('[data-variant="home-draft"] > button').press('Enter')
+    const variantTree = page.frameLocator('iframe[title="Variant layers"]').getByRole('tree', { name: 'Layers' })
+    await variantTree.getByRole('treeitem', { name: 'Overview draft', exact: true, selected: true }).waitFor()
+    assert.equal(await variantTree.getByRole('treeitem', { name: 'Detail draft', exact: true }).count(), 0)
   } finally { await h.close() }
 })

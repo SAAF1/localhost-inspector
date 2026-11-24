@@ -1,5 +1,6 @@
+import { inspectorModules } from './inspector-modules.js'
 import { dockFlowInspector, flowPath, isFlowChild, watchFlowFrame } from './flow-attachment.js'
-import { componentPreviewRequest } from './component-preview.js'
+import { componentPreviewRequest, previewButtonSize } from './component-preview.js'
 import { captureEditEvidence } from './capture-evidence.js'
 
 const endpoint = 'http://127.0.0.1:5188/inspector'
@@ -35,13 +36,7 @@ async function inject(target) {
   const [{ result: mounted }] = await chrome.scripting.executeScript({
     target, func: () => Boolean(window.phaseAInspectorReady),
   })
-  if (!mounted) {await chrome.scripting.executeScript({ target, files: [
-    'bridge.js', 'ui/font.js', 'ui/tokens.js', 'ui/styles.js', 'ui/icons.js', 'ui/dom.js',
-    'ui/policy.js', 'ui/menu.js', 'ui/controls.js', 'ui/padding.js',
-    'ui/authored-styles.js', 'ui/resizing.js', 'ui/alignment-settings.js', 'ui/spacing-gap.js', 'ui/alignment.js', 'ui/layout.js', 'ui/text-targets.js', 'ui/text-style-values.js', 'ui/field-view.js',
-    'ui/solid-color-picker.js', 'ui/create-definition.js', 'ui/create-color-variable.js', 'ui/create-text-style.js', 'ui/color-variable-picker.js', 'ui/color-bindings.js', 'ui/canvas-background.js', 'ui/text-style-control.js', 'ui/sections.js', 'ui/panel-styles.js', 'ui/tooltip.js', 'ui/pending-edits.js',
-    'ui/panel.js', 'ui/revert-dialog.js', 'selection.js', 'shortcuts.js', 'preview-recovery.js', 'style-preview.js', 'shared-padding.js', 'button-size.js', 'selected-component.js', 'edit-evidence.js', 'workspace-text-style.js', 'inspector.js',
-  ] })}
+  if (!mounted) {await chrome.scripting.executeScript({ target, files: inspectorModules })}
 }
 
 async function attach(tabId, origin) {
@@ -121,39 +116,6 @@ chrome.tabs.onRemoved.addListener(tabId => {
   pendingCaptures.delete(tabId)
   void chrome.storage.session.remove(['tab:' + tabId, 'flow:' + tabId])
 })
-
-async function previewButtonSize(key, before, requested, route, origin) {
-  // Fixed operation in the app world. No source path, extension data or general
-  // command dispatcher is exposed to the app.
-  const getRoute = () => location.pathname + location.search + (/^#!?\//.test(location.hash) ? location.hash : '')
-  if (location.origin !== origin || getRoute() !== route) return false
-  const registration = window.localhostInspectorButtonSize
-  const selector = '[data-inspector-target="' + CSS.escape(key) + '"]'
-  const node = document.querySelector(selector)
-  const ownsNode = () => node?.isConnected && node === registration?.node && node.localName === 'button' &&
-    node.getAttribute('data-slot') === 'button' && node.getAttribute('data-inspector-target') === key &&
-    window.localhostInspectorButtonSize === registration
-  const valid = () => ownsNode() && getRoute() === route
-  const size = () => node.getAttribute('data-inspector-button-size')
-  const unique = () => document.querySelectorAll(selector).length === 1
-  if (!valid() || !unique() || typeof registration.setSize !== 'function' || size() !== before) return false
-  if (before === requested) return true
-  // React must acknowledge through the selected Button's committed DOM.
-  registration.setSize(requested)
-  const waitForSize = async value => {
-    const deadline = performance.now() + 450
-    while (valid() && size() !== value && performance.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 16))
-    }
-    return valid() && size() === value
-  }
-  if (await waitForSize(requested) && unique()) return true
-  if (ownsNode() && (size() === before || size() === requested)) {
-    registration.setSize(before)
-    await waitForSize(before)
-  }
-  return false
-}
 
 async function handle(message, sender) {
   if (message.type === 'pair' && sender.url === chrome.runtime.getURL('settings.html')) {

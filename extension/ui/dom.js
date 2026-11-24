@@ -30,6 +30,31 @@
     if (text !== undefined) element.textContent = text
     return element
   }
+  ui.pointedElement = (doc, { x, y }, host) => {
+    let node = doc.elementFromPoint(x, y)
+    if (node === host) return null
+    while (node?.shadowRoot) {
+      const inner = node.shadowRoot.elementFromPoint(x, y)
+      if (!inner || inner === node) break
+      node = inner
+    }
+    if (node instanceof doc.defaultView.SVGElement) {
+      while (node.ownerSVGElement) node = node.ownerSVGElement
+      return node
+    }
+    if (!(node instanceof doc.defaultView.HTMLElement)) return null
+    // Decorative icons often pass pointer events through to their control.
+    const icons = node.querySelectorAll(node.matches('button,a,label,[role="button"]') ? 'svg' : ':scope > svg')
+    for (let i = icons.length - 1; i >= 0; i--) {
+      const icon = icons[i]
+      if (icon.ownerSVGElement) continue
+      const box = icon.getBoundingClientRect()
+      if (x < box.left || x >= box.right || y < box.top || y >= box.bottom) continue
+      const style = doc.defaultView.getComputedStyle(icon)
+      if (style.pointerEvents === 'none' && style.visibility === 'visible') return icon
+    }
+    return node
+  }
   ui.inspectedLabel = node => node?.getAttribute('aria-label') ||
     (node?.matches('a, button, label, h1, h2, h3, h4, h5, h6') ? (node.innerText ?? node.textContent).trim() : '')
   ui.sidebarDisclosure = (label, className, open = false) => {

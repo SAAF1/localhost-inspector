@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Variant properties</title>
+<style>
+html,body { height:100%; margin:0; color-scheme:light dark; font:12px system-ui; }
+#variant-dock { --li-dock-height:100dvh; --li-dock-workspace-top:40px; --li-workspace-popover-top:40px; }
+#variant-dock:empty + output { display:block; padding:48px 16px 0; }
+output { display:none; }
+</style>
+<div id="variant-dock" data-workspace-toolbar data-inspector-open></div>
+<output role="status">Opening Inspector…</output>
+</html>

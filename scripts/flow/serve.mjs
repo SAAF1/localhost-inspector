@@ -1,10 +1,18 @@
+import { createHash } from 'node:crypto'
+import { watch } from 'node:fs'
 import { createServer } from 'node:http'
-import { readFile, stat } from 'node:fs/promises'
-import { extname, join, resolve, sep } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { extname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { serveWorkspaceAsset } from './workspace-assets.mjs'
+import { serveWorkspaceAsset, servePreviewAsset } from './workspace-assets.mjs'
 import { flowPath } from '../../extension/flow-attachment.js'
+
+import { handleVariantInspector, variantJournal } from './variant-journal.mjs'
+import { canvasHelper } from './canvas-helper.mjs'
+import { variantCatalogs } from './variant-catalogs.mjs'
+import { canvasProject, linkedCanvas } from './canvas.mjs'
+import { readBuiltAsset, savedPreviewFrames, types } from './canvas-preview.mjs'
 
 const sourceMode = process.argv[2] === '--source'
 const [builtApp, port, mapDirectory, compareFlag, otherPort, ...extra] = process.argv.slice(sourceMode ? 3 : 2)
@@ -19,9 +27,12 @@ if (comparison && (!['--original-port', '--proposal-port'].includes(compareFlag)
   throw Error('Expected MAP_DIRECTORY followed by --proposal-port PORT or --original-port PORT.')
 }
 const appRoot = resolve(builtApp)
-const mapRoot = mapDirectory ? resolve(mapDirectory) : null
-const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json',
-  '.mjs': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.webp': 'image/webp' }
+const mapRoot = mapDirectory ? resolve(mapDirectory) : await linkedCanvas(appRoot)
+const durableCanvas = await canvasProject(mapRoot)
+const mergeSavedFrames = durableCanvas && savedPreviewFrames(mapRoot)
+const editor = durableCanvas && comparison?.role !== 'proposal' && (await canvasHelper(mapRoot, appRoot, 'http://127.0.0.1:' + port, process.env.INSPECTOR_CANVAS_HELPER_STATE) || variantJournal(mapRoot, 'original', {
+  seed: 'inspector-state.json', catalogs: variantCatalogs(mapRoot, { canvas: mapRoot, sourceRoot: appRoot }),
+}))
 
 async function comparisonForOriginal(origin) {
   try {
@@ -29,24 +40,54 @@ async function comparisonForOriginal(origin) {
     const other = new URL(link.proposalOrigin)
     if (link.originalOrigin === origin && other.origin !== origin && link.proposalOrigin === other.origin &&
         other.protocol === 'http:' && other.hostname === '127.0.0.1' && other.port) {
-      return { role: 'original', otherOrigin: other.origin }
+      return { role: 'original', otherOrigin: other.origin, context: link.context }
     }
   } catch { /* No active proposal in this map. */ }
   return null
 }
 
+// Notify open canvases when the launcher publishes or removes its link.
+function streamProposalLink(origin, response) {
+  const watcher = watch(mapRoot, (_, name) => {
+    if (!name || name === 'proposal-preview.json') void publish()
+  })
+  response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
+  let revision = 0
+  async function publish() {
+    const current = ++revision
+    const comparison = await comparisonForOriginal(origin)
+    if (current === revision && !response.destroyed) response.write('data: ' + JSON.stringify(comparison) + '\n\n')
+  }
+  watcher.on('error', () => response.end())
+  response.on('close', () => watcher.close())
+  void publish()
+  if (mergeSavedFrames) {
+    const saved = {}
+    void mergeSavedFrames(saved).then(() => {
+      if (!response.destroyed) response.write('event: preview-origins\ndata: ' + JSON.stringify(
+        saved.variants.map(({ id, origin, editable, hasEdits }) => ({ id, origin, editable, hasEdits }))) + '\n\n')
+    }).catch(() => response.end())
+  }
+}
+
 async function serve(request, response) {
   const origin = 'http://127.0.0.1:' + port
-  if (request.headers.host !== new URL(origin).host || request.method !== 'GET') {
+  if (request.headers.host !== new URL(origin).host) {
     response.writeHead(404).end()
     return
   }
   const path = decodeURIComponent(new URL(request.url, origin).pathname)
+  if (editor && path === flowPath + 'workspace-inspector') return handleVariantInspector(request, response, new URL(origin), editor)
+  if (request.method !== 'GET') { response.writeHead(404).end(); return }
   let data
   let type
   if (path.startsWith(flowPath)) {
     const relative = path.slice(flowPath.length)
-    if (mapRoot && await serveWorkspaceAsset(path, response)) return
+    if (mapRoot && relative === 'proposal-events' && comparison?.role !== 'proposal') {
+      streamProposalLink(origin, response)
+      return
+    }
+    if (await (mapRoot ? serveWorkspaceAsset(path, response, Boolean(editor)) : servePreviewAsset(path, response))) return
     if (mapRoot && /^((map|previews|audit)\.json|frame-\d+(\.png|-(desktop|tablet|phone)(-hug)?(-2x)?\.webp))$/.test(relative)) {
       // Candidate screenshots and inventories must never come from the original.
       if (comparison?.role === 'proposal' && relative !== 'map.json') {
@@ -58,9 +99,12 @@ async function serve(request, response) {
         const map = JSON.parse(data)
         const link = comparison || await comparisonForOriginal(origin)
         const originalOrigin = link?.role === 'proposal' ? link.otherOrigin : origin
-        if (map.origin !== originalOrigin) throw Error('Map belongs to another app')
+        if (!durableCanvas && map.origin !== originalOrigin) throw Error('Map belongs to another app')
+        if (mergeSavedFrames && link?.role !== 'proposal') await mergeSavedFrames(map)
+        if (editor) map.canvasId = createHash('sha256').update(mapRoot).digest('hex')
         map.origin = origin
         map.comparison = link
+        map.proposalEvents = comparison?.role !== 'proposal'
         if (link?.role === 'proposal') {
           for (const frame of map.frames) delete frame.image
         }
@@ -72,11 +116,9 @@ async function serve(request, response) {
       return
     }
   } else {
-    let file = resolve(appRoot, '.' + path)
-    if (!file.startsWith(appRoot + sep) && file !== appRoot) throw Error('Invalid asset')
-    if (!extname(path) && !(await stat(file).catch(() => null))?.isFile()) file = resolve(appRoot, 'index.html')
-    data = await readFile(file)
-    type = types[extname(file)] ?? 'application/octet-stream'
+    const asset = await readBuiltAsset(appRoot, path)
+    data = asset.data
+    type = asset.type
   }
   response.writeHead(200, { 'content-type': type + (type.startsWith('text/') ? '; charset=utf-8' : ''),
     'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(data)
@@ -96,6 +138,9 @@ if (sourceMode) {
   const workspace = {
     name: 'localhost-inspector-workspace',
     enforce: 'pre',
+    transformIndexHtml() {
+      return [{ tag: 'script', attrs: { type: 'module', src: flowPath + 'preview-wheel.mjs' }, injectTo: 'head' }]
+    },
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         if (request.url?.split('?')[0].startsWith(flowPath)) handleRequest(request, response)

@@ -1,6 +1,6 @@
 (() => {
   const ui = window.LocalhostInspector
-  ui.createSelection = ({ host, panel, get, onSelect, openPanel, inspect, relatedPadding }) => {
+  ui.createSelection = ({ host, panel, get, onSelect, onHover, openPanel, inspect, relatedPadding }) => {
     let selected
     let selectedGroup = []
     let textPreview = []
@@ -35,33 +35,12 @@
         positionOutline(layer.children[index], node)
       }
     }
-    function pointedElement({ x, y }) {
-      let node = document.elementFromPoint(x, y)
-      if (node === host) return null
-      while (node?.shadowRoot) {
-        const inner = node.shadowRoot.elementFromPoint(x, y)
-        if (!inner || inner === node) break
-        node = inner
-      }
-      if (node instanceof SVGElement) {
-        while (node.ownerSVGElement) node = node.ownerSVGElement
-        return node
-      }
-      if (!(node instanceof HTMLElement)) return null
-      // Decorative icons often pass pointer events through to their control.
-      const icons = node.querySelectorAll(node.matches('button,a,label,[role="button"]') ? 'svg' : ':scope > svg')
-      for (let i = icons.length - 1; i >= 0; i--) {
-        const icon = icons[i]
-        if (icon.ownerSVGElement) continue
-        const box = icon.getBoundingClientRect()
-        if (x < box.left || x >= box.right || y < box.top || y >= box.bottom) continue
-        const style = getComputedStyle(icon)
-        if (style.pointerEvents === 'none' && style.visibility === 'visible') return icon
-      }
-      return node
-    }
     function syncHoverOutline() {
-      hovered = !panel.hidden && commandHeld && pointer ? pointedElement(pointer) : null
+      const pointed = !panel.hidden && commandHeld && pointer ? ui.pointedElement(document, pointer, host) : null
+      if (pointed !== hovered) {
+        hovered = pointed
+        onHover(hovered)
+      }
       const target = menuTarget?.()
       const outline = get('hover-outline')
       outline.toggleAttribute('data-menu-preview', Boolean(target))
@@ -113,6 +92,10 @@
       commandHeld = event.metaKey
       syncHoverOutline()
     }
+    document.addEventListener('workspace-inspector-command', event => {
+      commandHeld = event.detail === true
+      syncHoverOutline()
+    })
     window.addEventListener('keydown', updateCommand, true)
     window.addEventListener('keyup', updateCommand, true)
     window.addEventListener('blur', clearPointer)
@@ -124,7 +107,7 @@
         const options = { capture: true, signal: listeners.signal }
         panelWindow.addEventListener('keydown', updateCommand, options)
         panelWindow.addEventListener('keyup', updateCommand, options)
-        panelWindow.addEventListener('blur', clearPointer, options)
+        panelWindow.addEventListener('blur', clearPointer, { signal: listeners.signal })
         window.addEventListener('pagehide', () => listeners.abort(), { once: true })
       }
       watchPanelWindow()
@@ -135,7 +118,7 @@
       })
     }
     function isSelectionGesture(event) {
-      return event.isTrusted && event.metaKey && event.button === 0 && !event.composedPath().includes(host)
+      return host.isConnected && event.isTrusted && event.metaKey && event.button === 0 && !event.composedPath().includes(host)
     }
     function preventPress(event) {
       if (!isSelectionGesture(event)) return
@@ -145,16 +128,16 @@
     document.addEventListener('pointerdown', preventPress, true)
     document.addEventListener('mousedown', preventPress, true)
     document.addEventListener('click', event => {
-      if (!event.isTrusted || event.composedPath().includes(host)) return
+      if (!host.isConnected || !event.isTrusted || event.composedPath().includes(host)) return
       if (!event.metaKey) {
         if (!panel.hidden) select(null)
         return
       }
       if (!isSelectionGesture(event)) return
-      const node = pointedElement({ x: event.clientX, y: event.clientY })
-      if (!node) return
       event.preventDefault()
       event.stopImmediatePropagation()
+      const node = ui.pointedElement(document, { x: event.clientX, y: event.clientY }, host)
+      if (!node) return
       inspect()
       if (panel.hidden) openPanel()
       select(node)

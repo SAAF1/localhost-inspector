@@ -3,6 +3,7 @@ import { restoreStandardPreview } from './sharp-previews.mjs'
 const frameLabelHeight = 45
 
 export const flowHeadingSpace = 80
+export const frameGap = 240
 
 export function groupFlowFrames(frames) {
   // Keep hash-router pages distinct and put query variants under their base screen.
@@ -27,6 +28,7 @@ export function groupFlowFrames(frames) {
   const labels = new Map()
   for (const group of groups.values()) {
     const base = group.frames.find(frame => frame.route === group.key && !frame.steps.length) ?? group.frames[0]
+    group.baseId = base.id
     group.label = base.label || group.key
     labels.set(group.label, (labels.get(group.label) || 0) + 1)
   }
@@ -54,16 +56,23 @@ export function renderFrames(map, data, groups, activate, viewOf, previews, swit
     const unavailable = document.createElement('div')
     unavailable.className = 'flow-preview-unavailable'
     unavailable.textContent = missingPreview
-    image.addEventListener('error', () => {
-      image.hidden = true
-      if (image.isConnected) unavailable.hidden = false
-    })
+    function updatePreviewState() {
+      const hasFile = image.hasAttribute('src')
+      const pending = hasFile && !image.complete
+      const failed = hasFile && image.complete && !image.naturalWidth
+      button.toggleAttribute('data-preview-pending', pending && !card.sharpImage)
+      image.hidden = !hasFile || failed
+      unavailable.hidden = Boolean(card.sharpImage || (hasFile && !pending && !failed))
+      if (!card.hiddenControl) unavailable.textContent = pending ? 'Loading preview…' : missingPreview
+    }
+    image.addEventListener('load', updatePreviewState)
+    image.addEventListener('error', updatePreviewState)
     button.append(text, image, unavailable)
     button.addEventListener('click', () => {
       if (card.hiddenControl) void switchToDesktop(frame.id)
       else void activate(frame)
     })
-    const card = { id: frame.id, button, image, unavailable, hiddenControl: false,
+    const card = { id: frame.id, button, image, unavailable, updatePreviewState, hiddenControl: false,
       labelHeight: frameLabelHeight, desktop: frame.image }
     cards.set(frame.id, card)
     map.append(button)
@@ -100,7 +109,7 @@ export function renderFrames(map, data, groups, activate, viewOf, previews, swit
     return [{ from, to, wire, path }]
   })
 
-  function layout() {
+  function layout(extraColumns) {
     let y = 0
     for (const group of groups) {
       const heading = headings.get(group)
@@ -139,13 +148,12 @@ export function renderFrames(map, data, groups, activate, viewOf, previews, swit
         card.sharpFile = imageFile
         if (file && card.image.getAttribute('src') !== './' + file) card.image.src = './' + file
         else if (!file) card.image.removeAttribute('src')
-        card.image.hidden = !file
         card.image.width = width
         card.image.height = fittingHug || mode === 'fixed' ? height : fixedHeight
-        card.unavailable.hidden = Boolean(file)
+        card.updatePreviewState()
         card.unavailable.style.height = cardHeight + 'px'
         card.button.style.minHeight = cardHeight + card.labelHeight + 'px'
-        x += width + 240
+        x += (width + frameGap) * (1 + (extraColumns?.get(card.id) || 0))
         rowHeight = Math.max(rowHeight, cardHeight + card.labelHeight)
       }
       y += rowHeight + 320

@@ -1,4 +1,9 @@
 .workspace-layers-tree {
+  --layer-indent: 24px;
+  --layer-selected: #e8f4fe;
+  --layer-inherited: #f4f9ff;
+  inline-size: max-content;
+  min-inline-size: 100%;
   padding-inline-start: var(--li-gap);
   display: flex;
   flex-direction: column;
@@ -23,27 +28,43 @@
   min-width: 0;
   min-height: var(--li-field-height);
   padding-inline-end: var(--li-gap);
-  padding-inline-start: calc(4px + min(var(--layer-depth) * 24px, 40%));
+  padding-inline-start: calc(4px + var(--layer-depth) * var(--layer-indent));
   border-radius: var(--li-radius);
   cursor: pointer;
 }
 
 .workspace-layer-item > .workspace-layer-line { border-start-end-radius: 0; border-end-end-radius: 0; }
 
-.workspace-layer-line:hover {
+.workspace-layer-line:hover,
+.workspace-layer-item[data-hovered] > .workspace-layer-line {
   background: var(--li-field);
 }
 
-.workspace-layer-item[aria-selected="true"] {
-  background: var(--li-control-selected-surface);
+.workspace-layer-item[data-selection="direct"] {
+  background: var(--layer-inherited);
   border-radius: var(--li-radius);
 }
 
-.workspace-layer-item[aria-selected="true"] > .workspace-layer-line {
-  background: var(--li-control-selected-surface);
+.workspace-layer-item[data-selection="direct"] > .workspace-layer-line {
+  background: var(--layer-selected);
 }
 
-.workspace-layer-item:focus-visible > .workspace-layer-line {
+.workspace-layer-item[data-selection="inherited"] > .workspace-layer-line {
+  background: var(--layer-inherited);
+}
+
+.workspace-layer-item[data-hovered][data-selection] > .workspace-layer-line {
+  background: color-mix(in srgb, var(--layer-selected) 88%, var(--li-active));
+}
+
+@media (prefers-color-scheme: dark) {
+  .workspace-layers-tree {
+    --layer-selected: var(--li-control-selected-surface);
+    --layer-inherited: color-mix(in srgb, var(--layer-selected) 40%, var(--li-surface));
+  }
+}
+
+.workspace-layer-item:focus-visible:not([data-pointer-focus]) > .workspace-layer-line {
   outline: 2px solid var(--li-active);
   outline-offset: -2px;
 }
@@ -65,7 +86,7 @@
   height: 12px;
 }
 
-.workspace-layer-item[aria-selected="true"] > .workspace-layer-line > .workspace-layer-kind {
+.workspace-layer-item[data-selection="direct"] > .workspace-layer-line > .workspace-layer-kind {
   color: var(--li-text);
 }
 
@@ -79,6 +100,7 @@
 
 .workspace-layer-label {
   min-width: 0;
+  max-inline-size: 32ch;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;

@@ -1,9 +1,27 @@
 const checkPath = 'm2 5.5 3 3L10 3'
 
-export function workspaceInspectorState(dock) {
-  if (!dock.hasAttribute('data-inspector-open')) return 'closed'
-  if (dock.hasAttribute('data-inspector-floating') && document.body.hasAttribute('data-expanded')) return 'floating'
-  return 'docked'
+// A browser pinch can magnify the page independently of the canvas camera.
+// Keep the workspace controls inside the part of the layout actually on screen.
+export function followVisibleViewport() {
+  const view = window.visualViewport
+  if (!view) return
+  const root = document.documentElement
+  function sync() {
+    const magnified = view.scale > 1.001
+    root.toggleAttribute('data-magnified', magnified)
+    if (!magnified) return
+    root.style.setProperty('--visible-left', view.offsetLeft + 'px')
+    root.style.setProperty('--visible-top', view.offsetTop + 'px')
+    root.style.setProperty('--visible-right', Math.max(0, root.clientWidth - view.offsetLeft - view.width) + 'px')
+    // Controls keep their normal on-screen size as the browser magnifies the canvas.
+    root.style.setProperty('--chrome-scale', 1 / view.scale)
+    root.style.setProperty('--chrome-height', view.height * view.scale + 'px')
+    root.style.setProperty('--chrome-width', view.width * view.scale + 'px')
+    root.style.setProperty('--visible-bottom', Math.max(0, innerHeight - view.offsetTop - view.height) + 'px')
+  }
+  view.addEventListener('resize', sync)
+  view.addEventListener('scroll', sync)
+  sync()
 }
 
 export function connectViewControls({ apply, read, presets }) {
@@ -16,27 +34,27 @@ export function connectViewControls({ apply, read, presets }) {
   const zoom = toolbar.querySelector('#zoom-control')
 
   function syncInspector() {
-    inspector.hidden = !dock.firstElementChild
-    inspector.disabled = dock.inert
-    const state = workspaceInspectorState(dock)
-    const open = state !== 'closed'
+    const variantOpen = dock.hasAttribute('data-variant-inspection')
+    const open = variantOpen || dock.hasAttribute('data-inspector-open')
     const host = dock.firstElementChild
+    inspector.hidden = false
+    inspector.disabled = !document.body.hasAttribute('data-workspace-ready') || (Boolean(host) && dock.inert && !open)
     const count = Number(host?.dataset.pendingCount) || 0
     pending.hidden = open || !count || dock.inert
     pending.querySelector('span').textContent = count
     pending.setAttribute('aria-label', 'Pending edits, ' + count)
     pending.setAttribute('aria-expanded', String(Boolean(host?.hasAttribute('data-pending-open'))))
-    zoom.hidden = !open || dock.inert || !document.body.hasAttribute('data-expanded')
+    zoom.hidden = !open || (!variantOpen && dock.inert) || !document.body.hasAttribute('data-expanded')
     inspector.setAttribute('aria-expanded', String(open))
-    inspector.setAttribute('aria-label', { closed: 'Open Inspector', floating: 'Dock Inspector', docked: 'Collapse Inspector' }[state])
-    if (open) document.documentElement.style.setProperty('--li-workspace-panel-width', dock.offsetWidth + 'px')
+    inspector.setAttribute('aria-label', open ? 'Collapse Inspector' : host || document.body.hasAttribute('data-canvas-editor') ? 'Open Inspector' : 'Connect Inspector')
+    if (open && !variantOpen) document.documentElement.style.setProperty('--li-workspace-panel-width', dock.offsetWidth + 'px')
   }
   const inspectorObserver = new MutationObserver(syncInspector)
   inspectorObserver.observe(dock, {
     subtree: true, childList: true, attributes: true,
-    attributeFilter: ['inert', 'data-inspector-open', 'data-inspector-floating', 'data-pending-count', 'data-pending-open'],
+    attributeFilter: ['inert', 'data-inspector-open', 'data-variant-inspection', 'data-pending-count', 'data-pending-open'],
   })
-  inspectorObserver.observe(document.body, { attributes: true, attributeFilter: ['data-expanded'] })
+  inspectorObserver.observe(document.body, { attributes: true, attributeFilter: ['data-expanded', 'data-workspace-ready'] })
   syncInspector()
   pending.addEventListener('click', () => dock.firstElementChild?.dispatchEvent(new Event('toggle-pending-edits')))
 

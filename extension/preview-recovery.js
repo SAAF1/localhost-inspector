@@ -3,7 +3,7 @@
   const keyAttribute = 'data-inspector-target'
   // A repeated marker names one authored template part. Occurrence keys still identify individual records.
   const templateAttribute = 'data-inspector-template'
-  const contextAttribute = name => /^data-(?!inspector-|state$|slot$|theme$|active$|disabled$|open$|selected$|highlighted$|hovered$)/.test(name)
+  const contextAttribute = name => /^data-(?!inspector-|localhost-inspector-|state$|slot$|theme$|active$|disabled$|open$|selected$|highlighted$|hovered$)/.test(name)
   const templateOf = node => {
     const value = node?.getAttribute(templateAttribute)
     return /^[a-z0-9][a-z0-9._:/-]{0,119}$/i.test(value ?? '') ? value : undefined
@@ -108,13 +108,14 @@
     return JSON.stringify(Array.from(node.classList).sort())
   }
 
-  function dataContext(node) {
+  function dataContext(node, legacySelectedDepth = -1) {
     const evidence = []
     for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
       const attrs = Array.from(node.attributes)
         .filter(attr => contextAttribute(attr.name))
         .map(attr => [attr.name, attr.value])
-        .sort(([left], [right]) => left.localeCompare(right))
+      if (depth === legacySelectedDepth) attrs.push(['data-localhost-inspector-selected', ''])
+      attrs.sort(([left], [right]) => left.localeCompare(right))
       if (attrs.length) evidence.push([depth, attrs])
     }
     return JSON.stringify(evidence)
@@ -207,7 +208,13 @@
       ])
       if (text !== textFingerprint || region !== regionFingerprint || classes !== classFingerprint) return false
     }
-    if (contextFingerprint && await fingerprint(identity.context ?? '') !== contextFingerprint) return false
+    if (contextFingerprint && await fingerprint(identity.context ?? '') !== contextFingerprint) {
+      // Earlier variant journals included the Inspector's own selection marker
+      // on the target or one of its ancestors. Require the exact old fingerprint.
+      if (!window.localhostInspectorDock?.matches('#variant-dock')) return false
+      const legacy = await Promise.all(Array.from({ length: 6 }, (_, depth) => fingerprint(dataContext(node, depth))))
+      if (!legacy.includes(contextFingerprint)) return false
+    }
     return isCurrent() && findTarget(edit.target, node) === node && matchesTarget(node, identity, true)
   }
 

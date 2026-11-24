@@ -144,17 +144,16 @@
     textHover.id = 'text-hover-outlines'
     outlineRoot.append(related, textHover, hoverOutline, outline)
     root.append(entry, pendingLauncher, panel)
-    function setOpen(open, floating = false) {
+    function setOpen(open) {
       panel.hidden = !open
       entry.setAttribute('aria-expanded', String(open))
       entry.hidden = open
       host.dispatchEvent(new Event('inspector-visibility'))
-      dock?.toggleAttribute('data-inspector-open', open)
-      if (workspaceToolbar) dock.toggleAttribute('data-inspector-floating', open && floating)
+      if (dock?.firstElementChild === host) dock.toggleAttribute('data-inspector-open', open)
     }
     function mountDock() {
       dock.replaceChildren(host)
-      setOpen(dock.hasAttribute('data-inspector-open'), dock.hasAttribute('data-inspector-floating'))
+      setOpen(dock.hasAttribute('data-inspector-open'))
     }
     if (dock) {
       mountDock()

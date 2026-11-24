@@ -42,6 +42,8 @@
     }
   }
 
+  ui.registeredComponentName = node => registeredDefinition(node)?.name
+
   function occurrenceLabel(node, text) {
     const accessible = node.getAttribute('aria-label') || node.getAttribute('alt')
     if (accessible || text) return compact(accessible || text).slice(0, 120)
@@ -235,7 +237,7 @@
       }
       for (const child of node.children) visit(child)
     }
-    visit(doc.body)
+    ui.withAuditRules(doc, () => visit(doc.body))
     for (const item of entries.values()) {
       const counts = new Map()
       for (const occurrence of item.occurrences) {

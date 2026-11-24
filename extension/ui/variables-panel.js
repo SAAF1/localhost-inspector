@@ -134,7 +134,7 @@
     return row
   }
 
-  ui.createVariablesPanel = ({ onReveal, currentPageId, onCreateTextStyle, onSpacingPreview, onColorPreview, onTextTargets, onDetailChange, onOpenProject, renderLayers } = {}) => {
+  ui.createVariablesPanel = ({ onReveal, currentPageId, onCreateTextStyle, onSpacingPreview, onColorPreview, onTextTargets, onDetailChange, onOpenProject, onInventoryOpen, renderLayers } = {}) => {
     const element = ui.element('section', 'li-variables')
     element.setAttribute('aria-label', 'Variables')
     const styles = ui.element('style', '', ui.variablesStyles)
@@ -316,6 +316,7 @@
           if (file) fileCategory = key
           else projectCategory = key
         }, '.li-var-category')
+        if (category !== 'layers') onInventoryOpen?.()
       }, file ? 'File view' : 'Variable category', 'start'), categories[category]))
       trigger.append(ui.icon('chevronDown'))
       const title = ui.element('h2')
@@ -702,6 +703,7 @@
     render()
     return {
       element, setScope, setWorkspace, clearPreview,
+      get showingLayers() { return file && category === 'layers' },
       setTextSelection(nodes) { textSelection = nodes; markTextSelection?.(nodes) },
       closePopup() { closeMenu(); closePopup() },
       refreshLayers() { if (file && category === 'layers') renderLayers?.(layerMount) },

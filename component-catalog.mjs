@@ -187,7 +187,7 @@ export function componentContracts(source, file, onContract, resolveImport) {
   return result
 }
 
-export async function discoverComponentCatalog(root) {
+export async function discoverComponentCatalog(root, { includeMarkerOnly = false } = {}) {
   const previous = caches.get(root) ?? new Map(), next = new Map(), skippedFiles = []
   const resolveType = createComponentTypeResolver(root)
   async function scan(dir) {
@@ -222,7 +222,7 @@ export async function discoverComponentCatalog(root) {
   const all = [...next.values()].flatMap(file => file.contracts)
   const counts = new Map()
   for (const item of all) for (const marker of item.markers) counts.set(marker, (counts.get(marker) ?? 0) + 1)
-  const definitions = all.filter(item => item.fields.length).map(item => ({
+  const definitions = all.filter(item => item.fields.length || includeMarkerOnly).map(item => ({
     ...item, markers: item.markers.filter(marker => counts.get(marker) === 1),
   })).sort((a, b) => a.source.localeCompare(b.source) || a.name.localeCompare(b.name))
   const revision = createHash('sha256').update(JSON.stringify(definitions.map(({name, source, fields, markers}) => ({ name, source, fields, markers })))).digest('hex')

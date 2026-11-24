@@ -7,10 +7,14 @@ body { margin: 0; }
   color: var(--li-text); background: var(--li-surface); border: 1px solid var(--li-border); border-radius: 12px;
   box-shadow: 0 1px 4px #0002;
 }
-#proposal-view {
-  max-width: 88px; min-height: var(--action-size); border: 0; border-radius: 6px;
-  background: var(--li-field); color: inherit; font: inherit; font-size: 12px; cursor: pointer;
-}
+/* The linked app shares the canvas camera, while its document stays on its own origin. */
+.linked-frame { position: absolute; }
+.frame-caption { position: absolute; inset: auto 0 100%; padding-bottom: 12px; overflow-wrap: anywhere; }
+.frame-caption h2 { margin: 0; font: 500 27px/1.2 system-ui; }
+.frame-caption p { margin: 4px 0 0; font: 400 20px/1.35 system-ui; }
+.linked-frame iframe { display: block; width: 100%; height: 100%; border: 0; background: white; outline: 2px solid #d5d8d1; }
+.linked-frame > button { position: absolute; inset: 0; width: 100%; background: transparent; border: 0; cursor: pointer; }
+.linked-frame > button:focus-visible, .linked-frame:focus-within iframe { outline: 3px solid #2563c9; }
 #workspace-toolbar button { font: inherit; color: inherit; cursor: pointer; }
 #workspace-toolbar > button {
   width: var(--workspace-action-size); height: var(--workspace-action-size); border: 0;
@@ -34,16 +38,11 @@ body { margin: 0; }
 }
 #workspace-toolbar > #inspector-toggle { margin-inline-start: var(--action-gap); }
 body:not([data-expanded]) .desktop-glyph, body[data-expanded] .flow-glyph { display: none; }
-#viewport:has(#localhost-inspector-dock[data-inspector-open]) #workspace-toolbar {
+#viewport:has(#localhost-inspector-dock:is([data-inspector-open], [data-variant-inspection])) #workspace-toolbar {
   top: 0; right: 0; width: min(var(--li-workspace-panel-width, 240px), 100%);
   height: var(--workspace-toolbar-height);
   box-sizing: border-box; border: 0; border-left: 1px solid var(--li-border);
   border-radius: 0; box-shadow: none;
-}
-body[data-expanded] #viewport:has(#localhost-inspector-dock[data-inspector-floating]) #workspace-toolbar {
-  top: var(--action-inset); right: var(--action-inset);
-  width: min(var(--li-workspace-panel-width, 240px), calc(100% - 2 * var(--action-inset)));
-  border-left: 0; border-radius: 12px 12px 0 0; background: transparent;
 }
 #workspace-toolbar > #pending-toggle {
   width: auto; min-width: var(--workspace-action-size); padding-inline: 4px; gap: 4px;
@@ -66,7 +65,7 @@ body[data-expanded] #viewport:has(#localhost-inspector-dock[data-inspector-float
 }
 #viewport:has(#zoom-control:not([hidden])) > #zoom { visibility: hidden; }
 #frame-view-toggle { margin-left: 12px; }
-#viewport:has(#localhost-inspector-dock[data-inspector-open]) #frame-view-toggle { margin-left: auto; }
+#viewport:has(#localhost-inspector-dock:is([data-inspector-open], [data-variant-inspection])) #frame-view-toggle { margin-left: auto; }
 #frame-view-menu {
   position: absolute; top: calc(100% + 5px); right: 6px; z-index: 1;
   width: min(220px, calc(100vw - 24px)); box-sizing: border-box; padding: 8px;
@@ -109,16 +108,22 @@ body[data-expanded] #viewport[data-canvas-background-hidden] {
   grid-column: 2;
   grid-row: 1;
 }
-body[data-expanded] #localhost-inspector-dock[data-inspector-floating] {
-  position: absolute; inset: var(--action-inset) var(--action-inset) var(--action-inset) auto;
-  --li-dock-height: calc(100dvh - 2 * var(--action-inset));
-  --li-dock-max-width: calc(100vw - 2 * var(--action-inset));
-  --li-dock-radius: 12px;
-  --li-dock-border-width: 1px;
-  border-radius: var(--li-dock-radius);
-  box-shadow: 0 2px 8px #0002;
+#localhost-inspector-dock[data-inspector-open]:is([data-opening-frame], [data-attachment-status]) {
+  width: var(--li-workspace-panel-width, var(--li-panel-width)); background: var(--li-surface);
 }
-body[data-expanded] #app-preview { position: absolute; transform-origin: top left; }
+#localhost-inspector-dock:is([data-opening-frame], [data-attachment-status]):not([data-connecting-selection]) > #localhost-inspector { visibility: hidden !important; }
+#localhost-inspector-dock[data-inspector-open]:is([data-opening-frame], [data-attachment-status]):not([data-connecting-selection])::after {
+  content: attr(data-attachment-status); display: block; position: absolute;
+  top: var(--workspace-toolbar-height); left: 0; right: 0; padding: 12px 16px;
+  color: var(--li-muted); font: 12px/1.5 system-ui;
+}
+#localhost-inspector-dock[data-inspector-open][data-opening-frame]:not([data-connecting-selection])::after {
+  content: attr(data-opening-frame); color: var(--li-text); font-weight: 600;
+}
+body[data-expanded] #app-preview { position: absolute; top: 0; left: 0; transform-origin: top left; }
+/* At overview scale the map can span tens of thousands of source pixels.
+   Let the browser rasterize its thumbnails at the displayed size. */
+body[data-expanded] :is(#map[data-detail-scale], #app-preview) { will-change: transform; }
 body[data-expanded] #app-preview[data-frame-selected] { outline: 3px solid #2563c9; }
 .flow-candidate { position: absolute; visibility: hidden; pointer-events: none; border: 0; }
 #map { position: absolute; transform-origin: top left; }
@@ -127,9 +132,12 @@ body[data-expanded] #app-preview[data-frame-selected] { outline: 3px solid #2563
 .flow-frame.single-screen { display:block; }
 .flow-frame img { width: 100%; display: block; border-radius: 5px; outline: 2px solid #d5d8d1; background: white; }
 .flow-frame:where(:hover, :focus-visible, [data-loading], [aria-pressed="true"]) img { outline-color: #2563c9; }
+.flow-frame[data-opening] :is(img, .flow-preview-unavailable) { outline: 2px solid #2563c9; }
 .flow-frame[data-loading] { cursor: progress; }
 .flow-frame.active :is(img, .flow-preview-unavailable) { visibility: hidden; }
 .flow-preview-unavailable { display: grid; place-items: center; box-sizing: border-box; background: #fff; border: 2px solid #d5d8d1; color: #626662; }
+.flow-frame[data-preview-pending] .flow-preview-unavailable { position: absolute; inset: 45px 0 auto; }
+.flow-frame.single-screen[data-preview-pending] .flow-preview-unavailable { top: 0; }
 .flow-preview-unavailable.compact {
   align-content: center; justify-items: start; gap: 8px; padding: 16px 20px;
   border: 2px dashed #d5d8d1; border-radius: 8px; background: #fafaf8;
@@ -149,3 +157,65 @@ body[data-sidebar-open] #viewport { margin-left: var(--workspace-sidebar-width);
   background: var(--li-surface); border: 1px solid var(--li-border); border-radius: 12px; box-shadow: 0 1px 4px #0002;
 }
 #workspace-sidebar[hidden] { display: none; }
+#localhost-inspector-dock[data-variant-inspection] { visibility:hidden; }
+#viewport:has(#variant-properties) #pending-toggle { display:none; }
+#variant-properties {
+  grid-column:2; grid-row:1; position:relative; width:var(--li-workspace-panel-width,var(--li-panel-width));
+  padding:calc(var(--workspace-toolbar-height) + var(--li-gap)) var(--li-inset) var(--li-inset);
+  box-sizing:border-box; background:var(--li-surface); color:var(--li-text); border-left:1px solid var(--li-border);
+  font:400 var(--li-type-size)/var(--li-line-height) var(--li-font); overflow:auto;
+}
+#variant-properties h2 { font-size:inherit; }
+#variant-properties dl { display:grid; grid-template-columns:40% 1fr; gap:var(--li-gap); }
+#variant-properties dt { color:var(--li-muted); }
+#variant-properties dd { margin:0; overflow-wrap:anywhere; }
+
+iframe#variant-properties { display:block; height:100%; padding:0; border:0; }
+
+/* Native page magnification has its own viewport, independent of #map. */
+[data-magnified] #workspace-sidebar {
+  top: var(--visible-top); left: var(--visible-left); bottom: auto; height: var(--chrome-height);
+}
+[data-magnified] #viewport #workspace-toolbar {
+  top: calc(var(--visible-top) + var(--action-inset) * var(--chrome-scale)); right: calc(var(--visible-right) + var(--action-inset) * var(--chrome-scale));
+}
+[data-magnified] #viewport:has(#localhost-inspector-dock:is([data-inspector-open], [data-variant-inspection])) #workspace-toolbar {
+  top: var(--visible-top); right: var(--visible-right);
+}
+[data-magnified] #workspace-toolbar > #inspector-toggle:not([hidden]) {
+  position: absolute; top: 0; left: auto; right: calc(var(--chrome-width) - 40px - 2 * var(--action-inset));
+}
+[data-magnified] :is(#localhost-inspector-dock, #variant-properties) {
+  top: var(--visible-top); right: var(--visible-right); height: var(--chrome-height);
+  --li-dock-height: var(--chrome-height);
+}
+[data-magnified] :is(#zoom, #notice) {
+  position: fixed; bottom: calc(var(--visible-bottom) + 14px * var(--chrome-scale));
+  left: calc(var(--visible-left) + (var(--hud-sidebar-width, 0px) + var(--hud-inset, 14px)) * var(--chrome-scale));
+}
+[data-magnified] body[data-sidebar-open] { --hud-sidebar-width: var(--workspace-sidebar-width); }
+[data-magnified] #notice { --hud-inset: 72px; }
+
+[data-magnified] :is(#workspace-sidebar, #workspace-toolbar, #localhost-inspector-dock, #variant-properties, #zoom, #notice) {
+  scale: var(--chrome-scale); transform-origin: top right;
+}
+[data-magnified] #workspace-sidebar { transform-origin: top left; }
+[data-magnified] :is(#zoom, #notice) { transform-origin: bottom left; }
+
+.variant-section-surface {
+  position: absolute; box-sizing: border-box;
+  border: 2px solid #c5c7c4; border-radius: 14px; background: #e5e6e3;
+}
+.variant-section-surface h2 {
+  position: absolute; bottom: 100%; left: 0; margin: 0 0 12px;
+  font: 600 36px/1.2 system-ui; white-space: nowrap; color: inherit;
+}
+@media (prefers-color-scheme: dark) {
+  .variant-section-surface { background: #323433; border-color: #545753; }
+}
+
+.variant-section-surface h2 button {
+  font: inherit; color: inherit; background: transparent; border: 0; padding: 0; cursor: pointer;
+}
+.variant-section[data-selected] > .variant-section-surface { outline: 2px solid #007be5; }
+.variant-section[data-selected] > .variant-section-surface h2 { color: #007be5; }

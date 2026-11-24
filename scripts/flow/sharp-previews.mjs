@@ -6,7 +6,7 @@ export function restoreStandardPreview(card) {
   if (!card.sharpImage) return
   card.sharpImage.replaceWith(card.image)
   card.sharpImage = null
-  if (card.image.hidden) card.unavailable.hidden = false
+  card.updatePreviewState()
 }
 
 export function createSharpPreviews(cards) {
@@ -32,7 +32,7 @@ export function createSharpPreviews(cards) {
       if (requests.get(card) !== request || card.sharpFile !== file) return
       card.image.replaceWith(image)
       card.sharpImage = image
-      card.unavailable.hidden = true
+      card.updatePreviewState()
     }).catch(() => {
       if (requests.get(card) !== request) return
       failed.set(card, file)
