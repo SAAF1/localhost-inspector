@@ -120,8 +120,7 @@
           open.dataset.editId = remove.dataset.editId = edit.id
           row.toggleAttribute('data-selected', selectedId === edit.id)
           const node = edit.template || edit.route === currentRoute ? locate(edit.id) : null
-          const observed = node?.getAttribute('aria-label') ||
-            (node?.matches('button, a, label, h1, h2, h3') ? node.textContent.trim() : '')
+          const observed = ui.inspectedLabel(node)
           const target = edit.target
           const name = observed?.slice(0, 64) || humanize(target.slot || target.id || ({ div: 'Container', span: 'Text', tr: 'Row', td: 'Cell' }[target.tag] ?? target.tag ?? 'Element'))
           const property = properties[edit.property] ?? humanize(edit.property)

@@ -1,3 +1,4 @@
+import { workspaceInspectorState } from './view-controls.mjs'
 import { createWorkspaceLayers } from './workspace-layers.mjs'
 import { isolateColor } from './color-preview.mjs'
 import { previewSpacing } from './spacing-preview.mjs'
@@ -400,7 +401,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   show('File')
 
   inspectorToggle.addEventListener('click', () => {
-    open = !open
+    open = workspaceInspectorState(dock) !== 'docked'
     if (open) header.append(inspectorToggle)
     else toolbar.insertBefore(inspectorToggle, nextControl)
     host.hidden = !open

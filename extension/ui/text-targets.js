@@ -19,7 +19,7 @@
     const control = root.matches(labelControl)
     function collect(node, style) {
       if (visuallyHidden(node, style)) return []
-      if (control && node !== root && node.matches('svg,img[alt=""]')) return []
+      if (node !== root && (node.matches('svg[aria-hidden="true"],img[alt=""]') || (control && node.matches('svg')))) return []
       if (node.matches(nonText) || (node !== root && node.matches(labelControl + ',' + visualComponent))) return null
       const directText = Array.from(node.childNodes).some(child => child.nodeType === Node.TEXT_NODE && child.textContent.trim())
       const targets = []
@@ -42,12 +42,9 @@
     return collect(root, getComputedStyle(root)) ?? []
   }
 
-  ui.textStyleValue = (style, property) => {
-    const value = style.getPropertyValue(property).trim()
-    if (property === 'text-align') {
-      if (value === 'start') return style.direction === 'rtl' ? 'right' : 'left'
-      if (value === 'end') return style.direction === 'rtl' ? 'left' : 'right'
-    }
-    return value
+  ui.physicalTextAlignment = style => {
+    if (style.textAlign === 'start') return style.direction === 'rtl' ? 'right' : 'left'
+    if (style.textAlign === 'end') return style.direction === 'rtl' ? 'left' : 'right'
+    return style.textAlign
   }
 })()

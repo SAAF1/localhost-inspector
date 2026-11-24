@@ -132,6 +132,7 @@
         return ui.spacingField(context, controls, 'padding-' + name, name === 'horizontal' ? 'Horizontal padding' : 'Vertical padding', icon, {
           properties: ['padding-' + first, 'padding-' + second],
           value: a === b ? a : '', placeholder: a === b ? a : 'Mixed',
+          detachPair: value => context.detachLocalPaddingPair(name, value),
           submitVariable: (value, options) => commitPaddingPair(name, value, options),
           submit: number => commitPaddingPair(name, number + 'px'),
         })

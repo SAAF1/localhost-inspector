@@ -16,7 +16,8 @@
     ]
   }
   function typographyControls(controls, binding, textStyle, targets, catalog) {
-    const alignment = controls.value('text-align')
+    const physical = targets.map(target => ui.physicalTextAlignment(getComputedStyle(target)))
+    const alignment = physical.every(value => value === physical[0]) ? physical[0] : null
     const segments = controls.segments('text-align', 'Text alignment', [
       ['left', 'Align text left', 'textAlignLeft'], ['center', 'Align text center', 'textAlignCenter'], ['right', 'Align text right', 'textAlignRight'],
     ], alignment)
@@ -41,8 +42,8 @@
     const textContext = {
       ...context,
       value: property => {
-        const first = ui.textStyleValue(styles[0], property)
-        return styles.every(style => ui.textStyleValue(style, property) === first) ? first : null
+        const first = styles[0].getPropertyValue(property).trim()
+        return styles.every(style => style.getPropertyValue(property).trim() === first) ? first : null
       },
       commit: (property, requested) => {
         const changes = targets

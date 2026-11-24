@@ -307,3 +307,21 @@ test('horizontal baseline settings keep focus and restore the prior cross-axis a
     assert.deepEqual((await h.journal()).map(edit => edit.requested), ['baseline', 'stretch', 'start'])
   } finally { await h.close() }
 })
+
+test('flex endpoint labels stay readable across browser computed aliases', async () => {
+  const h = await createHarness()
+  try {
+    await h.open()
+    for (const [value, label] of [['flex-start', 'Flex start'], ['flex-end', 'Flex end']]) {
+      await h.app.locator('#target').evaluate((node, value) => { node.style.alignItems = value }, value)
+      await h.select()
+      await h.host.getByRole('button', { name: 'Auto layout settings', exact: true }).click()
+      const cross = h.host.getByRole('button', { name: 'CSS cross-axis alignment' })
+      assert.equal(await cross.innerText(), label)
+      await cross.click()
+      await h.host.getByRole('menuitemradio', { name: label, checked: true }).click()
+      await h.page.keyboard.press('Escape')
+    }
+    assert.deepEqual(await h.journal(), [])
+  } finally { await h.close() }
+})

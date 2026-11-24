@@ -16,7 +16,7 @@
 .flows-toggle svg { width:10px; height:12px; opacity:0; }
 .flows-toggle:hover svg,.flows-toggle:focus-visible svg { opacity:1; }
 .flows-toggle[aria-expanded=true] svg { transform:rotate(90deg); }
-.flow-split { position:relative; height:1px; background:var(--li-border); flex:none; cursor:row-resize; touch-action:none; z-index:1; }
+.flow-split { position:relative; height:1px; background:var(--li-border); flex:none; cursor:row-resize; touch-action:none; z-index:2; }
 .flow-split::before { content:""; position:absolute; inset:-3px 0; }
 .flow-split::after { content:""; position:absolute; left:calc(50% - 12px); top:-1px; width:24px; height:3px; border-radius:2px; background:var(--li-border); }
 .flow-split:focus-visible { outline:2px solid var(--li-active); }

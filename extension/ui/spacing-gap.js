@@ -126,9 +126,16 @@
       if (event.key !== 'Backspace' && event.key !== 'Delete') return
       event.preventDefault()
       const root = event.currentTarget.getRootNode()
-      void run(() => {
+      void run(async () => {
         const style = getComputedStyle(node)
-        return ui.commitChanges(commit, properties.map(side => [side, style.getPropertyValue(side)]))
+        const updates = properties.map(side => [side, style.getPropertyValue(side)])
+        if (settings.detachPair) {
+          if (!canBind() || !properties.every(side => hasBinding(side, name))) {
+            throw Error('The padding variable changed. Select the current padding to detach it.')
+          }
+          if (updates[0][1] === updates[1][1] && await settings.detachPair(updates[0][1])) return
+        }
+        return ui.commitChanges(commit, updates)
       }).then(() => {
         const focus = root.getElementById('control-' + property) ?? root.getElementById('control-padding-toggle')
         focus?.focus({ preventScroll: true })

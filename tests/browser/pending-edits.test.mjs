@@ -11,6 +11,27 @@ const groupedEdits = [
   { ...otherEdit, id: 'padding-bottom', group: 'padding-top', property: 'padding-bottom', requested: '16px' },
 ]
 
+test('Design and Edits use the rendered button label and preserve explicit labels', async () => {
+  const h = await createHarness({ pendingEdits: true })
+  try {
+    const button = h.app.locator('#other')
+    await button.evaluate(node => { node.innerHTML = 'Save<span hidden>Internal helper</span>' })
+    await h.open()
+    await h.select('#other')
+    assert.equal(await h.host.locator('#selected-name').innerText(), 'Save')
+    await h.enter('Corner radius', 12)
+    await h.settled()
+    await h.host.getByRole('tab', { name: 'Edits 1' }).click()
+    assert.equal(await h.host.locator('.li-pending-name').innerText(), 'Save')
+    await button.evaluate(node => node.setAttribute('aria-label', 'Save draft'))
+    await h.host.getByRole('tab', { name: 'Design' }).click()
+    await h.select('#other')
+    assert.equal(await h.host.locator('#selected-name').innerText(), 'Save draft')
+    await h.host.getByRole('tab', { name: 'Edits 1' }).click()
+    assert.equal(await h.host.locator('.li-pending-name').innerText(), 'Save draft')
+  } finally { await h.close() }
+})
+
 test('pending operations stay visible across pages and removing a middle value preserves the final preview', async () => {
   const h = await createHarness({ pendingEdits: true, journal: [otherEdit, ...groupedEdits] })
   try {

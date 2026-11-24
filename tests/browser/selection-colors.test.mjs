@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createHarness } from './harness.mjs'
 
 test('Selection colors edits a descendant SVG paint, preserves the label, and undoes through Edits', async () => {
-  const h = await createHarness({ dock: true })
+  const h = await createHarness({ dock: true, pendingEdits: true })
   try {
     await h.app.evaluate(() => {
       const box = document.createElement('button')
@@ -35,6 +35,8 @@ test('Selection colors edits a descendant SVG paint, preserves the label, and un
     const edit = (await h.journal()).at(-1)
     assert.equal(edit.property, 'stroke')
     assert.equal(edit.intent, 'selected occurrence only')
+    await h.host.getByRole('tab', { name: 'Edits 1', exact: true }).click()
+    assert.equal(await h.host.locator('.li-pending-row').count(), 1)
     await h.previewAction('Undo last preview')
     await h.settled()
     assert.equal(await h.css('stroke', '#mark'), 'rgb(170, 34, 0)')

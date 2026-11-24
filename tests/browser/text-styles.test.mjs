@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { createHarness } from './harness.mjs'
 
 const source = 'src/styles/typography.css'
@@ -351,5 +352,57 @@ test('creation requires one literal text layer and retries a rejected grouped sa
     await submit.click()
     await button(h, 'Text style Reusable Copy').waitFor()
     assert.equal((await h.journal()).length, 5)
+  } finally { await h.close() }
+})
+
+test('fallback-bound text follows source, detaches, and regains its inventory identity on Undo', async () => {
+  const h = await createHarness(setup)
+  try {
+    await h.app.evaluate(() => {
+      const bound = document.createElement('p')
+      bound.id = 'fallback-bound'
+      bound.textContent = 'Fallback bound'
+      for (const [key, fallback] of Object.entries({
+        'font-family': 'var(--missing-family, "Example (UI)", serif)', 'font-size': '13px',
+        'font-weight': 'normal', 'line-height': 'normal', 'letter-spacing': '0',
+      })) bound.style.setProperty(key, 'var(--text-body-' + key + ', ' + fallback + ')')
+      const composite = bound.cloneNode(true)
+      composite.id = 'composite'
+      composite.textContent = 'Composite'
+      composite.style.fontFamily = 'var(--text-body-font-family), var(--missing-family, serif)'
+      const literal = bound.cloneNode(true)
+      literal.id = 'literal'
+      literal.textContent = 'Literal'
+      literal.style.fontSize = '16px'
+      const calculated = bound.cloneNode(true)
+      calculated.id = 'calculated'
+      calculated.textContent = 'Calculated'
+      calculated.style.fontSize = 'calc(var(--text-body-font-size) + 0px)'
+      document.body.append(bound, composite, literal, calculated)
+      const ui = window.LocalhostInspector
+      if (ui.hasTextStyleReference(bound, '--text-body', 'font-size', '14px')) throw Error('Draft fallback mismatch')
+      if (ui.hasTextStyleReference(composite, '--text-body', 'font-family')) throw Error('Composite falsely linked')
+    })
+    await h.app.addScriptTag({ path: fileURLToPath(new URL('../../extension/variables-audit.js', import.meta.url)) })
+    const uses = () => h.app.evaluate(() => window.LocalhostInspector.scanVariablesPage(document, { id: '/' },
+      { textStyleCatalog: { names: ['--text-body'] } }).entries.filter(entry => entry.name === 'Body')
+      .flatMap(entry => entry.occurrences.map(hit => hit.node.id)))
+    await h.open()
+    await h.select('#fallback-bound')
+    await current(h, '--text-body').waitFor()
+    assert.equal(await button(h, 'About this style match').count(), 0)
+    assert.deepEqual(await uses(), ['fallback-bound'])
+    await h.app.evaluate(() => document.documentElement.style.setProperty('--text-body-font-size', '20px'))
+    assert.equal(await h.css('font-size', '#fallback-bound'), '20px')
+    await button(h, 'Detach text style').click()
+    await h.field('Font size').waitFor()
+    assert.equal((await h.journal()).length, 5)
+    assert.deepEqual(await uses(), [])
+    await h.app.evaluate(() => document.documentElement.style.setProperty('--text-body-font-size', '22px'))
+    assert.equal(await h.css('font-size', '#fallback-bound'), '20px')
+    await undo(h)
+    await current(h, '--text-body').waitFor()
+    assert.equal(await h.css('font-size', '#fallback-bound'), '22px')
+    assert.deepEqual(await uses(), ['fallback-bound'])
   } finally { await h.close() }
 })

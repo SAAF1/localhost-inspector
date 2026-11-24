@@ -30,6 +30,8 @@
     if (text !== undefined) element.textContent = text
     return element
   }
+  ui.inspectedLabel = node => node?.getAttribute('aria-label') ||
+    (node?.matches('a, button, label, h1, h2, h3, h4, h5, h6') ? (node.innerText ?? node.textContent).trim() : '')
   ui.sidebarDisclosure = (label, className, open = false) => {
     const group = ui.element('details', 'li-sidebar-disclosure ' + className)
     group.open = open

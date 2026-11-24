@@ -16,6 +16,8 @@
   ])
   const usesBaseline = value => ['baseline', 'first baseline', 'last baseline'].includes(value)
   function crossValue(value) {
+    if (value === 'flow-start') return 'flex-start'
+    if (value === 'flow-end') return 'flex-end'
     if (value === 'normal') return 'stretch'
     if (value === 'first baseline') return 'baseline'
     return value

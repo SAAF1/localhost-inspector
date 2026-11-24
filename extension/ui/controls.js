@@ -47,9 +47,17 @@
       }
       input.oninput = event => clearValidation(event.currentTarget)
       input.onkeydown = event => {
-        if (event.key !== 'Enter' || event.currentTarget.readOnly) return
-        event.preventDefault()
         const field = event.currentTarget
+        if (field.readOnly || event.isComposing) return
+        if (event.key === 'Escape' && (field.value !== field.defaultValue || field.hasAttribute('aria-invalid'))) {
+          event.preventDefault()
+          event.stopPropagation()
+          field.value = field.defaultValue
+          clearValidation(field)
+          return
+        }
+        if (event.key !== 'Enter') return
+        event.preventDefault()
         const panel = field.closest('.li-panel')
         field.blur()
         if (field.getAttribute('aria-invalid') === 'true') field.focus({ preventScroll: true })

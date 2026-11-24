@@ -425,7 +425,7 @@
     if (groupCount) name.textContent = groupCount + (selection.group.every(item => ui.textTargets(item).length) ? ' text layers' : ' layers')
     get('parent').parentElement.parentElement.toggleAttribute('data-no-selection', !hasSelection && !groupCount)
     if (hasSelection) {
-      const label = node.getAttribute('aria-label') || (node.matches('a, button, h1, h2, h3, label') && node.textContent.trim()) ||
+      const label = ui.inspectedLabel(node) ||
         node.getAttribute('data-slot') || ({ div: 'Container', span: 'Text', tr: 'Row', td: 'Cell' }[node.localName] ?? node.localName)
       name.textContent = label.charAt(0).toUpperCase() + label.slice(1)
     }
@@ -460,6 +460,7 @@
           persist: records => write({ type: 'saveSelectionPaint', records }, path, version),
           remember: (record, entry) => { temporary.delete(entry); recovery.remember(record, entry) },
         })
+        if (isCurrentRoute(path, version)) reportRecovery()
       },
     }
     if (!hasSelection) {
@@ -487,6 +488,14 @@
         },
         hasPaddingPreview: recovery.hasVerticalPaddingPreview(node),
         commitPaddingPair: (axis, requested, options) => commitPaddingPair(node, version, axis, axis === 'vertical' ? verticalPadding : paddingScope(node, axis), requested, options),
+        detachLocalPaddingPair: async (axis, value) => {
+          // Older helpers and shared/template sides keep their existing per-property scope.
+          if (!templatePaddingPreviews || ui.templatePreview.of(node)) return false
+          const scope = paddingScope(node, axis)
+          if (scope.members.length || scope.blocked) return false
+          await commitPaddingPair(node, version, axis, scope, value)
+          return true
+        },
         pendingColorFor: target => recovery.pendingColorFor(target),
         textStyleCatalog, textStyleUnavailable, fontFamilies, refreshTypography: renderFields,
         pendingTextStyles: recovery.pendingTextStyles(),

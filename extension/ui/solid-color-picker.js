@@ -108,11 +108,15 @@
       opacity.style.setProperty('--li-picked-rgb', rgb(angle, saturation, brightness).join(' '))
       input.value = ui.colorText(currentValue)
     }
-    function reset(value) {
-      acceptedValue = currentValue = value
+    function showValue(value) {
+      currentValue = value
       const [red, green, blue, alpha] = rgba(value)
       state = { ...hsv(red, green, blue), alpha: alpha / 255 }
       display()
+    }
+    function reset(value) {
+      acceptedValue = value
+      showValue(value)
     }
     function updateValue() {
       const { hue: angle, saturation, brightness, alpha } = state
@@ -150,8 +154,14 @@
       updateValue()
     }
     plane.onpointerdown = event => {
-      if (event.button !== 0 || pending) return
-      pointer = { id: event.pointerId, value: currentValue }
+      if (event.button !== 0 || pending || pointer) return
+      // Text and plane edit the same draft. Transfer focus before drawing the
+      // first point so blur cannot save an intermediate plane coordinate.
+      const draft = input.matches(':focus') && input.value !== ui.colorText(currentValue) ? input.value : null
+      pointer = { id: event.pointerId, draft }
+      plane.focus({ preventScroll: true })
+      const color = draft && ui.normalizeSolidColor(ui.colorValue(draft.trim()))
+      if (color) showValue(color)
       plane.setPointerCapture(event.pointerId)
       move(event)
     }
@@ -161,9 +171,15 @@
       pointer = null
       void commit()
     }
-    plane.onlostpointercapture = () => {
-      if (pointer) reset(pointer.value)
+    plane.onpointercancel = plane.onlostpointercapture = event => {
+      if (pointer?.id !== event.pointerId) return
+      const { draft } = pointer
       pointer = null
+      reset(acceptedValue)
+      if (draft !== null) {
+        input.value = draft
+        void commit(draft)
+      }
     }
     plane.onkeydown = event => {
       const axes = { ArrowLeft: ['saturation', -1], ArrowRight: ['saturation', 1], ArrowUp: ['brightness', 1], ArrowDown: ['brightness', -1] }
@@ -178,7 +194,7 @@
     hue.oninput = () => { if (pending) { display(); return } state.hue = Number(hue.value); updateValue() }
     opacity.oninput = () => { if (pending) { display(); return } state.alpha = Number(opacity.value) / 100; updateValue() }
     hue.onchange = opacity.onchange = () => { void commit() }
-    input.onchange = () => { void commit(input.value) }
+    input.onchange = () => { if (!pointer) void commit(input.value) }
     input.onkeydown = event => {
       if (event.key !== 'Enter' || event.isComposing) return
       event.preventDefault()

@@ -1,5 +1,11 @@
 const checkPath = 'm2 5.5 3 3L10 3'
 
+export function workspaceInspectorState(dock) {
+  if (!dock.hasAttribute('data-inspector-open')) return 'closed'
+  if (dock.hasAttribute('data-inspector-floating') && document.body.hasAttribute('data-expanded')) return 'floating'
+  return 'docked'
+}
+
 export function connectViewControls({ apply, read, presets }) {
   const toolbar = document.querySelector('#workspace-toolbar')
   const dock = document.querySelector('#localhost-inspector-dock')
@@ -12,7 +18,8 @@ export function connectViewControls({ apply, read, presets }) {
   function syncInspector() {
     inspector.hidden = !dock.firstElementChild
     inspector.disabled = dock.inert
-    const open = dock.hasAttribute('data-inspector-open')
+    const state = workspaceInspectorState(dock)
+    const open = state !== 'closed'
     const host = dock.firstElementChild
     const count = Number(host?.dataset.pendingCount) || 0
     pending.hidden = open || !count || dock.inert
@@ -21,8 +28,7 @@ export function connectViewControls({ apply, read, presets }) {
     pending.setAttribute('aria-expanded', String(Boolean(host?.hasAttribute('data-pending-open'))))
     zoom.hidden = !open || dock.inert || !document.body.hasAttribute('data-expanded')
     inspector.setAttribute('aria-expanded', String(open))
-    const floating = dock.hasAttribute('data-inspector-floating') && document.body.hasAttribute('data-expanded')
-    inspector.setAttribute('aria-label', floating ? 'Dock Inspector' : open ? 'Collapse Inspector' : 'Open Inspector')
+    inspector.setAttribute('aria-label', { closed: 'Open Inspector', floating: 'Dock Inspector', docked: 'Collapse Inspector' }[state])
     if (open) document.documentElement.style.setProperty('--li-workspace-panel-width', dock.offsetWidth + 'px')
   }
   const inspectorObserver = new MutationObserver(syncInspector)

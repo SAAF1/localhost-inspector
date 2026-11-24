@@ -31,6 +31,22 @@
   ui.textStyleReference = (name, property, fallback) =>
     'var(' + name + '-' + property + (fallback === undefined ? '' : ', ' + fallback) + ')'
 
+  ui.hasTextStyleReference = (node, name, property, draftFallback) => {
+    const declaration = ui.authoredProperty(node, property)
+    if (declaration === ui.textStyleReference(name, property, draftFallback)) return true
+    if (draftFallback !== undefined || !declaration) return false
+    const token = name + '-' + property
+    if (/^var\(\s*(--[\w-]+)\s*[,)]/i.exec(declaration)?.[1] !== token ||
+        !globalThis.CSSStyleValue?.parse || !globalThis.CSSUnparsedValue) return false
+    // Typed OM tokenizes nested fallbacks and preserves any text outside the var().
+    try {
+      const parts = CSSStyleValue.parse(property, declaration)
+      return parts instanceof CSSUnparsedValue && parts.length === 1 && parts[0].variable === token
+    } catch {
+      return false
+    }
+  }
+
   ui.captureTextStyle = node => {
     if (!node?.isConnected || !ui.supportsTextStyle(node)) return null
     const computed = getComputedStyle(node)
@@ -85,7 +101,7 @@
   ui.textStyleName = (node, catalog) => {
     if (!catalog) return null
     const name = catalog.names.find(name => properties.every(property =>
-      ui.authoredProperty(node, property) === ui.textStyleReference(name, property),
+      ui.hasTextStyleReference(node, name, property),
     ))
     const values = name && ui.textStyleValues(node, name)
     const computed = values && getComputedStyle(node)

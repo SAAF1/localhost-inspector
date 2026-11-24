@@ -181,7 +181,7 @@
             match = definitions.find(definition => {
               const expected = definition.pending ? definition.values : ui.textStyleValues(node, definition.name)
               return expected && cssKeys.every(key => ui.textStyleMatches(values[key], expected[key]) &&
-                ui.authoredProperty(node, key) === ui.textStyleReference(definition.name, key, definition.pending ? expected[key] : undefined))
+                ui.hasTextStyleReference(node, definition.name, key, definition.pending ? expected[key] : undefined))
             })
           }
           add(entry('typography', match?.name, match?.label, recipe), 'typography')

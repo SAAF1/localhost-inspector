@@ -201,3 +201,70 @@ test('retrying a rejected compact padding variable saves both sides in one opera
     assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })
+
+test('compact local detach freezes only the current pair and a single Undo restores both bindings', async () => {
+  const h = await createHarness({ appStyles, spacingCatalog })
+  try {
+    await h.app.evaluate(() => {
+      const neighbor = document.createElement('div')
+      neighbor.id = 'padding-neighbor'
+      neighbor.style.padding = '6px 7px'
+      document.body.append(neighbor)
+    })
+    await h.open()
+    await h.select()
+    for (const [label, sides] of [['Horizontal', ['left', 'right']], ['Vertical', ['top', 'bottom']]]) {
+      const pair = sides.map(side => 'padding-' + side)
+      await h.app.evaluate(() => { document.documentElement.dataset.theme = '' })
+      await h.field(label + ' padding').press('=')
+      await choose(h, 'space-small')
+      await h.settled()
+      await h.app.evaluate(() => { document.documentElement.dataset.theme = 'dark' })
+      await h.host.getByRole('button', { name: '10, ' + label + ' padding variable space-small' }).press('Backspace')
+      await h.settled()
+      const inline = () => target(h).evaluate((el, pair) => pair.map(side => el.style.getPropertyValue(side)), pair)
+      assert.deepEqual(await inline(), ['10px', '10px'])
+      const records = (await h.journal()).slice(-2)
+      assert.ok(records[0].group)
+      assert.equal(records[1].group, records[0].group)
+      assert.deepEqual(records.map(record => record.property), pair)
+      await h.previewAction('Undo last preview')
+      await h.settled()
+      assert.deepEqual(await inline(), ['var(--space-small)', 'var(--space-small)'])
+      assert.equal(await h.css('padding', '#padding-neighbor'), '6px 7px')
+      await h.previewAction('Undo last preview')
+      await h.settled()
+      assert.deepEqual(await h.journal(), [])
+    }
+  } finally { await h.close() }
+})
+
+test('compact detach preserves individual scope on explicit shared rows and on older helpers', async () => {
+  for (const legacyPreviewHelper of [false, true]) {
+    const h = await createHarness({ appStyles, spacingCatalog, legacyPreviewHelper })
+    try {
+      await h.app.evaluate(legacy => {
+        for (const id of ['original-row', 'other-row']) {
+          const node = document.createElement('div')
+          node.id = id
+          node.textContent = id
+          node.setAttribute('role', 'row')
+          node.dataset.inspectorTarget = id
+          if (!legacy) node.dataset.inspectorSharedVerticalPadding = 'list'
+          node.style.paddingTop = node.style.paddingBottom = 'var(--space-small)'
+          document.body.prepend(node)
+        }
+      }, legacyPreviewHelper)
+      await h.open()
+      await h.select('#original-row')
+      await h.host.getByRole('button', { name: '8, Vertical padding variable space-small' }).press('Backspace')
+      await h.settled()
+      assert.equal(await h.app.locator('#original-row').evaluate(el => el.style.paddingTop), '8px')
+      assert.deepEqual(await h.app.locator('#other-row').evaluate(el => [el.style.paddingTop, el.style.paddingBottom]),
+        ['var(--space-small)', 'var(--space-small)'])
+      const records = await h.journal()
+      assert.deepEqual(records.map(entry => entry.target.id), ['original-row', 'original-row'])
+      assert.ok(records.every(entry => !entry.group))
+    } finally { await h.close() }
+  }
+})

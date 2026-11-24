@@ -7,6 +7,7 @@ async function addTextFixtures(h) {
     const host = document.createElement('div')
     host.innerHTML = `
       <div id="text-group" style="padding:8px;color:#222">
+        <svg aria-hidden="true" width="12" height="12"></svg>
         <h2 id="headline" style="font-size:24px;font-weight:700;line-height:30px;text-align:left">Tasks</h2>
         <p id="description" style="font-size:16px;font-weight:400;line-height:20px;text-align:right">Here is your list</p>
         <span style="position:absolute;width:1px;height:1px;clip:rect(0,0,0,0);font-size:8px;color:red">Screen reader helper</span>
@@ -124,5 +125,27 @@ test('a delayed save retains mounted sections, scroll, and focus while guarding 
     assert.deepEqual(actual, { scroll: baseline, sameSection: true, sameInput: true, focus: true, editable: true })
     assert.deepEqual((await h.journal()).map(edit => edit.property), ['gap'])
     assert.equal(await h.css('gap'), '12px')
+  } finally { await h.close() }
+})
+
+test('logical text alignment keeps its own checked value and resolves physical segments per direction', async () => {
+  const h = await createHarness()
+  try {
+    await h.open()
+    for (const direction of ['ltr', 'rtl']) {
+      for (const value of ['start', 'end']) {
+        await h.app.locator('#second-label').evaluate((node, [direction, value]) => {
+          node.style.direction = direction
+          node.style.textAlign = value
+        }, [direction, value])
+        await h.select('#second-label')
+        const physical = (value === 'start') === (direction === 'ltr') ? 'left' : 'right'
+        assert.equal(await h.host.getByRole('button', { name: 'Align text ' + physical }).getAttribute('aria-pressed'), 'true')
+        await h.host.getByRole('button', { name: 'More text alignment options' }).click()
+        assert.equal(await h.host.getByRole('menuitemradio', { name: value, exact: true }).getAttribute('aria-checked'), 'true')
+        await h.page.keyboard.press('Escape')
+      }
+    }
+    assert.deepEqual(await h.journal(), [])
   } finally { await h.close() }
 })
