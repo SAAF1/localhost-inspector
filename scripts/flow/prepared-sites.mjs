@@ -46,6 +46,34 @@ export function preparedOpenings(tree) {
   return openings
 }
 
+// Qualify the entire site before registering CSS or changing even one source span.
+function styleTargets(site, node, code) {
+  const targets = []
+  for (const style of site.styles ?? (site.style ? [site.style] : [])) {
+    const { attribute, property, literal } = style
+    const value = node.attributes.find((a) => a.name?.name === attribute)?.value
+    if (!styleProperties.has(property) || !value || typeof literal !== 'string' || !literal) return
+    if (style.utility || style.css) {
+      if (
+        attribute !== 'className' ||
+        value.type !== 'StringLiteral' ||
+        !value.value.split(/[\t\n\f\r ]+/).includes(literal)
+      )
+        return
+      targets.push({ style })
+    } else {
+      const expression = code.slice(value.start, value.end)
+      const index = expression.indexOf(literal)
+      if (index < 0 || expression.indexOf(literal, index + 1) >= 0) return
+      const start = value.start + index,
+        end = start + literal.length
+      if (targets.some((t) => t.start < end && start < t.end)) return
+      targets.push({ style, start, end })
+    }
+  }
+  return targets
+}
+
 export function preparedSites(root, manifest) {
   if (!manifest) return
   root = realpathSync(root)
@@ -204,12 +232,12 @@ export function preparedSites(root, manifest) {
         const dependencies = new Map()
         let usesInput = false
         for (const [index, site] of recipes.entries()) {
-          if (!/^[a-z][a-z0-9-]{0,63}$/.test(site.id) || sites.filter((s) => s.id === site.id).length !== 1)
-            throw Error('Invalid prepared site identity')
+          if (typeof site.id !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(site.id)) continue
+          revisions[site.id] = null
+          if (sites.filter((s) => s.id === site.id).length !== 1) continue
           const matches = openings.filter(
             ({ node, owner }) => owner.id.name === site.owner && code.slice(node.start, node.end) === site.opening,
           )
-          revisions[site.id] = null
           if (matches.length !== 1) continue
           const adapter = manifestData.buttonAdapter
           if (
@@ -223,6 +251,26 @@ export function preparedSites(root, manifest) {
           )
             continue
           const { node, children, owner } = matches[0]
+          const attr = (name) => node.attributes.find((a) => a.name?.name === name)
+          const targets = styleTargets(site, node, code)
+          if (!targets) continue
+          if (site.input) {
+            const { options, base, attribute, child, choices, verify } = site.input
+            if (
+              owner.type !== 'FunctionDeclaration' ||
+              (!attr(attribute)?.value && !child) ||
+              !Array.isArray(options) ||
+              !options.includes(base) ||
+              !options.every(
+                (key) =>
+                  typeof key === 'string' &&
+                  /^[\w-]{1,60}$/.test(key) &&
+                  (verify?.[key]?.self || verify?.[key]?.child) &&
+                  (!(choices || child) || /^[A-Z][\w]*$/.test(choices?.[key] ?? '')),
+              )
+            )
+              continue
+          }
           let slotTag
           if (site.input?.child) {
             const slots = children.filter(
@@ -243,32 +291,29 @@ export function preparedSites(root, manifest) {
             if (statement.type === 'ImportDeclaration' || site.symbols?.includes(name))
               hash.update(code.slice(statement.start, statement.end))
           }
+          let missingDependency = false
           for (const path of site.dependencies ?? []) {
             if (!dependencies.has(path)) {
               this.addWatchFile(join(root, path))
-              dependencies.set(path, readFileSync(join(root, path)))
+              try {
+                dependencies.set(path, readFileSync(join(root, path)))
+              } catch (error) {
+                if (error.code !== 'ENOENT') throw error
+                missingDependency = true
+                break
+              }
             }
             hash.update(dependencies.get(path))
           }
+          if (missingDependency) continue
           const revision = hash.digest('hex')
           revisions[site.id] = revision
           const prefix = '--li-' + revision.slice(0, 20)
           const fields = {}
-          const attr = (name) => node.attributes.find((a) => a.name?.name === name)
           let markers = ''
-          for (const style of site.styles ?? (site.style ? [site.style] : [])) {
-            const { property, literal, attribute, unit = '', utility } = style
+          for (const { style, start, end } of targets) {
+            const { property, literal, unit = '', utility } = style
             const variable = site.styles ? prefix + '-' + property : prefix
-            if (!styleProperties.has(property)) throw Error('Unsupported prepared style recipe')
-            const value = attr(attribute)?.value
-            if (!value) throw Error('Missing prepared style expression')
-            const expression = code.slice(value.start, value.end)
-            const start =
-              utility || style.css
-                ? ([...expression.matchAll(/[^\s'"]+/g)].find((m) => m[0] === literal)?.index ?? -1)
-                : expression.indexOf(literal)
-            if (start < 0 || (!utility && expression.indexOf(literal, start + literal.length) >= 0))
-              throw Error('Ambiguous prepared style expression')
             // Preserve dynamic inline/sx ownership. The variable is consumed at
             // the original declaration, so hover and media rules still compete normally.
             if (utility || style.css) {
@@ -289,30 +334,21 @@ export function preparedSites(root, manifest) {
               ;(fields.cssReady ??= {})[property] = marker
             } else {
               const fallback = '"var(' + variable + ', " + (' + literal + ') + ' + JSON.stringify(unit + ')')
-              out.overwrite(value.start + start, value.start + start + literal.length, '(' + fallback + ')')
+              out.overwrite(start, end, '(' + fallback + ')')
             }
             if (site.styles) (fields.styles ??= []).push(property)
             else fields.style = property
           }
           if (site.input) {
-            if (owner.type !== 'FunctionDeclaration') throw Error('A prepared input needs a React component owner')
             const { field, options, base, attribute, choices } = site.input
             const value = attr(attribute)?.value
             const child = site.input.child
-            if (
-              (!value && !child) ||
-              !options.includes(base) ||
-              !options.every((s) => typeof s === 'string' && /^[\w-]{1,60}$/.test(s))
-            )
-              throw Error('Invalid prepared input')
             const state = '__liInput' + index
             out.appendLeft(
               owner.body.directives?.at(-1)?.end ?? owner.body.start + 1,
               '\nconst ' + state + ' = __liUse(' + JSON.stringify(revision) + ');\n',
             )
             if (child) {
-              if (!options.every((key) => /^[A-Z][\w]*$/.test(choices?.[key])))
-                throw Error('Expected registered JSX components')
               const slot = '__LiSlot' + index
               out.appendLeft(
                 owner.body.start + 1,
@@ -334,8 +370,6 @@ export function preparedSites(root, manifest) {
                   : code.slice(value.start, value.end)
               let override = state
               if (choices) {
-                if (!options.every((key) => /^[A-Z][\w]*$/.test(choices[key])))
-                  throw Error('Expected registered JSX components')
                 override =
                   '({' +
                   options.map((key) => JSON.stringify(key) + ': <' + choices[key] + ' />').join(',') +
@@ -350,8 +384,6 @@ export function preparedSites(root, manifest) {
               )
             }
             markers += ' data-li-choice={' + state + ' ?? ' + JSON.stringify(base) + '}'
-            if (!options.every((key) => site.input.verify?.[key]?.self || site.input.verify?.[key]?.child))
-              throw Error('Expected a rendered option check')
             fields.input = { field, options, base, verify: site.input.verify }
             usesInput = true
           }

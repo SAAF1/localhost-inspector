@@ -22,7 +22,7 @@ await write(
 await write('index.html', '<main></main><script type="module" src="/src/main.jsx"></script>')
 await write(
   'src/main.jsx',
-  `import React from 'react';import {createRoot} from 'react-dom/client';import '@css/entry.css';function Home(){return <div className="example">hello</div>}createRoot(document.querySelector('main')).render(<Home/>);window.show=()=>import('./lazy.jsx');`,
+  `import React from 'react';import {createRoot} from 'react-dom/client';import '@css/entry.css';function Home(){return <><div className="example example-large">hello</div><div id="ambiguous" style={{width:35,gap:12,padding:12}}>unqualified neighbor</div></>}createRoot(document.querySelector('main')).render(<Home/>);window.show=()=>import('./lazy.jsx');`,
 )
 await write(
   'src/lazy.jsx',
@@ -47,6 +47,42 @@ try {
     assert.ok(result.stylesheetGraph.sheets.find((s) => s.file === 'src/lazy.css').lazy)
     assert.ok(!JSON.stringify(result.sites).includes('dead.css'))
     assert.deepEqual(result.spacingSources, [{ file: 'src/' + name + '.css', names: ['--space-x'] }])
+    // A legacy inline recipe cannot distinguish these two occurrences. Keep the
+    // entire site untouched even when an earlier recipe on it would qualify.
+    result.sites.push({
+      id: 'ambiguous',
+      file: 'src/main.jsx',
+      owner: 'Home',
+      opening: '<div id="ambiguous" style={{width:35,gap:12,padding:12}}>',
+      styles: [
+        { property: 'width', attribute: 'style', literal: '35', unit: 'px' },
+        { property: 'gap', attribute: 'style', literal: '12', unit: 'px' },
+      ],
+    })
+    await writeFile(manifest, JSON.stringify(result))
+    const observed = (page) =>
+      page
+        .locator('main > div')
+        .evaluateAll((ns) =>
+          ns.map((n) => [
+            n.className,
+            n.textContent,
+            getComputedStyle(n).gap,
+            getComputedStyle(n).padding,
+            getComputedStyle(n).width,
+          ]),
+        )
+    const ordinary = await host(app, map, manifest, await port(), true)
+    let baseline
+    try {
+      const native = await browser.newPage()
+      await native.goto(ordinary.origin)
+      await native.locator('#ambiguous').waitFor()
+      baseline = await observed(native)
+      await native.close()
+    } finally {
+      await ordinary.close()
+    }
     const server = await host(app, map, manifest, await port())
     const p = await browser.newPage()
     try {
@@ -55,6 +91,12 @@ try {
         if (m.type() === 'error') console.error(m.text())
       })
       await p.goto(server.origin)
+      const response = await p.request.get(server.origin + '/src/main.jsx')
+      assert.equal(response.status(), 200, (await response.text()).slice(0, 600))
+      await p.locator('#ambiguous').waitFor()
+      assert.deepEqual(await observed(p), baseline)
+      assert.equal(await p.locator('#ambiguous').getAttribute('data-li-contract'), null)
+      assert.ok(await p.locator('.example').getAttribute('data-li-contract'))
       const check = (selector, key) =>
         p.locator(selector).evaluate((n, k) => getComputedStyle(n).getPropertyValue(k).trim(), key)
       assert.equal(await check('.example', 'gap'), '13px')
