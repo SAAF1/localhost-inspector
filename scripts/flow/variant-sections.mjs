@@ -1,5 +1,4 @@
-// Keep frames in their section from first mount. Moving a live iframe between
-// DOM parents would reload its app and discard the user's current interaction.
+// Reuse section surfaces and mounted frames when authoring updates arrive.
 export function mountVariantSections(map, definitions, framesById, mount, selectSection) {
   const groups = new Map()
   for (const item of definitions) {
@@ -16,27 +15,33 @@ export function mountVariantSections(map, definitions, framesById, mount, select
       mount(map, items[0])
       continue
     }
-    const section = document.createElement('section')
-    section.className = 'variant-section'
-    section.setAttribute('aria-label', name)
-    section.dataset.sectionKey = 'section:' + key
-    section.dataset.anchor = items[0].anchor
-    const surface = document.createElement('div')
-    surface.className = 'variant-section-surface'
-    const heading = document.createElement('h2')
-    const title = document.createElement('button')
-    title.type = 'button'
-    title.textContent = name
-    title.setAttribute('aria-pressed', 'false')
-    heading.append(title)
-    surface.addEventListener('click', () => selectSection?.(section.dataset.sectionKey))
-    surface.append(heading)
-    section.append(surface)
-    map.append(section)
+    let section = map.querySelector('[data-section-key=' + CSS.escape('section:' + key) + ']')
+    if (!section) {
+      section = document.createElement('section')
+      section.className = 'variant-section'
+      section.setAttribute('aria-label', name)
+      section.dataset.sectionKey = 'section:' + key
+      section.dataset.anchor = items[0].anchor
+      const surface = document.createElement('div')
+      surface.className = 'variant-section-surface'
+      const heading = document.createElement('h2')
+      const title = document.createElement('button')
+      title.type = 'button'
+      title.textContent = name
+      title.setAttribute('aria-pressed', 'false')
+      heading.append(title)
+      surface.addEventListener('click', () => selectSection?.(section.dataset.sectionKey))
+      surface.append(heading)
+      section.append(surface)
+      map.append(section)
+    }
+    const surface = section.firstElementChild
     const frames = items.map(item => mount(section, item)).filter(Boolean)
     if (frames.length) sections.push({ surface, frames })
     else section.remove()
   }
+  const retained = new Set(sections.map(({ surface }) => surface.parentElement))
+  for (const section of map.querySelectorAll('.variant-section')) if (!retained.has(section)) section.remove()
   return () => {
     for (const { surface, frames } of sections) {
       const first = frames[0].bounds, last = frames.at(-1).bounds

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Inspector Variant Feedback"
+  short_description: "Record design feedback on Inspector canvas variants"
+  default_prompt: "Use $inspector-variant-feedback to record my response to these canvas variants."

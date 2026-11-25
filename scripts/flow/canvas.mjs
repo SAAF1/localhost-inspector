@@ -5,6 +5,8 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { canvasActivity, recordResponse } from './canvas-activity.mjs'
+
 const marker = 'canvas-project.json'
 const captureFile = /^(map\.json|audit\.json|previews\.json|frame-\d+(?:\.png|-(desktop|tablet|phone)(-hug)?(-2x)?\.webp))$/
 const validId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
@@ -118,6 +120,20 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     const { authoringGuidance } = await import('./authoring-guidance.mjs')
     console.log(JSON.stringify({ ...await lookupComponents(...args), authoringGuidance }, null, 2))
   }
+  else if ((command === 'activity' && args.length === 1) || (command === 'respond' && args.length >= 2)) {
+    const [path, ...ids] = args
+    const directory = await canvasProject(path) ? path : await linkedCanvas(path) ?? path
+    if (!(await stat(join(directory, 'map.json')).catch(missing))?.isFile())
+      throw Error('Supply a canvas directory or an app bound to a canvas.')
+    const map = await json(join(directory, 'map.json'))
+    const variants = new Map((map.variants ?? []).map(item => [item.id, item]))
+    if (await canvasProject(directory)) {
+      for (const frame of await canvasVariants(directory)) variants.set(frame.id, frame)
+    }
+    const items = [...variants.values()]
+    if (command === 'respond') recordResponse(directory, canvasActivity(directory, items), ids)
+    console.log(JSON.stringify(canvasActivity(directory, items), null, 2))
+  }
   else if ((command === 'export' && (args.length === 3 || args.length === 4)) || (command === 'import' && args.length === 2)) {
     execFileSync('python3', [fileURLToPath(new URL('./canvas-archive.py', import.meta.url)), command, ...args], { stdio: 'inherit' })
   }
@@ -135,5 +151,5 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     if (args.length !== 6 && args.length !== 7) throw Error('Expected ID, anchor, label, preview and route')
     await add(...args.slice(0, 6), args[6], options.get('--section'), options.get('--note'))
   }
-  else throw Error('Usage: canvas.mjs components PROJECT (--used-in SOURCE_FILE | --find COMPONENT_NAME) | export CANVAS ZIP BUILT_ORIGINAL [PORTABLE_INSPECTOR_STATE_JSON] | import ZIP NEW_CANVAS | init CANVAS MAP [APP_DIRECTORY] | bind CANVAS APP_DIRECTORY | attach-source CANVAS ID EDITABLE_SOURCE | add CANVAS ID ANCHOR LABEL BUILT_PREVIEW ROUTE [EDITABLE_SOURCE] [--section NAME] [--note TEXT]')
+  else throw Error('Usage: canvas.mjs activity CANVAS_OR_APP | respond CANVAS_OR_APP ID [ID ...] | components PROJECT (--used-in SOURCE_FILE | --find COMPONENT_NAME) | export CANVAS ZIP BUILT_ORIGINAL [PORTABLE_INSPECTOR_STATE_JSON] | import ZIP NEW_CANVAS | init CANVAS MAP [APP_DIRECTORY] | bind CANVAS APP_DIRECTORY | attach-source CANVAS ID EDITABLE_SOURCE | add CANVAS ID ANCHOR LABEL BUILT_PREVIEW ROUTE [EDITABLE_SOURCE] [--section NAME] [--note TEXT]')
 }

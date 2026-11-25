@@ -6,7 +6,7 @@ import { layerDetails } from './workspace-layer-details.mjs'
 // Inspector surfaces are siblings of the inspected app and never become layers.
 const ignored = 'script,style,template,noscript,#localhost-inspector,#localhost-inspector-outlines,#localhost-inspector-dock,#localhost-inspector-spacing-preview,#localhost-inspector-text-editor'
 
-export function createWorkspaceLayers({ getDocument, selectNode, componentFor, getOutline, onOpenOutline, onFlowPopover }) {
+export function createWorkspaceLayers({ getDocument, selectNode, componentFor, getOutline, onOpenOutline, onFlowPopover, warmNavigation }) {
   const ui = window.LocalhostInspector
   let mount
   let source
@@ -18,7 +18,7 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
   let currentTree
   let ancestryExpanded = new WeakSet()
   let previewBranches = []
-  const flowNavigation = createLayerFlows({ ui, onFlowPopover, onOpenOutline,
+  const flowNavigation = createLayerFlows({ ui, onFlowPopover, onOpenOutline, warmNavigation,
     revealBranches(keys, commit) {
       const folded = keys.filter(key => outlineDisclosure.get(key) === false)
       if (commit) for (const key of folded) outlineDisclosure.set(key, true)

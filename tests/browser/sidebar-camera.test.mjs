@@ -48,7 +48,7 @@ test('sidebar navigation centers frames, sections and elements between both open
     if (await original.getAttribute('aria-expanded') === 'false') await original.press('ArrowRight')
     await tree.getByRole('treeitem', { name: 'Inspect this item', exact: true }).press('Enter')
     await centered(h.page.frameLocator('#app-preview').locator('#off-center'))
-    await h.page.locator('#workspace-sidebar').getByRole('button', { name: 'Fixture', exact: true }).click()
+    await original.press('Enter')
     await centered(h.page.locator('#app-preview'))
     await tree.getByRole('treeitem', { name: 'Draft', exact: true }).press('Enter')
     await h.page.locator('#variant-properties').waitFor()

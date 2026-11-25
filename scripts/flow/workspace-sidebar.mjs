@@ -1,4 +1,5 @@
 import { flowRoute } from './page-state.mjs'
+import { createWorkspaceActivity } from './workspace-activity.mjs'
 import { createVariantPanels } from './variant-panels.mjs'
 import { createWorkspaceLayers } from './workspace-layers.mjs'
 import { isolateColor } from './color-preview.mjs'
@@ -23,7 +24,7 @@ import './variables-audit.js'
 
 const ui = window.LocalhostInspector
 
-export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, livePage, navigate, warmNavigation, focusResult, showConnectionHelp, getOutline, onOpenOutline }) {
+export function connectSidebar({ data, dock, getFrame, selectedRoute, livePage, navigate, warmNavigation, onOpenActivity, focusResult, showConnectionHelp, getOutline, onOpenOutline }) {
   const host = document.querySelector('#workspace-sidebar')
   const root = host.attachShadow({ mode: 'open' })
   const styles = ui.element('style')
@@ -43,88 +44,46 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   const toolbar = inspectorToggle.parentElement
   const nextControl = inspectorToggle.nextElementSibling
   header.append(name)
-  const files = ui.element('section', 'files')
-  const flowsToggle = ui.element('button', 'flows-toggle', 'Flows')
-  flowsToggle.prepend(ui.icon('chevronRight'))
-  const roster = ui.element('div', 'flow-roster')
-  files.append(flowsToggle, roster)
+  const activity = createWorkspaceActivity(ui, onOpenActivity)
+  activity.update(data.activity)
+  const files = activity.element
   const split = ui.element('div', 'flow-split')
   split.tabIndex = 0
   split.setAttribute('role', 'separator')
-  split.setAttribute('aria-label', 'Resize Flows')
+  split.setAttribute('aria-label', 'Resize activity')
   split.setAttribute('aria-orientation', 'horizontal')
-  let flowsExpanded = true
-  let savedHeight = 220
-  try { savedHeight = Number(sessionStorage.getItem('inspectorFlowsHeight')) || savedHeight } catch {}
-  function setFlowsExpanded(value) {
-    flowsExpanded = value
-    flowsToggle.setAttribute('aria-expanded', String(value))
-    roster.hidden = !value
+  let activityExpanded = true
+  let savedHeight = 142
+  try { savedHeight = Number(sessionStorage.getItem('inspectorActivityHeight')) || savedHeight } catch {}
+  function setActivityExpanded(value) {
+    activityExpanded = value
+    activity.list.hidden = !value
     files.style.height = value ? savedHeight + 'px' : 'auto'
-    split.setAttribute('aria-valuenow', String(value ? savedHeight : flowsToggle.offsetHeight))
+    split.setAttribute('aria-valuenow', String(value ? savedHeight : files.offsetHeight))
   }
-  function resizeFlows(height) {
+  function resizeActivity(height) {
     savedHeight = Math.round(Math.max(64, Math.min(Math.max(64, pane.clientHeight - 148), height)))
-    try { sessionStorage.setItem('inspectorFlowsHeight', String(savedHeight)) } catch {}
-    setFlowsExpanded(true)
+    try { sessionStorage.setItem('inspectorActivityHeight', String(savedHeight)) } catch {}
+    setActivityExpanded(true)
   }
-  flowsToggle.onclick = () => setFlowsExpanded(!flowsExpanded)
   split.onpointerdown = event => {
     split.setPointerCapture(event.pointerId)
     event.preventDefault()
   }
   split.onpointermove = event => {
-    if (split.hasPointerCapture(event.pointerId)) resizeFlows(event.clientY - files.getBoundingClientRect().top)
+    if (split.hasPointerCapture(event.pointerId)) resizeActivity(event.clientY - files.getBoundingClientRect().top)
   }
   split.onkeydown = event => {
     if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return
     event.preventDefault()
-    resizeFlows(files.offsetHeight + (event.key === 'ArrowDown' ? 8 : -8))
+    resizeActivity(files.offsetHeight + (event.key === 'ArrowDown' ? 8 : -8))
   }
-  setFlowsExpanded(true)
+  setActivityExpanded(true)
+  files.addEventListener('click', event => {
+    if (!activityExpanded && event.target.closest('[role=tab]')) setActivityExpanded(true)
+  })
   let fileDetail = false
   let restoreExpanded = true
-  const flowButtons = new Map()
-  function warmOnHover(node, frameId) {
-    node.addEventListener('pointerenter', event => {
-      if (event.pointerType === 'mouse') warmNavigation?.(frameId())
-    })
-    node.addEventListener('pointerleave', event => {
-      if (event.pointerType === 'mouse') warmNavigation?.(null)
-    })
-  }
-  function screenButton(frame, label, className) {
-    const button = ui.element('button', className, label)
-    button.type = 'button'
-    button.onclick = () => { variantPanels.leave(); void navigate(frame.id) }
-    warmOnHover(button, () => frame.id)
-    flowButtons.set(frame.id, button)
-    return button
-  }
-  for (const group of groups) {
-    if (group.frames.length === 1) {
-      roster.append(screenButton(group.frames[0], group.label, 'flow-group single-flow'))
-      continue
-    }
-    const section = ui.sidebarDisclosure(group.label, 'flow-group')
-    warmOnHover(section.firstElementChild, () => section.open ? null : group.baseId)
-    section.firstElementChild.addEventListener('click', event => {
-      if (section.open) return
-      event.preventDefault()
-      section.open = true
-      variantPanels.leave()
-      void navigate(group.baseId)
-    })
-    const children = ui.element('div', 'flow-children')
-    section.append(children)
-    for (const frame of group.frames) {
-      const button = screenButton(frame, frame.label || frame.route, 'flow-screen')
-      button.prepend(ui.icon('frame'))
-      children.append(button)
-    }
-    roster.append(section)
-  }
-
   let textStyleFormRequest = 0
   const recipeProperties = ['fontFamily', 'fontWeight', 'fontSize', 'lineHeight', 'letterSpacing']
   function openTextStyleForm(entry, anchor, onBack, onCreated, onDismiss) {
@@ -175,6 +134,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     getDocument: () => getFrame().contentDocument,
     selectNode: focusResult,
     getOutline,
+    warmNavigation,
     onOpenOutline: openLayerOutline,
   })
   let selectionDocument
@@ -209,8 +169,8 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     onDetailChange(detail) {
       if (destination !== 'File' || fileDetail === detail) return
       fileDetail = detail
-      if (detail) restoreExpanded = flowsExpanded
-      setFlowsExpanded(detail ? false : restoreExpanded)
+      if (detail) restoreExpanded = activityExpanded
+      setActivityExpanded(detail ? false : restoreExpanded)
     },
     currentPageId: () => selectedRoute() ?? livePage()?.id,
     onColorPreview: colorPreview,
@@ -426,11 +386,10 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
 
   function show(view, entry) {
     if (destination === 'File' && view !== destination && fileDetail) {
-      setFlowsExpanded(restoreExpanded)
+      setActivityExpanded(restoreExpanded)
       fileDetail = false
     }
     destination = view
-    if (open && view === 'File') updateFileList()
     files.hidden = view !== 'File'
     split.hidden = files.hidden
     panel.element.hidden = !open
@@ -539,36 +498,9 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
   }
   window.addEventListener('resize', () => width(Number(grip.getAttribute('aria-valuenow'))))
 
-  let openingFrameId
-  let lastFlowId
-  function updateFileList() {
-    if (!data.projectName) {
-      const title = getFrame().contentDocument?.title || location.host
-      if (name.textContent !== title) name.textContent = title
-    }
-    const currentId = openingFrameId ?? getOutline?.()?.flowFrameId ?? livePage()?.frameId
-    if (lastFlowId === currentId) return
-    flowButtons.get(lastFlowId)?.removeAttribute('aria-current')
-    flowButtons.get(currentId)?.setAttribute('aria-current', 'true')
-    lastFlowId = currentId
-  }
-
   let outlineRefreshQueued = false
   return {
-    indicateDestination(id) {
-      if (openingFrameId === id) return
-      openingFrameId = id
-      if (open && destination === 'File') updateFileList()
-    },
-    revealFlowFrame(id) {
-      const row = flowButtons.get(id)
-      if (!row) return
-      const group = row.closest('details')
-      if (group) group.open = true
-      if (open && destination === 'File' && flowsExpanded) {
-        row.scrollIntoView({ block: 'nearest', inline: 'nearest', container: 'nearest' })
-      }
-    },
+    updateActivity: activity.update,
     inspectVariant: variantPanels.update,
     leaveVariant: variantPanels.leave,
     setOutlineHover() {
@@ -586,7 +518,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     },
     changed() {
       watchLayerSelection()
-      if (open && destination === 'File') updateFileList()
+      if (!data.projectName) name.textContent = getFrame().contentDocument?.title || location.host
       if (open) queueMicrotask(() => {
         if (!open) return
         const scope = pageScope()

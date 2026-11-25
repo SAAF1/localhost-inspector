@@ -102,7 +102,8 @@ test('saved canvas restores frame contents across reload, new tabs, browsers and
     // Repeated attachment, then moving to a new document and back, must leave
     // one selection owner. Exercise both physical canvas and Layers gestures.
     for (const heading of ['Project home', 'Activity log', 'Project home']) {
-      await first.locator('#workspace-sidebar').getByRole('button', {name:heading, exact:true}).click()
+      const row = first.locator('[data-outline-key="frame:' + (heading === 'Project home' ? 'frame-1' : 'frame-2') + '"] > .workspace-layer-line')
+      await row.click()
       const content = first.frameLocator('#app-preview')
       await content.getByRole('heading', {name:heading, exact:true}).waitFor()
       await first.locator('#app-preview[data-inspector-document]').waitFor()
@@ -137,7 +138,7 @@ test('saved canvas restores frame contents across reload, new tabs, browsers and
     const runtime = '**/__inspector-flow/variant-runtime.mjs'
     await first.route(runtime, async route => { await gate; await route.continue() })
     try {
-      await first.getByRole('button', {name:'Activity log', exact:true}).click()
+      await first.locator('[data-outline-key="frame:frame-2"] > .workspace-layer-line').click()
       const content = first.frameLocator('#app-preview')
       await content.getByRole('heading', {name:'Activity log', exact:true}).waitFor()
       await content.getByRole('button', {name:'Archive', exact:true}).click({ modifiers:['Meta'] })
@@ -182,6 +183,30 @@ test('saved canvas restores frame contents across reload, new tabs, browsers and
     const fresh = await browser.newPage()
     await fresh.goto(reopened)
     await verify(fresh)
+    // An external author publishes into the open canvas. Looking at a frame
+    // leaves it in Inbox; explicit feedback moves only its IDs to Recent.
+    await fresh.locator('#inspector-toggle').click()
+    const activity = fresh.getByRole('region', { name: 'Activity', exact: true })
+    const rows = activity.getByRole('tabpanel')
+    const newDraft = join(root, 'new-draft')
+    await mkdir(newDraft)
+    await writeFile(join(newDraft, 'index.html'), '<h1>New draft content</h1>')
+    await canvas('add', saved, 'new-draft', 'frame-1', 'New draft', newDraft, '/')
+    const row = rows.getByRole('button', { name: 'New draft', exact: true })
+    await row.waitFor()
+    await fresh.getByRole('button', { name: 'Back to localhost' }).click()
+    await row.click()
+    await fresh.locator('#variant-properties').waitFor()
+    await fresh.frameLocator('[data-variant="new-draft"] iframe').getByRole('heading', { name: 'New draft content' }).waitFor()
+    assert.equal(await row.isVisible(), true)
+    await canvas('respond', saved, 'summary', 'new-draft')
+    await row.waitFor({ state: 'hidden' })
+    assert.deepEqual(await rows.getByRole('button').allTextContents(), ['Activity'])
+    await activity.getByRole('tab', { name: 'Recent' }).click()
+    assert.deepEqual((await rows.getByRole('button').allTextContents()).sort(), ['New draft', 'Summary'])
+    await fresh.reload()
+    await activity.getByRole('tab', { name: 'Recent' }).click()
+    await rows.getByRole('button', { name: 'New draft', exact: true }).waitFor()
   } finally {
     await browser?.close()
     await stop()

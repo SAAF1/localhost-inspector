@@ -174,12 +174,27 @@ def export(directory, output, app, inspector_state=None):
             for file in sorted(canvas.iterdir()):
                 if file.name != 'map.json' and CAPTURE.fullmatch(file.name):
                     write_file(z, file, file.name)
+            responses = {}
+            activity_file = canvas / 'variant-activity.sqlite'
+            if activity_file.is_symlink():
+                raise ValueError('Unexpected canvas activity link')
+            if activity_file.exists():
+                with sqlite3.connect(activity_file.as_uri() + '?mode=ro', uri=True) as db:
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'responses'").fetchone():
+                        responses = dict(db.execute('SELECT id, at FROM responses'))
             for folder in folders:
+                if (folder / 'frame.json').is_symlink():
+                    raise ValueError('Unexpected variant metadata link')
                 frame = read_json(folder / 'frame.json')
                 if frame['id'] != folder.name:
                     raise ValueError('Invalid saved frame ID')
                 prefix = 'variants/' + folder.name
-                write_file(z, folder / 'frame.json', prefix + '/frame.json')
+                if frame['id'] in responses:
+                    frame['respondedAt'] = responses[frame['id']]
+                data = json.dumps(frame).encode('utf8')
+                if SENSITIVE.search(data):
+                    raise ValueError('Possible credential in frame metadata')
+                z.writestr(prefix + '/frame.json', data)
                 copy_tree(z, folder / 'preview', prefix + '/preview')
                 add_source(z, canvas, folder)
                 edits = saved_edits(folder)

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+  list) command=activity ;;
+  respond) command=respond ;;
+  *) echo 'Usage: activity list APP_OR_CANVAS | activity respond APP_OR_CANVAS ID [ID ...]' >&2; exit 2 ;;
+esac
+shift
+skill_script=$(realpath "$0")
+exec node "$(dirname "$skill_script")/../../../scripts/flow/canvas.mjs" "$command" "$@"

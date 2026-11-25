@@ -34,11 +34,11 @@ test('the workspace Inspector action brings both panels to the advertised state'
   } finally { await h.close() }
 })
 
-test('dragging the visible center of the Flows divider resizes the pane', async () => {
+test('dragging the visible center of the Activity divider resizes the pane', async () => {
   const h = await createHarness({ canvas: true, dock: true })
   try {
     await h.open()
-    const split = h.page.getByRole('separator', { name: 'Resize Flows' })
+    const split = h.page.getByRole('separator', { name: 'Resize activity' })
     const before = Number(await split.getAttribute('aria-valuenow'))
     const box = await split.boundingBox()
     const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }

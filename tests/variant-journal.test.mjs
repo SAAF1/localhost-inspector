@@ -55,6 +55,40 @@ test('concurrent variant changes conflict, survive archive transfer, and revert 
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
+test('canvas creation and targeted chat responses survive concurrent replies, retries and portable export', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'canvas-activity-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const canvas = join(root, 'workspace'), imported = join(root, 'copy')
+  const capture = join(root, 'capture'), app = join(root, 'app'), home = join(root, 'bindings')
+  await Promise.all([mkdir(capture), mkdir(app)])
+  await writeFile(join(capture, 'map.json'), JSON.stringify({ frames: [{ id: 'home', route: '/' }] }))
+  await writeFile(join(app, 'index.html'), '<h1>Example</h1>')
+  const cli = async (...args) => (await execute(process.execPath, ['scripts/flow/canvas.mjs', ...args], {
+    env: { ...process.env, INSPECTOR_CANVAS_HOME: home },
+  })).stdout
+  const list = async (path = canvas) => JSON.parse(await cli('activity', path))
+  await cli('init', canvas, capture)
+  await cli('bind', canvas, app)
+  await writeFile(join(app, 'map.json'), '{"applicationData":true}')
+  for (const id of ['one', 'two', 'three', 'four']) {
+    await cli('add', canvas, id, 'home', id, app, '/', '--section', 'Exploration')
+  }
+  const first = await list(app)
+  assert.deepEqual(first.map(item => item.id), ['one', 'two', 'three', 'four'])
+  assert.ok(first.every(item => item.respondedAt === null && item.created > 0))
+  await assert.rejects(cli('respond', canvas, 'one', 'unknown'))
+  assert.deepEqual(await list(), first)
+  await Promise.all([cli('respond', app, 'one', 'two'), cli('respond', canvas, 'three')])
+  const answered = await list()
+  assert.ok(answered.slice(0, 3).every(item => item.respondedAt >= item.created))
+  assert.equal(answered[3].respondedAt, null)
+  await cli('respond', app, 'two', 'one')
+  assert.deepEqual(await list(app), answered)
+  await cli('export', canvas, join(root, 'copy.zip'), app)
+  await cli('import', join(root, 'copy.zip'), imported)
+  assert.deepEqual(await list(imported), answered)
+})
+
 test('a different preview, opaque origin or ordinary HTML form cannot write a variant journal', async () => {
   const address = new URL('http://127.0.0.1:5401')
   const forbidden = { handle() { assert.fail('Unexpected journal access') } }

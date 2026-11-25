@@ -290,7 +290,6 @@ function selectSection(key) {
   const section = map.querySelector('[data-section-key="' + CSS.escape(key) + '"]')
   if (!section || !clearCanvasSelection()) return
   flowFrameId = section.dataset.anchor
-  sidebar?.revealFlowFrame(flowFrameId)
   markSection(section)
   sidebar?.changed()
   sidebar?.refreshOutline()
@@ -302,7 +301,6 @@ async function onOpenOutline(key, expandedRow) {
     const group = groups.length > 1 && groups.find(group => group.key === key.slice(5))
     if (!group || !clearCanvasSelection()) return
     flowFrameId = group.frames[0].id
-    sidebar?.revealFlowFrame(flowFrameId)
     markFlow(group)
     sidebar?.changed()
     sidebar?.refreshOutline()
@@ -313,6 +311,7 @@ async function onOpenOutline(key, expandedRow) {
       (point.top + point.height / 2 - board.top) / camera.scale)
     return
   }
+  if (!outlinesByFlow) getOutline()
   if (!outlinesByFlow || ![...outlinesByFlow.values()].some(flow => flow.keys.has(key))) return
   disclosureRequest = typeof expandedRow === 'boolean' ? { key, expanded: expandedRow, version: ++disclosureVersion } : undefined
   if (key.startsWith('section:')) {
@@ -330,7 +329,7 @@ async function onOpenOutline(key, expandedRow) {
     frame.open()
     focusSidebarFrame(frame.bounds)
   } else if (key === 'frame:' + id && framesById.has(id)) {
-    if (!clearCanvasSelection()) return
+    if (!clearCanvasSelection(id)) return
     if (cards.get(id).hiddenControl) await changeView({ preset: 'desktop', anchor: id })
     await navigateToFrame(id)
   }
@@ -345,7 +344,6 @@ function setFrameSelected(selected) {
   if (selectedOriginal) {
     markFlow(null)
     flowFrameId = selectedOriginal
-    sidebar?.revealFlowFrame(flowFrameId)
     markSection(null)
     selectedComparison = false
     cards.get(selectedOriginal).button.setAttribute('aria-pressed', 'true')
@@ -389,7 +387,6 @@ function inspectVariant(frame, action, details) {
   selectedComparison = false
   inspectedVariant = frame.variant
   flowFrameId = variantFrames.get(frame.variant).id
-  sidebar?.revealFlowFrame(flowFrameId)
   setFrameSelected(false)
   const before = frame.app.getBoundingClientRect()
   const board = viewport.getBoundingClientRect()
@@ -413,13 +410,15 @@ function inspectVariant(frame, action, details) {
   position()
 }
 
-function clearCanvasSelection() {
+function clearCanvasSelection(destinationId) {
   sidebar?.leaveVariant()
   if (!expanded) return
   const clearSelection = new Event('clear-workspace-selection', { cancelable: true })
   if (dock.firstElementChild?.dispatchEvent(clearSelection) === false) return
-  clearHover()
-  if (candidate) cancelCandidate()
+  const reuse = destinationId && preparation?.frame.id === destinationId
+  clearHoverTimers()
+  hoverCard = inspectHover = null
+  if (candidate && !reuse) cancelCandidate()
   markSection(null)
   markFlow(null)
   selectedComparison = false
@@ -471,7 +470,6 @@ function setPending(card, destination) {
   pendingCard?.removeAttribute('aria-busy')
   pendingCard?.removeAttribute('data-loading')
   pendingCard?.removeAttribute('data-opening')
-  sidebar?.indicateDestination(destination?.id)
   if (destination) dock.dataset.openingFrame = destination.label || destination.route
   else delete dock.dataset.openingFrame
   pendingCard = card
@@ -702,6 +700,32 @@ async function activate(frame, expectedState, hoverOnly = false) {
   }
 }
 
+function refreshVariants() {
+  if (!expanded || data.comparison?.role === 'proposal') return
+  const definitions = data.variants ?? []
+  const ids = new Set(definitions.map(item => item.id))
+  for (const [id, frame] of variantFrames) {
+    if (!ids.has(id)) {
+      if (inspectedVariant === id) sidebar?.leaveVariant()
+      frame.remove()
+      variantFrames.delete(id)
+    }
+  }
+  layoutVariantSections = mountVariantSections(map, definitions, framesById, (parent, item) => {
+    const existing = variantFrames.get(item.id)
+    if (existing) {
+      existing.placeIn(parent)
+      return existing
+    }
+    const frame = addVariantFrame(parent, item, frameGap, inspectVariant)
+    if (frame) variantFrames.set(item.id, frame)
+    return frame
+  }, selectSection)
+  outlinesByFlow = null
+  layout()
+  sidebar?.refreshOutline()
+}
+
 function toggleView() {
   if (resizing) return
   pendingInspectTarget = null
@@ -713,16 +737,7 @@ function toggleView() {
   schedulePreviewUpdate()
   refreshViewControls()
   if (expanded) {
-    if (variantFrames.size === 0 && Array.isArray(data.variants) && data.comparison?.role !== 'proposal') {
-      layoutVariantSections = mountVariantSections(map, data.variants, framesById, (parent, item) => {
-        if (variantFrames.has(item.id)) return
-        const frame = addVariantFrame(parent, item, frameGap, inspectVariant)
-        if (frame) variantFrames.set(item.id, frame)
-        return frame
-      }, selectSection)
-      outlinesByFlow = null
-      layout()
-    }
+    if (!layoutVariantSections) refreshVariants()
     sizeFrame(preview, viewOf(active))
     syncLiveFrame()
   } else {
@@ -1203,7 +1218,12 @@ sidebar = connectSidebar({
     if (show && !document.body.hasAttribute('data-canvas-editor')) message(inspectorHelp)
     else if (notice.value === inspectorHelp) message('')
   },
-  data, groups, dock, getOutline, onOpenOutline, warmNavigation, getFrame: () => preview, livePage: auditPage,
+  data, dock, getOutline, onOpenOutline, warmNavigation,
+  onOpenActivity(id) {
+    if (!expanded) toggleView()
+    if (variantFrames.has(id)) void onOpenOutline('variant:' + id)
+    else message('This variant is unavailable on the canvas.')
+  }, getFrame: () => preview, livePage: auditPage,
   selectedRoute: () => expanded && !preview.hasAttribute('data-frame-selected') ? null : routeOf(preview),
   navigate: navigateToFrame,
   focusResult: node => {
@@ -1241,7 +1261,6 @@ function showLinkedFrame() {
     if (selected) {
       clearCanvasSelection()
       flowFrameId = frame.id
-      sidebar?.revealFlowFrame(flowFrameId)
     }
     selectedComparison = selected
     sidebar?.changed()
@@ -1280,6 +1299,13 @@ if (data.proposalEvents && comparison?.role !== 'proposal') {
         variantFrames.get(item.id)?.setPreviewOrigin(saved.origin)
       }
     }
+  }, ({ activity, variants }) => {
+    sidebar.updateActivity(activity)
+    const changed = JSON.stringify(data.variants ?? []) !== JSON.stringify(variants)
+    if (!changed) return
+    data.variants = variants
+    layoutVariantSections = undefined
+    refreshVariants()
   })
 }
 const entry = new URLSearchParams(location.search).get('page')

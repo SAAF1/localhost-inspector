@@ -26,6 +26,7 @@ const assets = new Map([
   ['variables-audit.js', ['../../extension/variables-audit.js', 'text/javascript']],
   ['color-preview.mjs', ['color-preview.mjs', 'text/javascript']],
   ['spacing-preview.mjs', ['spacing-preview.mjs', 'text/javascript']],
+  ['workspace-activity.mjs', ['workspace-activity.mjs', 'text/javascript']],
   ['workspace-sidebar.mjs', ['workspace-sidebar.mjs', 'text/javascript']],
   ['workspace-layers.mjs', ['workspace-layers.mjs', 'text/javascript']],
   ['workspace-layer-flows.mjs', ['workspace-layer-flows.mjs', 'text/javascript']],

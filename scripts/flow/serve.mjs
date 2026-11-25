@@ -9,6 +9,7 @@ import { serveWorkspaceAsset, servePreviewAsset } from './workspace-assets.mjs'
 import { flowPath } from '../../extension/flow-attachment.js'
 
 import { handleVariantInspector, variantJournal } from './variant-journal.mjs'
+import { canvasActivity, activityFile } from './canvas-activity.mjs'
 import { canvasHelper } from './canvas-helper.mjs'
 import { variantCatalogs } from './variant-catalogs.mjs'
 import { canvasProject, linkedCanvas } from './canvas.mjs'
@@ -50,6 +51,7 @@ async function comparisonForOriginal(origin) {
 function streamProposalLink(origin, response) {
   const watcher = watch(mapRoot, (_, name) => {
     if (!name || name === 'proposal-preview.json') void publish()
+    if (!name || name === 'map.json' || name === activityFile || name === activityFile + '-journal') scheduleActivity()
   })
   response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
   let revision = 0
@@ -58,16 +60,31 @@ function streamProposalLink(origin, response) {
     const comparison = await comparisonForOriginal(origin)
     if (current === revision && !response.destroyed) response.write('data: ' + JSON.stringify(comparison) + '\n\n')
   }
-  watcher.on('error', () => response.end())
-  response.on('close', () => watcher.close())
-  void publish()
-  if (mergeSavedFrames) {
-    const saved = {}
-    void mergeSavedFrames(saved).then(() => {
-      if (!response.destroyed) response.write('event: preview-origins\ndata: ' + JSON.stringify(
-        saved.variants.map(({ id, origin, editable, hasEdits }) => ({ id, origin, editable, hasEdits }))) + '\n\n')
-    }).catch(() => response.end())
+  let activityRevision = 0
+  let activityTimer
+  async function publishActivity(sendOrigins = false) {
+    const current = ++activityRevision
+    try {
+      const map = JSON.parse(await readFile(join(mapRoot, 'map.json'), 'utf8'))
+      if (mergeSavedFrames) await mergeSavedFrames(map)
+      if (current !== activityRevision || response.destroyed) return
+      const variants = map.variants ?? []
+      if (sendOrigins && mergeSavedFrames) response.write('event: preview-origins\ndata: ' + JSON.stringify(
+        variants.map(({ id, origin, editable, hasEdits }) => ({ id, origin, editable, hasEdits }))) + '\n\n')
+      response.write('event: activity\ndata: ' + JSON.stringify({ activity: canvasActivity(mapRoot, variants), variants }) + '\n\n')
+    } catch { if (!response.destroyed) response.end() }
   }
+  function scheduleActivity() {
+    clearTimeout(activityTimer)
+    activityTimer = setTimeout(publishActivity, 30)
+  }
+  const variantsWatcher = durableCanvas && watch(join(mapRoot, 'variants'), (_, name) => {
+    if (!name || !name.startsWith('.')) scheduleActivity()
+  })
+  variantsWatcher?.on('error', () => response.end())
+  watcher.on('error', () => response.end())
+  response.on('close', () => { watcher.close(); variantsWatcher?.close(); clearTimeout(activityTimer) })
+  void publish().then(() => publishActivity(true))
 }
 
 async function serve(request, response) {
@@ -101,6 +118,7 @@ async function serve(request, response) {
         const originalOrigin = link?.role === 'proposal' ? link.otherOrigin : origin
         if (!durableCanvas && map.origin !== originalOrigin) throw Error('Map belongs to another app')
         if (mergeSavedFrames && link?.role !== 'proposal') await mergeSavedFrames(map)
+        if (link?.role !== 'proposal') map.activity = canvasActivity(mapRoot, map.variants ?? [])
         if (editor) map.canvasId = createHash('sha256').update(mapRoot).digest('hex')
         map.origin = origin
         map.comparison = link

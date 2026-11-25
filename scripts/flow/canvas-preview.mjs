@@ -49,7 +49,7 @@ export function savedPreviewFrames(directory) {
   const origins = new Map()
   return async function merge(map) {
     const frames = new Map((map.variants ?? []).map(frame => [frame.id, frame]))
-    await Promise.all((await canvasVariants(directory)).map(async ({ id, anchor, label, route, section, note }) => {
+    await Promise.all((await canvasVariants(directory)).map(async ({ id, anchor, label, route, section, note, created, respondedAt }) => {
       const path = join(directory, 'variants', id)
       const journal = variantJournal(path, id)
       if (!origins.has(id)) {
@@ -60,7 +60,7 @@ export function savedPreviewFrames(directory) {
         origins.set(id, origin)
       }
       // Keep insertion order independent of listener startup timing.
-      frames.set(id, { id, anchor, label, route, section, note, editable: true })
+      frames.set(id, { id, anchor, label, route, section, note, created, respondedAt, editable: true })
       frames.get(id).origin = await origins.get(id)
       frames.get(id).hasEdits = await journal.hasEdits()
     }))

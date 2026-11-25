@@ -212,7 +212,10 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
   return {
     id: anchor,
     variant, label, open,
-    section: wrapper.closest('.variant-section'),
+    get section() { return wrapper.closest('.variant-section') },
+    placeIn(parent) {
+      if (wrapper.parentElement !== parent) parent.moveBefore(wrapper, null)
+    },
     bounds: null,
     get captionHeight() { return caption.offsetHeight },
     setPreviewOrigin(origin) {

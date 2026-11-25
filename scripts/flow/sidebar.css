@@ -9,13 +9,16 @@
 .project strong { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:14px; }
 .project button svg,.rail button[aria-label=File] svg { width:16px; height:16px; }
 .project button svg { transform:scaleX(-1); }
-.files { --flow-label-offset:calc(var(--li-icon-size) + var(--li-space-small)); font:400 var(--li-type-size)/var(--li-line-height) var(--li-font); padding:0; min-height:0; max-height:calc(100% - 148px); display:flex; flex-direction:column; flex:none; }
-.files[hidden], .flow-split[hidden] { display:none; }
-.flow-roster { overflow:auto; min-height:0; padding:0 8px 6px; }
-.files .flows-toggle { flex:none; height:36px; padding:0 4px; font-weight:600; gap:2px; }
-.flows-toggle svg { width:10px; height:12px; opacity:0; }
-.flows-toggle:hover svg,.flows-toggle:focus-visible svg { opacity:1; }
-.flows-toggle[aria-expanded=true] svg { transform:rotate(90deg); }
+.activity { display:flex; flex-direction:column; flex:none; min-height:0; max-height:calc(100% - 148px); }
+.activity[hidden], .activity-list[hidden], .flow-split[hidden] { display:none; }
+.activity .activity-tabs { flex:none; width:auto; margin:8px; }
+.activity-list { min-height:0; overflow:auto; overscroll-behavior:contain; padding:0 8px 6px; }
+.activity-row { display:flex; align-items:center; gap:var(--li-gap); width:100%; min-height:30px;
+  padding:var(--li-space-small) var(--li-gap); border:0; border-radius:var(--li-radius); background:transparent; color:inherit; text-align:left; font:inherit; }
+.activity-row:hover { background:var(--li-field); }
+.activity-row svg { flex:none; color:var(--li-muted); width:14px; height:14px; }
+.activity-row span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.activity-empty { color:var(--li-muted); margin:var(--li-gap); }
 .flow-split { position:relative; height:1px; background:var(--li-border); flex:none; cursor:row-resize; touch-action:none; z-index:2; }
 .flow-split::before { content:""; position:absolute; inset:-3px 0; }
 .flow-split::after { content:""; position:absolute; left:calc(50% - 12px); top:-1px; width:24px; height:3px; border-radius:2px; background:var(--li-border); }

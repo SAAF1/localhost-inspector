@@ -1,4 +1,4 @@
-export function createLayerFlows({ ui, onFlowPopover, onOpenOutline, revealBranches }) {
+export function createLayerFlows({ ui, onFlowPopover, onOpenOutline, warmNavigation, revealBranches }) {
   const popover = ui.element('div', 'workspace-layer-flow-overlay')
   const menu = ui.element('div', 'workspace-layer-flow-menu')
   const title = ui.element('h3', 'workspace-layer-flow-title', 'Flows')
@@ -46,6 +46,7 @@ export function createLayerFlows({ ui, onFlowPopover, onOpenOutline, revealBranc
 
   function close(restore) {
     if (!snapshot) return
+    warmNavigation?.(null)
     cancelAnimationFrame(motion)
     const prior = snapshot
     snapshot = null
@@ -171,7 +172,10 @@ export function createLayerFlows({ ui, onFlowPopover, onOpenOutline, revealBranc
   popover.addEventListener('pointerleave', dismissOutside)
   menu.addEventListener('pointerover', event => {
     const option = event.target.closest('[data-key]')
-    if (option && !option.contains(event.relatedTarget)) preview(option)
+    if (option && !option.contains(event.relatedTarget)) {
+      warmNavigation?.(option.dataset.key.startsWith('frame:') ? option.dataset.key.slice(6) : null)
+      preview(option)
+    }
   })
   menu.onfocusin = event => preview(event.target.closest('[data-key]'))
   menu.onclick = event => {
