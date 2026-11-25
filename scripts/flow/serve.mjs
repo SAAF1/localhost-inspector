@@ -5,8 +5,7 @@ import { watch } from 'node:fs'
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
-import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
+import { projectVite } from './project-vite.mjs'
 import { serveWorkspaceAsset, servePreviewAsset } from './workspace-assets.mjs'
 import { flowPath } from '../../extension/flow-attachment.js'
 
@@ -166,8 +165,7 @@ function handleRequest(request, response) {
 if (sourceMode) {
   // Use the project's own Vite configuration, aliases, React version and file watcher.
   process.chdir(appRoot)
-  const localRequire = createRequire(join(appRoot, 'package.json'))
-  const { createServer: createViteServer } = await import(pathToFileURL(localRequire.resolve('vite')))
+  const { createServer: createViteServer } = await projectVite(appRoot)
   const { componentPreviewSites } = await import('./component-preview-sites.mjs')
   const { tableRenderSites } = await import('./table-render-sites.mjs')
   const workspace = {

@@ -1,8 +1,7 @@
 // Follow literal frontend imports using the installed application's Vite resolver.
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { projectVite } from './project-vite.mjs'
 import { join, relative, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { parse } from '@babel/parser'
 import { cssParser } from './prepared-css.mjs'
 
@@ -25,8 +24,7 @@ function scriptImports(source) {
   return imports
 }
 export async function stylesheetGraph(root, running) {
-  const require = createRequire(join(root, 'package.json'))
-  const { createServer } = await import(pathToFileURL(require.resolve('vite')))
+  const { createServer } = await projectVite(root)
   const server =
     running ??
     (await createServer({
