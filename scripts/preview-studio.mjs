@@ -211,8 +211,12 @@ try {
       const binding = helperResult(state, 'bind', String(port), app)
       if (id === 'original') {
         const theme = 'src/styles/theme.css'
-        const css = readFileSync(join(app, theme), 'utf8')
+        const css = existsSync(join(app,theme)) ? readFileSync(join(app,theme),'utf8') : ''
         const spacing = [...new Set([...css.matchAll(/(--space-[\w-]+)\s*:/g)].map((m) => m[1]))]
+        if(!spacing.length && inventory.spacingSources?.length===1){
+          const source=inventory.spacingSources[0]
+          helperResult(state,'register-spacing',String(port),source.file,...source.names)
+        }
         if (spacing.length) helperResult(state, 'register-spacing', String(port), theme, ...spacing)
         const colors = ['--primary', '--secondary', '--foreground', '--muted-foreground'].filter((name) =>
           css.includes(name + ':'),

@@ -1,3 +1,4 @@
+import { preparedStyles } from './prepared-css.mjs'
 import { preparedSites } from './prepared-sites.mjs'
 import { createHash, randomUUID } from 'node:crypto'
 import { watch } from 'node:fs'
@@ -186,7 +187,7 @@ if (sourceMode) {
     root: appRoot,
     ...(comparison?.role === 'proposal' ? { cacheDir: resolve(appRoot, '../vite-cache') } : {}),
     ...(process.env.INSPECTOR_VITE_CACHE ? {cacheDir: resolve(process.env.INSPECTOR_VITE_CACHE)} : {}),
-    plugins: [workspace, preparedSites(appRoot, process.env.INSPECTOR_PREPARED_SITES), componentPreviewSites(appRoot), tableRenderSites(appRoot)],
+    plugins: [workspace, preparedStyles(appRoot, process.env.INSPECTOR_PREPARED_SITES), preparedSites(appRoot, process.env.INSPECTOR_PREPARED_SITES), componentPreviewSites(appRoot), tableRenderSites(appRoot)],
     server: { host: '127.0.0.1', port: Number(port), strictPort: true, open: false },
   })
   await server.listen()

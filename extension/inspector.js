@@ -780,14 +780,21 @@
       sourceContext: ui.describeSourceContext(node), viewport: { width: innerWidth, height: innerHeight } }
     try {
       recovery.projectPrepared(edit)
+      const current=()=>node.isConnected && selection.current===node && isCurrentRoute(path,version) && ui.preparedPreview.contract(node)?.revision===contract.revision
+      const matched=await ui.waitForPreview(current,()=>{
       edit.observed = read()
+      if(property==='width' && ['100%','fit-content'].includes(requested)){
+        return ui.widthModes(node).length>0 && String(node.computedStyleMap().get('width'))===requested && Number.isFinite(parseFloat(edit.observed))
+      }
       const expected = tokenOptions?.colorToken ? ui.resolveColorVariable(node, tokenOptions.colorToken.name) : ['color','background-color'].includes(property) ? ui.normalizeSolidColor(requested) : field ? requested : requested.startsWith('var(')
         ? getComputedStyle(node).getPropertyValue(requested.slice(4, -1)).trim() : requested
       const valueMatches = tokenOptions?.spacingToken
         ? ui.spacingVariableMatches(node, property, tokenOptions.spacingToken.name, edit.observed)
         : edit.observed === expected
       const contentMatches = !field || ui.preparedPreview.shows(node, contract.input, requested)
-      if (!node.isConnected || !contentMatches || !valueMatches || !isCurrentRoute(path, version)) {
+      return contentMatches && valueMatches
+      })
+      if (!matched) {
         throw Error('The prepared edit did not reach the selected part in its current state.')
       }
       await write({ type: 'save', record: edit }, path, version)

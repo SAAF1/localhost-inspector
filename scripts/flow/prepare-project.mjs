@@ -5,6 +5,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, renameSync, writeF
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from '@babel/parser'
+import {baseRule,cssFields,cssParser} from './prepared-css.mjs'
 import { typeModule } from '../../component-types.mjs'
 
 const hash = (text) => createHash('sha256').update(text).digest('hex')
@@ -45,7 +46,7 @@ function utility(token, theme) {
 const safeIcon = (name) => /^[A-Z][A-Za-z]+$/.test(name)
 const kebab = (name) => name.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()
 function analyze(code, file, config) {
-  const tree = parse(code, { sourceType: 'unambiguous', plugins: ['jsx', 'typescript', 'decorators-legacy'] })
+  const tree = config.tree
   const { imports } = typeModule(tree, file)
   const icons = [...imports].filter(([, spec]) => spec.from === 'lucide-react' && safeIcon(spec.name))
   const found = [],
@@ -71,10 +72,12 @@ function analyze(code, file, config) {
       let reason = 'no qualified operation'
       if (!owner || opening.attributes.some((a) => a.type === 'JSXSpreadAttribute'))
         reason = 'opaque owner or spread'
-      else if (typeof name === 'string' && /^[a-z]/.test(name) && typeof classes === 'string' && config.tailwind) {
+      else if (typeof name === 'string' && /^[a-z]/.test(name) && typeof classes === 'string') {
         const tokens = classes.split(/\s+/)
         const eligible = tokens.flatMap((literal) => {
-          const rule = utility(literal, config.theme)
+          const declarations=config.css.classes.get(literal)??[]
+          if(declarations.length)return declarations
+          const rule = config.tailwind && utility(literal, config.theme)
           if (
             !rule ||
             tokens.some((other) => {
@@ -100,7 +103,7 @@ function analyze(code, file, config) {
         })
         const styles = eligible.filter((s) => eligible.filter((x) => s.property === x.property).length === 1)
         if (styles.length) {
-          found.push({ ...raw, styles })
+          found.push({ ...raw, styles,dependencies:[...new Set([...raw.dependencies,...styles.flatMap(s=>s.css?[s.css.file,...config.css.tokenFiles]:[])])] })
           reason = null
         }
       } else if (
@@ -164,6 +167,31 @@ function analyze(code, file, config) {
     rejected.push({ file, owner: duplicate.owner, reason: 'ambiguous authored use' })
   return { sites, rejected }
 }
+const trees=new Map()
+function ordinaryCSS(root,source) {
+  const classes=new Map(),tokenFiles=[],spacingSources=[]
+  const parse=cssParser(root)
+  for(const path of readdirSync(source,{recursive:true}).filter(name=>name.endsWith('.css'))){
+    const file=relative(root,join(source,path)),code=readFileSync(join(root,file),'utf8')
+    const sheet=parse.parse(code,{from:file})
+    const tokens=new Set()
+    sheet.walkDecls(/^--/, d=>{if(/^--space-[\w-]+$/.test(d.prop))tokens.add(d.prop)})
+    if(tokens.size){tokenFiles.push(file);spacingSources.push({file,names:[...tokens]})}
+    sheet.walkRules(rule=>{
+      if(!baseRule(rule)||!/^\.[a-zA-Z_][\w-]*$/.test(rule.selector))return
+      const literal=rule.selector.slice(1)
+      for(const d of rule.nodes){
+        if(d.type!=='decl')continue
+        for(const property of cssFields(d)){
+          const list=classes.get(literal)??[]
+          list.push({attribute:'className',literal,property,css:{file,declaration:d.prop,value:d.value}})
+          classes.set(literal,list)
+        }
+      }
+    })
+  }
+  return {classes,tokenFiles,spacingSources}
+}
 export function prepareProject(project, destination, namespace, boundary = 'src') {
   const root = realpathSync(project),
     source = realpathSync(join(root, boundary))
@@ -177,6 +205,7 @@ export function prepareProject(project, destination, namespace, boundary = 'src'
   const tailwind = existsSync(entry) && /@import\s+['"]tailwindcss['"]/.test(readFileSync(entry, 'utf8'))
   const button =
     existsSync(join(root, buttonSource)) && hash(readFileSync(join(root, buttonSource))) === buttonRevision
+  const css=ordinaryCSS(root,source)
   const files = [],
     sites = [],
     unresolved = []
@@ -193,7 +222,13 @@ export function prepareProject(project, destination, namespace, boundary = 'src'
         continue
       }
       try {
-        const result = analyze(readFileSync(path, 'utf8'), file, { theme, button, tailwind, dependencies: deps })
+        const code=readFileSync(path,'utf8')
+        let cached=trees.get(path)
+        if(cached?.code!==code){
+          cached={code,tree:parse(code,{sourceType:'unambiguous',plugins:['jsx','typescript','decorators-legacy']})}
+          trees.set(path,cached)
+        }
+        const result=analyze(code,file,{theme,button,tailwind,dependencies:deps,tree:cached.tree,css})
         sites.push(...result.sites)
         unresolved.push(...result.rejected)
         files.push({ file, status: 'indexed', candidates: result.sites.length })
@@ -219,10 +254,13 @@ export function prepareProject(project, destination, namespace, boundary = 'src'
     unresolved,
     sites,
     retiredSites,
+    spacingSources:css.spacingSources,
     buttonAdapter: button ? { file: buttonSource, digest: buttonRevision } : null,
   }
   const tmp = destination + '.' + process.pid + '.tmp'
-  writeFileSync(tmp, JSON.stringify(report, null, 2))
+  const serialized=JSON.stringify(report,null,2)
+  if(previous && JSON.stringify(previous,null,2)===serialized)return report
+  writeFileSync(tmp, serialized)
   renameSync(tmp, destination)
   return report
 }

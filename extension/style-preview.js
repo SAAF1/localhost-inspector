@@ -27,6 +27,15 @@
     }
   }
 
+  ui.waitForPreview = async (current, matches) => {
+    const deadline=performance.now()+550
+    while(current()){
+      if(matches())return true
+      if(performance.now()>=deadline)return false
+      await new Promise(resolve=>setTimeout(resolve,16))
+    }
+    return false
+  }
   ui.createStylePreview = catalogs => {
     const temporary = new Set()
     function remove(entry) {
@@ -92,12 +101,10 @@
         if (mode) return changedSize()
         return sameValue() && (!dimensions || changedSize() || baseline === observed)
       }
-      const deadline = performance.now() + 550
-      while (isCurrent() && node.isConnected && !verified() && performance.now() < deadline) {
-        await new Promise(requestAnimationFrame)
-        observed = getComputedStyle(node).getPropertyValue(property)
-      }
-      if (!isCurrent() || !node.isConnected || !verified()) {
+      if (!await ui.waitForPreview(()=>isCurrent()&&node.isConnected,()=>{
+        observed=getComputedStyle(node).getPropertyValue(property)
+        return verified()
+      })) {
         discardTemporary(entry)
         throw Error(dimensions ? 'The box did not resize as requested. Check its layout constraints.' : 'The browser kept a different value')
       }

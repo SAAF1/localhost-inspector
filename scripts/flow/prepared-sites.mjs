@@ -1,13 +1,15 @@
+import {prepareProject} from './prepare-project.mjs'
 // Explicit development recipes for qualified JSX sites. An ambiguous opening
 // never inherits a previous operation. No application files are rewritten.
 import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { parse } from '@babel/parser'
+import {cssInput} from './prepared-css.mjs'
 import MagicString from 'magic-string'
 
 const styleProperties = new Set([
-  'gap',
+  'gap','padding-left','padding-right','padding-top','padding-bottom',
   'width',
   'height',
   'min-width',
@@ -70,6 +72,20 @@ export function preparedSites(root, manifest) {
       // Some copied workspaces miss native file events. Revalidate the
       // prepared files when the app document is reopened, before Vite can
       // serve a cached module from the previous source revision.
+      if(manifestData.boundary){
+        let timer
+        const refresh=()=>{
+          manifestData=prepareProject(root,manifest,manifestData.namespace,manifestData.boundary)
+          server.moduleGraph.invalidateAll()
+          server.ws.send({type:'full-reload'})
+        }
+        const schedule=(event,file)=>{
+          if(!['add','unlink','change'].includes(event) || !relative(root,file).startsWith(manifestData.boundary+'/') || !/\.(?:[cm]?[jt]sx?|css)$/.test(file))return
+          clearTimeout(timer);timer=setTimeout(refresh,100)
+        }
+        server.watcher.on('all',schedule)
+        server.httpServer?.once('close',()=>{clearTimeout(timer);server.watcher.off('all',schedule)})
+      }
       let stamps
       const stamp = () =>
         [
@@ -196,31 +212,18 @@ export function preparedSites(root, manifest) {
           const value = attr(attribute)?.value
           if (!value) throw Error('Missing prepared style expression')
           const expression = code.slice(value.start, value.end)
-          const start = utility
+          const start = utility || style.css
             ? ([...expression.matchAll(/[^\s'"]+/g)].find((m) => m[0] === literal)?.index ?? -1)
             : expression.indexOf(literal)
           if (start < 0 || (!utility && expression.indexOf(literal, start + literal.length) >= 0))
             throw Error('Ambiguous prepared style expression')
           // Preserve dynamic inline/sx ownership. The variable is consumed at
           // the original declaration, so hover and media rules still compete normally.
-          if (utility) {
-            // Keep the utility layer and specificity at this authored use.
-            const name = variable.slice(2)
-            const moduleId = 'virtual:inspector-' + name + '.css'
-            styles.set(
-              moduleId,
-              '@layer theme, base, components, utilities; @layer utilities { .' +
-                name +
-                ' { ' +
-                property +
-                ': var(' +
-                variable +
-                ', ' +
-                utility.fallback +
-                '); } }',
-            )
-            out.prepend('import ' + JSON.stringify(moduleId) + ';\n')
-            out.overwrite(value.start + start, value.start + start + literal.length, name)
+          if (utility || style.css) {
+            const key=cssInput(style)
+            const moduleId='virtual:inspector-'+variable.slice(2)+'.css'
+            styles.set(moduleId,'@property '+key+' {syntax:"*";inherits:false;} [data-li-revision="'+revision+'"]{'+key+':var('+variable+');}')
+            out.prepend('import '+JSON.stringify(moduleId)+';\n')
           } else {
             const fallback = '"var(' + variable + ', " + (' + literal + ') + ' + JSON.stringify(unit + ')')
             out.overwrite(value.start + start, value.start + start + literal.length, '(' + fallback + ')')
