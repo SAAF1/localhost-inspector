@@ -10,6 +10,7 @@
     "dev": "node scripts/dev.mjs",
     "proposal": "node scripts/proposal.mjs",
     "preview:proposal": "node scripts/preview-session.mjs",
+    "preview:studio": "node scripts/preview-studio.mjs",
     "preview:project": "node scripts/flow/serve.mjs --source",
     "lint": "biome lint",
     "test": "node --test tests/*.test.mjs",

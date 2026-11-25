@@ -3,12 +3,14 @@ import { dockFlowInspector, flowPath, isFlowChild, watchFlowFrame } from './flow
 import { componentPreviewRequest, previewButtonSize } from './component-preview.js'
 import { captureEditEvidence } from './capture-evidence.js'
 
-const endpoint = 'http://127.0.0.1:5188/inspector'
+const defaultPort = 5188
 const setting = 'helperKey'
 const pendingCaptures = new Map()
 const flowAttachments = new Map()
 
-async function helper(key, request) {
+async function helper(key, request, port = defaultPort) {
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Error('Choose a valid local helper port')
+  const endpoint = 'http://127.0.0.1:' + port + '/inspector'
   if (!key) throw Error('Pair the local helper in extension settings')
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -22,7 +24,8 @@ async function helper(key, request) {
 }
 
 async function call(request) {
-  return helper((await chrome.storage.local.get(setting))[setting], request)
+  const pair = await chrome.storage.local.get([setting, 'helperPort'])
+  return helper(pair[setting], request, pair.helperPort)
 }
 
 function localOrigin(url) {
@@ -119,8 +122,9 @@ chrome.tabs.onRemoved.addListener(tabId => {
 
 async function handle(message, sender) {
   if (message.type === 'pair' && sender.url === chrome.runtime.getURL('settings.html')) {
-    await helper(message.key, { type: 'ping' })
-    await chrome.storage.local.set({ [setting]: message.key })
+    const port = message.port ?? defaultPort
+    await helper(message.key, { type: 'ping' }, port)
+    await chrome.storage.local.set({ [setting]: message.key, helperPort: port })
     return
   }
   const origin = localOrigin(sender.url)

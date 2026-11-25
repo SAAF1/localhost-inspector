@@ -31,9 +31,25 @@ const appRoot = resolve(builtApp)
 const mapRoot = mapDirectory ? resolve(mapDirectory) : await linkedCanvas(appRoot)
 const durableCanvas = await canvasProject(mapRoot)
 const mergeSavedFrames = durableCanvas && savedPreviewFrames(mapRoot)
-const editor = durableCanvas && comparison?.role !== 'proposal' && (await canvasHelper(mapRoot, appRoot, 'http://127.0.0.1:' + port, process.env.INSPECTOR_CANVAS_HELPER_STATE) || variantJournal(mapRoot, 'original', {
-  seed: 'inspector-state.json', catalogs: variantCatalogs(mapRoot, { canvas: mapRoot, sourceRoot: appRoot }),
-}))
+const origin = 'http://127.0.0.1:' + port
+let editor
+if (durableCanvas && comparison?.role !== 'proposal') {
+  if (process.env.INSPECTOR_CANVAS_HELPER_STATE) {
+    // A new app must already be listening before its process can be bound.
+    // Verify the binding on the first request and retry a premature request.
+    let paired
+    editor = { async handle(message) {
+      paired ??= canvasHelper(mapRoot, appRoot, origin, process.env.INSPECTOR_CANVAS_HELPER_STATE)
+      let client
+      try { client = await paired } catch (error) { paired = undefined; throw error }
+      return client.handle(message)
+    } }
+  } else {
+    editor = await canvasHelper(mapRoot, appRoot, origin) || variantJournal(mapRoot, 'original', {
+      seed: 'inspector-state.json', catalogs: variantCatalogs(mapRoot, { canvas: mapRoot, sourceRoot: appRoot }),
+    })
+  }
+}
 
 async function comparisonForOriginal(origin) {
   try {
@@ -88,7 +104,7 @@ async function serve(request, response) {
       streamProposalLink(origin, response)
       return
     }
-    if (await (mapRoot ? serveWorkspaceAsset(path, response, Boolean(editor)) : servePreviewAsset(path, response))) return
+    if (await (mapRoot ? serveWorkspaceAsset(path, response, Boolean(editor) && new URL(request.url, origin).searchParams.get('editor') !== 'extension') : servePreviewAsset(path, response))) return
     if (mapRoot && /^((map|previews|audit)\.json|frame-\d+(\.png|-(desktop|tablet|phone)(-hug)?(-2x)?\.webp))$/.test(relative)) {
       // Candidate screenshots and inventories must never come from the original.
       if (comparison?.role === 'proposal' && relative !== 'map.json') {
@@ -152,6 +168,7 @@ if (sourceMode) {
   const server = await createViteServer({
     root: appRoot,
     ...(comparison?.role === 'proposal' ? { cacheDir: resolve(appRoot, '../vite-cache') } : {}),
+    ...(process.env.INSPECTOR_VITE_CACHE ? {cacheDir: resolve(process.env.INSPECTOR_VITE_CACHE)} : {}),
     plugins: [workspace, preparedSites(appRoot, process.env.INSPECTOR_PREPARED_SITES), componentPreviewSites(appRoot), tableRenderSites(appRoot)],
     server: { host: '127.0.0.1', port: Number(port), strictPort: true, open: false },
   })

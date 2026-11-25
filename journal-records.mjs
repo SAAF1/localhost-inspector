@@ -30,7 +30,7 @@ export function journalValidators(journalRoute) {
         typeof prepared.revision === 'string' && /^[a-f0-9]{64}$/.test(prepared.revision) &&
         typeof prepared.file === 'string' && prepared.file.length <= 240 && /\.[jt]sx$/.test(prepared.file) &&
         !prepared.file.startsWith('/') && !prepared.file.split('/').includes('..')
-      const validControl = field === undefined ? record.property === 'gap' :
+      const validControl = field === undefined ? ['gap','width','height','min-width','min-height','max-width','max-height','font-weight','color','background-color'].includes(record.property) :
         typeof field === 'string' && /^[a-zA-Z][a-zA-Z0-9-]{0,59}$/.test(field) && record.property === 'component-' + field &&
         typeof record.requested === 'string' && /^[a-zA-Z0-9_-]{1,60}$/.test(record.requested) &&
         record.observed === record.requested && !reference

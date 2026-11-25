@@ -49,9 +49,9 @@
       if (!/^[a-f0-9]{64}$/.test(revision)) continue
       if (field) next.set(revision, edit.requested)
       else if (!/[;{}]/.test(edit.requested) && CSS.supports(edit.property, edit.requested)) {
-        declarations.set(revision, edit)
+        declarations.set(revision + ':' + edit.property, edit)
         rules.push(
-          '[data-li-revision="' + revision + '"]{--li-' + revision.slice(0, 20) + ':' + edit.requested + '}',
+          '[data-li-revision="' + revision + '"]{--li-' + revision.slice(0, 20) + ':' + edit.requested + ';--li-' + revision.slice(0, 20) + '-' + edit.property + ':' + edit.requested + '}',
         )
       }
     }
@@ -75,7 +75,7 @@
   }
   function authored(node, property) {
     const revision = node.getAttribute('data-li-revision')
-    const edit = revision && declarations.get(revision)
+    const edit = revision && declarations.get(revision + ':' + property)
     return edit?.property === property ? edit.requested : undefined
   }
   ui.preparedPreview = { contract, project, locate, authored, stale, shows }

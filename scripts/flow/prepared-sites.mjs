@@ -6,6 +6,7 @@ import { join, relative } from 'node:path'
 import { parse } from '@babel/parser'
 import MagicString from 'magic-string'
 
+const styleProperties = new Set(['gap', 'width', 'height', 'min-width', 'max-width', 'min-height', 'max-height', 'font-weight', 'color', 'background-color'])
 const runtime = 'virtual:inspector-prepared'
 const runtimeSource = new URL('../../integrations/prepared-input.mjs', import.meta.url)
 function walk(node, visit, owner) {
@@ -107,28 +108,29 @@ export function preparedSites(root, manifest) {
         }
         const revision = hash.digest('hex')
         revisions[site.id] = revision
-        const variable = '--li-' + revision.slice(0, 20)
+        const prefix = '--li-' + revision.slice(0, 20)
         const fields = {}
         const attr = (name) => node.attributes.find((a) => a.name?.name === name)
         let markers = ''
-        if (site.style) {
-          const { property, literal, attribute, unit = '', utility } = site.style
-          if (property !== 'gap') throw Error('Only gap has a qualified prepared style recipe')
+        for (const style of site.styles ?? (site.style ? [site.style] : [])) {
+          const { property, literal, attribute, unit = '', utility } = style
+          const variable = site.styles ? prefix + '-' + property : prefix
+          if (!styleProperties.has(property)) throw Error('Unsupported prepared style recipe')
           const value = attr(attribute)?.value
           if (!value) throw Error('Missing prepared style expression')
           const expression = code.slice(value.start, value.end)
-          const start = expression.indexOf(literal)
-          if (start < 0 || expression.indexOf(literal, start + literal.length) >= 0)
+          const start = utility ? [...expression.matchAll(/[^\s'"]+/g)].find(m => m[0] === literal)?.index ?? -1 : expression.indexOf(literal)
+          if (start < 0 || (!utility && expression.indexOf(literal, start + literal.length) >= 0))
             throw Error('Ambiguous prepared style expression')
           // Preserve dynamic inline/sx ownership. The variable is consumed at
           // the original declaration, so hover and media rules still compete normally.
           if (utility) {
             // Keep the utility layer and specificity at this authored use.
-            const name = 'li-' + revision.slice(0, 20)
+            const name = variable.slice(2)
             const moduleId = 'virtual:inspector-' + name + '.css'
             styles.set(
               moduleId,
-              '@layer utilities { .' +
+              '@layer theme, base, components, utilities; @layer utilities { .' +
                 name +
                 ' { ' +
                 property +
@@ -144,7 +146,8 @@ export function preparedSites(root, manifest) {
             const fallback = '"var(' + variable + ', " + (' + literal + ') + ' + JSON.stringify(unit + ')')
             out.overwrite(value.start + start, value.start + start + literal.length, '(' + fallback + ')')
           }
-          fields.style = property
+          if (site.styles) (fields.styles ??= []).push(property)
+          else fields.style = property
         }
         if (site.input) {
           if (owner.type !== 'FunctionDeclaration') throw Error('A prepared input needs a React component owner')

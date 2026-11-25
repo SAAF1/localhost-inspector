@@ -1,3 +1,4 @@
+import { mountEditionSwitcher } from './edition-switcher.mjs'
 import './tooltip.js'
 import { prepareWorkspaceInspector } from './inspector-request.mjs'
 import { mountVariantSections } from './variant-sections.mjs'
@@ -1023,7 +1024,7 @@ function watchLiveFrame(frame) {
   let connected
   function deliverPendingPick() {
     const target = pendingInspectTarget
-    if (frame !== preview || !expanded || !target?.isConnected || target.ownerDocument !== frame.contentDocument) return
+    if (frame !== preview || !target?.isConnected || target.ownerDocument !== frame.contentDocument) return
     pendingInspectTarget = null
     target.dispatchEvent(new Event('select-inspector-variable-use', { bubbles: true, composed: true, cancelable: true }))
   }
@@ -1076,7 +1077,9 @@ function watchLiveFrame(frame) {
         if (candidate) cancelCandidate()
       }
       if (expanded && event.type === 'click' && event.button === 0) setFrameSelected(true)
-      if (!expanded) return
+      const wantsInspector = document.body.hasAttribute('data-canvas-editor') ||
+        document.body.hasAttribute('data-inspector-watching') || new URLSearchParams(location.search).get('editor') === 'extension'
+      if (!expanded && !(event.metaKey && event.button === 0 && wantsInspector)) return
       // Reserve Command-click even before the extension attaches to a new frame.
       // Only the mounted Inspector should receive the trusted selection gesture.
       if (event.metaKey && event.button === 0 && doc.getElementById('localhost-inspector-outlines')) {
@@ -1084,7 +1087,7 @@ function watchLiveFrame(frame) {
         return
       }
       if (event.metaKey && event.button === 0 && event.type === 'click' &&
-          (document.body.hasAttribute('data-canvas-editor') || document.body.hasAttribute('data-inspector-watching'))) {
+          wantsInspector) {
         // Keep the exact node. A re-render or navigation must never redirect a pick.
         pendingInspectTarget = window.LocalhostInspector.pointedElement(doc, { x: event.clientX, y: event.clientY })
       }
@@ -1286,5 +1289,6 @@ window.addEventListener('hashchange', () => {
   const link = proposalEntry(data, location.search)
   if (link) void openContext(link, requestedVariant())
 })
+mountEditionSwitcher(document.querySelector('#workspace-toolbar'),data.designVersions,comparisonContext)
 document.body.setAttribute('data-workspace-ready', '')
 toggle.disabled = false

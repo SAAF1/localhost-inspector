@@ -775,7 +775,7 @@
     try {
       recovery.projectPrepared(edit)
       edit.observed = read()
-      const expected = field ? requested : requested.startsWith('var(')
+      const expected = tokenOptions?.colorToken ? ui.resolveColorVariable(node, tokenOptions.colorToken.name) : field ? requested : requested.startsWith('var(')
         ? getComputedStyle(node).getPropertyValue(requested.slice(4, -1)).trim() : requested
       const valueMatches = tokenOptions?.spacingToken
         ? ui.spacingVariableMatches(node, property, tokenOptions.spacingToken.name, edit.observed)
@@ -795,7 +795,7 @@
       return
     }
     const prepared = ui.preparedPreview.contract(node)
-    if (prepared?.style === property && !selectionOnly && !tokenOptions?.pendingColor) {
+    if ((prepared?.style === property || prepared?.styles?.includes(property)) && !selectionOnly && !tokenOptions?.pendingColor) {
       return commitPrepared(node, prepared, property, requested, tokenOptions)
     }
     const editRoute = currentRoute
