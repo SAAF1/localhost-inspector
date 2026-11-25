@@ -5,7 +5,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, renameSync, writeF
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from '@babel/parser'
-import {baseRule,cssFields,cssParser} from './prepared-css.mjs'
+import { baseRule, cssFields, cssParser } from './prepared-css.mjs'
 import { typeModule } from '../../component-types.mjs'
 
 const hash = (text) => createHash('sha256').update(text).digest('hex')
@@ -17,6 +17,12 @@ const dependencies = [
   'pnpm-lock.yaml',
   'vite.config.ts',
   'package.json',
+  'package-lock.json',
+  'yarn.lock',
+  'bun.lock',
+  ...['vite.config', 'postcss.config', 'tailwind.config'].flatMap((name) =>
+    ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts'].map((ext) => name + '.' + ext),
+  ),
 ]
 const variants = { outline: '.bg-background', secondary: '.bg-secondary' }
 const lengths = {
@@ -75,8 +81,8 @@ function analyze(code, file, config) {
       else if (typeof name === 'string' && /^[a-z]/.test(name) && typeof classes === 'string') {
         const tokens = classes.split(/\s+/)
         const eligible = tokens.flatMap((literal) => {
-          const declarations=config.css.classes.get(literal)??[]
-          if(declarations.length)return declarations
+          const declarations = config.css.classes.get(literal) ?? []
+          if (declarations.length) return declarations
           const rule = config.tailwind && utility(literal, config.theme)
           if (
             !rule ||
@@ -103,7 +109,16 @@ function analyze(code, file, config) {
         })
         const styles = eligible.filter((s) => eligible.filter((x) => s.property === x.property).length === 1)
         if (styles.length) {
-          found.push({ ...raw, styles,dependencies:[...new Set([...raw.dependencies,...styles.flatMap(s=>s.css?[s.css.file,...config.css.tokenFiles]:[])])] })
+          found.push({
+            ...raw,
+            styles,
+            dependencies: [
+              ...new Set([
+                ...raw.dependencies,
+                ...styles.flatMap((s) => (s.css ? [s.css.file, ...config.css.tokenFiles] : [])),
+              ]),
+            ],
+          })
           reason = null
         }
       } else if (
@@ -167,37 +182,61 @@ function analyze(code, file, config) {
     rejected.push({ file, owner: duplicate.owner, reason: 'ambiguous authored use' })
   return { sites, rejected }
 }
-const trees=new Map()
-function ordinaryCSS(root,source) {
-  const classes=new Map(),tokenFiles=[],spacingSources=[]
-  const parse=cssParser(root)
-  for(const path of readdirSync(source,{recursive:true}).filter(name=>name.endsWith('.css'))){
-    const file=relative(root,join(source,path)),code=readFileSync(join(root,file),'utf8')
-    const sheet=parse.parse(code,{from:file})
-    const tokens=new Set()
-    sheet.walkDecls(/^--/, d=>{if(/^--space-[\w-]+$/.test(d.prop))tokens.add(d.prop)})
-    if(tokens.size){tokenFiles.push(file);spacingSources.push({file,names:[...tokens]})}
-    sheet.walkRules(rule=>{
-      if(!baseRule(rule)||!/^\.[a-zA-Z_][\w-]*$/.test(rule.selector))return
-      const literal=rule.selector.slice(1)
-      for(const d of rule.nodes){
-        if(d.type!=='decl')continue
-        for(const property of cssFields(d)){
-          const list=classes.get(literal)??[]
-          list.push({attribute:'className',literal,property,css:{file,declaration:d.prop,value:d.value}})
-          classes.set(literal,list)
+const trees = new Map()
+function ordinaryCSS(root, source) {
+  const classes = new Map(),
+    tokenFiles = [],
+    spacingSources = [],
+    referenced = new Set(),
+    definitions = new Map()
+  const parse = cssParser(root)
+  for (const path of readdirSync(source, { recursive: true }).filter((name) => name.endsWith('.css'))) {
+    const file = relative(root, join(source, path)),
+      code = readFileSync(join(root, file), 'utf8')
+    const sheet = parse.parse(code, { from: file })
+    const tokens = new Set()
+    sheet.walkDecls((d) => {
+      if (d.prop.startsWith('--')) {
+        tokens.add(d.prop)
+        return
+      }
+      if (/^(gap|padding(?:-(top|right|bottom|left))?)$/.test(d.prop))
+        for (const match of d.value.matchAll(/var\((--[\w-]+)\)/g)) referenced.add(match[1])
+    })
+    if (tokens.size) {
+      tokenFiles.push(file)
+      definitions.set(file, tokens)
+    }
+    sheet.walkRules((rule) => {
+      if (!baseRule(rule) || !/^\.[a-zA-Z_][\w-]*$/.test(rule.selector)) return
+      const literal = rule.selector.slice(1)
+      for (const d of rule.nodes) {
+        if (d.type !== 'decl') continue
+        for (const property of cssFields(d)) {
+          const list = classes.get(literal) ?? []
+          list.push({
+            attribute: 'className',
+            literal,
+            property,
+            css: { file, declaration: d.prop, value: d.value },
+          })
+          classes.set(literal, list)
         }
       }
     })
   }
-  return {classes,tokenFiles,spacingSources}
+  for (const [file, names] of definitions) {
+    const used = [...names].filter((name) => referenced.has(name))
+    if (used.length && used.length <= 100) spacingSources.push({ file, names: used })
+  }
+  return { classes, tokenFiles, spacingSources }
 }
 export function prepareProject(project, destination, namespace, boundary = 'src') {
   const root = realpathSync(project),
     source = realpathSync(join(root, boundary))
   if (!source.startsWith(root + sep) || resolve(destination).startsWith(root + sep))
     throw Error('Use an app source subdirectory and an external manifest.')
-  const deps = dependencies.filter((path) => existsSync(join(root, path)))
+  const deps = [...new Set(dependencies)].filter((path) => existsSync(join(root, path)))
   const theme = existsSync(join(root, 'src/styles/theme.css'))
     ? readFileSync(join(root, 'src/styles/theme.css'), 'utf8')
     : ''
@@ -205,7 +244,7 @@ export function prepareProject(project, destination, namespace, boundary = 'src'
   const tailwind = existsSync(entry) && /@import\s+['"]tailwindcss['"]/.test(readFileSync(entry, 'utf8'))
   const button =
     existsSync(join(root, buttonSource)) && hash(readFileSync(join(root, buttonSource))) === buttonRevision
-  const css=ordinaryCSS(root,source)
+  const css = ordinaryCSS(root, source)
   const files = [],
     sites = [],
     unresolved = []
@@ -222,13 +261,16 @@ export function prepareProject(project, destination, namespace, boundary = 'src'
         continue
       }
       try {
-        const code=readFileSync(path,'utf8')
-        let cached=trees.get(path)
-        if(cached?.code!==code){
-          cached={code,tree:parse(code,{sourceType:'unambiguous',plugins:['jsx','typescript','decorators-legacy']})}
-          trees.set(path,cached)
+        const code = readFileSync(path, 'utf8')
+        let cached = trees.get(path)
+        if (cached?.code !== code) {
+          cached = {
+            code,
+            tree: parse(code, { sourceType: 'unambiguous', plugins: ['jsx', 'typescript', 'decorators-legacy'] }),
+          }
+          trees.set(path, cached)
         }
-        const result=analyze(code,file,{theme,button,tailwind,dependencies:deps,tree:cached.tree,css})
+        const result = analyze(code, file, { theme, button, tailwind, dependencies: deps, tree: cached.tree, css })
         sites.push(...result.sites)
         unresolved.push(...result.rejected)
         files.push({ file, status: 'indexed', candidates: result.sites.length })
@@ -254,12 +296,13 @@ export function prepareProject(project, destination, namespace, boundary = 'src'
     unresolved,
     sites,
     retiredSites,
-    spacingSources:css.spacingSources,
+    spacingSources: css.spacingSources,
+    utilityEntry: tailwind ? 'src/styles/index.css' : null,
     buttonAdapter: button ? { file: buttonSource, digest: buttonRevision } : null,
   }
   const tmp = destination + '.' + process.pid + '.tmp'
-  const serialized=JSON.stringify(report,null,2)
-  if(previous && JSON.stringify(previous,null,2)===serialized)return report
+  const serialized = JSON.stringify(report, null, 2)
+  if (previous && JSON.stringify(previous, null, 2) === serialized) return report
   writeFileSync(tmp, serialized)
   renameSync(tmp, destination)
   return report

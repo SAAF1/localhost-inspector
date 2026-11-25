@@ -768,38 +768,77 @@
     const path = currentRoute
     const version = activeRouteVersion
     if (!preparedPreviews) throw Error('Restart the local helper with prepared preview support.')
-    const read = () => field ? node.getAttribute('data-li-choice') : getComputedStyle(node).getPropertyValue(property)
-    const before = read()
-    if (ui.preparedPreview.contract(node)?.revision !== contract.revision ||
-        (field && !ui.preparedPreview.shows(node, contract.input, before))) {
+    const properties = Array.isArray(property) ? property : [property]
+    const current = () =>
+      node.isConnected &&
+      selection.current === node &&
+      isCurrentRoute(path, version) &&
+      ui.preparedPreview.contract(node)?.revision === contract.revision
+    const read = (key) =>
+      field ? node.getAttribute('data-li-choice') : getComputedStyle(node).getPropertyValue(key)
+    if (!current() || (field && !ui.preparedPreview.shows(node, contract.input, read(property))))
       throw Error('The prepared part changed. Select it again before editing.')
-    }
-    const edit = { id: crypto.randomUUID(), route: path, property, before, requested, ...tokenOptions,
+    const records = properties.map((key) => ({
+      id: crypto.randomUUID(),
+      route: path,
+      property: key,
+      before: read(key),
+      requested,
+      ...tokenOptions,
       target: { tag: node.localName, key: null, slot: node.getAttribute('data-slot'), id: node.id || null },
-      intent: 'feature-template', restore: 'unique', prepared: { site: contract.site, file: contract.file, revision: contract.revision, ...(field ? { field } : {}) },
-      sourceContext: ui.describeSourceContext(node), viewport: { width: innerWidth, height: innerHeight } }
+      intent: 'feature-template',
+      restore: 'unique',
+      prepared: {
+        site: contract.site,
+        file: contract.file,
+        revision: contract.revision,
+        ...(field ? { field } : {}),
+      },
+      sourceContext: ui.describeSourceContext(node),
+      viewport: { width: innerWidth, height: innerHeight },
+    }))
+    const untouchedPadding = properties.every(key => key.startsWith('padding-'))
+      ? ['padding-top','padding-right','padding-bottom','padding-left'].filter(key=>!properties.includes(key)).map(key=>[key,read(key)])
+      : []
+    function verified(edit) {
+      const key = edit.property
+      edit.observed = read(key)
+      if (field) return edit.observed === requested && ui.preparedPreview.shows(node, contract.input, requested)
+      if (key === 'width' && ['100%', 'fit-content'].includes(requested)) {
+        if (
+          !ui.widthModes(node).length ||
+          String(node.computedStyleMap().get('width')) !== requested ||
+          !Number.isFinite(parseFloat(edit.observed))
+        )
+          return false
+        if (requested === 'fit-content') return true
+        const parent = node.parentElement,
+          style = getComputedStyle(parent)
+        const available = parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+        return Math.abs(parseFloat(edit.observed) - available) <= 1
+      }
+      if (tokenOptions?.spacingToken)
+        return ui.spacingVariableMatches(node, key, tokenOptions.spacingToken.name, edit.observed)
+      if (tokenOptions?.colorToken)
+        return edit.observed === ui.resolveColorVariable(node, tokenOptions.colorToken.name)
+      if (['color', 'background-color'].includes(key)) return edit.observed === ui.normalizeSolidColor(requested)
+      return edit.observed === requested
+    }
     try {
-      recovery.projectPrepared(edit)
-      const current=()=>node.isConnected && selection.current===node && isCurrentRoute(path,version) && ui.preparedPreview.contract(node)?.revision===contract.revision
-      const matched=await ui.waitForPreview(current,()=>{
-      edit.observed = read()
-      if(property==='width' && ['100%','fit-content'].includes(requested)){
-        return ui.widthModes(node).length>0 && String(node.computedStyleMap().get('width'))===requested && Number.isFinite(parseFloat(edit.observed))
-      }
-      const expected = tokenOptions?.colorToken ? ui.resolveColorVariable(node, tokenOptions.colorToken.name) : ['color','background-color'].includes(property) ? ui.normalizeSolidColor(requested) : field ? requested : requested.startsWith('var(')
-        ? getComputedStyle(node).getPropertyValue(requested.slice(4, -1)).trim() : requested
-      const valueMatches = tokenOptions?.spacingToken
-        ? ui.spacingVariableMatches(node, property, tokenOptions.spacingToken.name, edit.observed)
-        : edit.observed === expected
-      const contentMatches = !field || ui.preparedPreview.shows(node, contract.input, requested)
-      return contentMatches && valueMatches
-      })
-      if (!matched) {
+      recovery.projectPrepared(records)
+      if (!(await ui.waitForPreview(current, () => records.every(verified) && untouchedPadding.every(([key,before])=>read(key)===before))))
         throw Error('The prepared edit did not reach the selected part in its current state.')
-      }
-      await write({ type: 'save', record: edit }, path, version)
-      if (isCurrentRoute(path, version)) recovery.remember(edit)
-    } finally { recovery.projectPrepared() }
+      const pair = records.length === 2
+      await write(
+        pair ? { type: 'savePairedPadding', records } : { type: 'save', record: records[0] },
+        path,
+        version,
+      )
+      if (isCurrentRoute(path, version))
+        for (const edit of records) recovery.remember(pair ? { ...edit, group: records[0].id } : edit)
+    } finally {
+      recovery.projectPrepared()
+    }
     reportRecovery()
   }
   async function commitEdit(node, property, requested, tokenOptions, selectionOnly = false) {
@@ -905,6 +944,9 @@
     if (!isCurrent() || comparing || !selected.isConnected || journalRevision === null) {
       throw Error('Selection changed. Try the edit again.')
     }
+    const contract=ui.preparedPreview.contract(selected)
+    if(contract && paddingProperties(axis).every(key=>contract.styles?.includes(key) && canEdit(selected,key)))
+      return commitPrepared(selected,contract,paddingProperties(axis),requested,options)
     const { template, members: sharedMembers } = scope
     const shared = !template && axis === 'vertical' && sharedMembers.length > 0
     const members = template || shared ? sharedMembers : [selected]

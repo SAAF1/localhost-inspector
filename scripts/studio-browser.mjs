@@ -52,5 +52,5 @@ export async function openStudio(
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  await openStudio(resolve(process.argv[2]), { id: process.argv[3] || 'a' })
+  await openStudio(resolve(process.argv[2]), { id: process.argv[3] || 'a', route: process.argv[4] || '/' })
 }

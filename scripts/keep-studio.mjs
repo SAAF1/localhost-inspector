@@ -97,6 +97,8 @@ export function keepStudio(dir) {
             const prefix = style?.literal.match(/^(gap|w|h|min-w|max-w|min-h|max-h)-/)?.[1]
             const token = /^var\(--[\w-]+\)$/.test(value)
             if (prefix && (token || /^\d+(?:\.\d+)?px$/.test(value))) replacement = prefix + '-[' + value + ']'
+            if (prefix === 'w' && value === '100%') replacement = 'w-full'
+            if (prefix === 'w' && value === 'fit-content') replacement = 'w-fit'
             if (style && property === 'font-weight' && /^[1-9]00$/.test(value))
               replacement = 'font-[' + value + ']'
             if (style && ['color', 'background-color'].includes(property) && token)

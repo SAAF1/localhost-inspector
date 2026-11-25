@@ -27,8 +27,14 @@
         /^[a-f0-9]{64}$/.test(c.revision) &&
         revisions[c.site] === c.revision &&
         node.getAttribute('data-li-revision') === c.revision
-      )
+      ) {
+        if(c.cssReady){
+          const available=key=>getComputedStyle(node).getPropertyValue(c.cssReady[key]).trim()==='1'
+          if(c.styles)c.styles=c.styles.filter(available)
+          if(c.style && !available(c.style))delete c.style
+        }
         return c
+      }
     } catch {
       /* Ordinary app node. */
     }
@@ -50,6 +56,11 @@
       if (field) next.set(revision, edit.requested)
       else if (!/[;{}]/.test(edit.requested) && CSS.supports(edit.property, edit.requested)) {
         declarations.set(revision + ':' + edit.property, edit)
+        if(edit.property.startsWith('padding-')){
+          const prefix='--li-'+revision.slice(0,20)
+          const shorthand=['top','right','bottom','left'].map(side=>'var('+prefix+'-padding-'+side+', var('+prefix+'-base-padding-'+side+'))').join(' ')
+          rules.push('[data-li-revision="'+revision+'"]{'+prefix+'-padding:'+shorthand+'}')
+        }
         rules.push(
           '[data-li-revision="' + revision + '"]{--li-' + revision.slice(0, 20) + ':' + edit.requested + ';--li-' + revision.slice(0, 20) + '-' + edit.property + ':' + edit.requested + '}',
         )

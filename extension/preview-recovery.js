@@ -428,7 +428,7 @@
 
     function projectPrepared(extra) {
       const records = Array.from(saved.values()).filter(edit => edit.prepared)
-      if (extra) records.push(extra)
+      if (extra) records.push(...(Array.isArray(extra)?extra:[extra]))
       ui.preparedPreview.project(records)
     }
     function clear() {

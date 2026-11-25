@@ -33,6 +33,7 @@ const root = resolve(directory),
   state = join(root, 'helper')
 const repo = fileURLToPath(new URL('../', import.meta.url))
 const children = new Set()
+const startup = performance.now()
 async function freePort() {
   const server = createServer().listen(0, '127.0.0.1')
   await once(server, 'listening')
@@ -103,11 +104,19 @@ try {
     if (sourceArg && realpathSync(sourceArg) !== studio.source)
       throw Error('This studio belongs to a different app.')
   } else {
-    if (!sourceArg || !mapArg)
-      throw Error('A new studio needs an installed app checkout and its captured flow map.')
+    if (!sourceArg) throw Error('A new studio needs an installed app checkout and its captured flow map.')
     mkdirSync(root, { recursive: false, mode: 0o700 })
     const source = realpathSync(sourceArg),
-      map = realpathSync(mapArg)
+      map = mapArg ? realpathSync(mapArg) : join(root, 'entry-canvas')
+    if (!mapArg) {
+      mkdirSync(map)
+      write(join(map, 'map.json'), {
+        viewport: { width: 1440, height: 900 },
+        frames: [{ id: 'frame-1', route: '/', label: 'Home', steps: [], checkpoint: [] }],
+        connections: [],
+        gaps: [],
+      })
+    }
     const namespace = 'local-studio'
     const versions = []
     for (const [id, label] of [
@@ -122,7 +131,15 @@ try {
         origin = 'http://127.0.0.1:' + port
       versions.push({ id, label, port, origin, app, basis, directory: dir })
     }
-    studio = { version: 1, source, map, namespace, helperPort: await freePort(), versions }
+    studio = {
+      version: 1,
+      source,
+      map,
+      namespace,
+      boundary: process.env.INSPECTOR_SOURCE_BOUNDARY || 'src',
+      helperPort: await freePort(),
+      versions,
+    }
     write(file, studio)
   }
   process.env.INSPECTOR_HELPER_PORT = String(studio.helperPort)
@@ -195,7 +212,7 @@ try {
       if (!existsSync(join(map, name)) && existsSync(join(capturedMap, name)))
         copyFileSync(join(capturedMap, name), join(map, name))
     }
-    const inventory = prepareProject(app, manifest, studio.namespace)
+    const inventory = prepareProject(app, manifest, studio.namespace, studio.boundary)
     const child = await start(
       [join(repo, 'scripts/flow/serve.mjs'), '--source', app, String(port), map],
       app,
@@ -211,11 +228,11 @@ try {
       const binding = helperResult(state, 'bind', String(port), app)
       if (id === 'original') {
         const theme = 'src/styles/theme.css'
-        const css = existsSync(join(app,theme)) ? readFileSync(join(app,theme),'utf8') : ''
+        const css = existsSync(join(app, theme)) ? readFileSync(join(app, theme), 'utf8') : ''
         const spacing = [...new Set([...css.matchAll(/(--space-[\w-]+)\s*:/g)].map((m) => m[1]))]
-        if(!spacing.length && inventory.spacingSources?.length===1){
-          const source=inventory.spacingSources[0]
-          helperResult(state,'register-spacing',String(port),source.file,...source.names)
+        if (!spacing.length && inventory.spacingSources?.length === 1) {
+          const source = inventory.spacingSources[0]
+          helperResult(state, 'register-spacing', String(port), source.file, ...source.names)
         }
         if (spacing.length) helperResult(state, 'register-spacing', String(port), theme, ...spacing)
         const colors = ['--primary', '--secondary', '--foreground', '--muted-foreground'].filter((name) =>
@@ -233,11 +250,15 @@ try {
       child.kill()
       throw error
     }
-    console.log(id, inventory.sites.length + ' candidate sites', origin + '/__inspector-flow/?page=/tasks')
+    console.log(
+      id,
+      inventory.sites.length + ' candidate sites',
+      origin + '/__inspector-flow/?page=' + encodeURIComponent(capture.frames[0]?.route || '/'),
+    )
   }
   for (const version of studio.versions) await startVersion(version)
   ready = true
-  console.log('Studio ready', file)
+  console.log('Studio ready', file, 'in', Math.round(performance.now() - startup), 'ms')
   while (children.size) await delay(1000)
 } finally {
   stop()
