@@ -68,7 +68,10 @@
     )
     const fields = ui.element('div')
     fields.id = 'fields'
-    properties.append(guidance, fields)
+    const scope = ui.element('p', 'li-status')
+    scope.id = 'prepared-scope'
+    scope.hidden = true
+    properties.append(guidance, scope, fields)
 
     const footer = ui.element('footer', 'li-footer')
     const status = ui.element('output', 'li-status')

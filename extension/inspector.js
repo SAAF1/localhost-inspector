@@ -440,6 +440,11 @@
     renderActions()
     const node = selection.current
     const hasSelection = Boolean(node?.isConnected)
+    const contract = hasSelection && ui.preparedPreview.contract(node)
+    const shared = contract ? [...(contract.styles ?? (contract.style ? [contract.style] : [])), ...(contract.input ? [contract.input.field] : [])] : []
+    const scope = get('prepared-scope')
+    scope.hidden = !shared.length
+    scope.textContent = shared.length ? 'Shared source controls · ' + shared.join(', ') : ''
     const canvasPaint = isCanvasExpanded?.() && ui.syncCanvasBackground(host, colorCatalog)
     const groupCount = selection.group.length
     const canvasSection = !groupCount && !hasSelection && ui.canvasBackgroundSection({
@@ -580,12 +585,13 @@
     return pathname + search + routeFragment
   }
   const isCurrentRoute = (path, version) => path === route() && version === activeRouteVersion
+  const sourceConflictNotice = 'The prepared source changed. Review the saved edit before reapplying.'
   function status(message, error = false) {
     const notice = get('status')
     notice.textContent = message
     notice.toggleAttribute('data-error', error)
     const pendingNotice = get('pending-status')
-    pendingNotice.textContent = error ? message : ''
+    pendingNotice.textContent = error || message === sourceConflictNotice ? message : ''
     pendingNotice.toggleAttribute('data-error', error)
   }
   const send = (message) => window.phaseABridge(message)
@@ -775,7 +781,7 @@
     try {
       recovery.projectPrepared(edit)
       edit.observed = read()
-      const expected = tokenOptions?.colorToken ? ui.resolveColorVariable(node, tokenOptions.colorToken.name) : field ? requested : requested.startsWith('var(')
+      const expected = tokenOptions?.colorToken ? ui.resolveColorVariable(node, tokenOptions.colorToken.name) : ['color','background-color'].includes(property) ? ui.normalizeSolidColor(requested) : field ? requested : requested.startsWith('var(')
         ? getComputedStyle(node).getPropertyValue(requested.slice(4, -1)).trim() : requested
       const valueMatches = tokenOptions?.spacingToken
         ? ui.spacingVariableMatches(node, property, tokenOptions.spacingToken.name, edit.observed)
@@ -1265,7 +1271,7 @@
     const notice = get('status')
     if (notice.hasAttribute('data-error')) return
     const message = buttonSizeRequiresReload ? 'Reload the page to clear the previous Button Size preview.' :
-      comparing ? '' : recovery.hasPreparedConflict ? 'The prepared source changed. Review the saved edit before reapplying.' : recovery.hasConflicts
+      comparing ? '' : recovery.hasPreparedConflict ? sourceConflictNotice : recovery.hasConflicts
       ? 'The app changed a previewed style. Your edit is still saved.'
       : recovery.hasUnattached ? 'Some saved previews could not be restored.' :
         recovery.hasSessionPreview ? 'Some previews last only while this page stays open.' : ''
@@ -1462,6 +1468,9 @@
   window.addEventListener('popstate', onRouteChange)
   window.addEventListener('hashchange', onRouteChange)
   window.navigation?.addEventListener('currententrychange', onRouteChange)
+  document.addEventListener('li-prepared-revisions', () => {
+    if (!loadingRoute && host.isConnected && recovery.hasRecords) reportRecovery()
+  })
   window.phaseAInspectorReady = loadRoute()
   // Selection can display the live node while saved edits and tokens load.
   // Mutation controls continue to follow loadRoute's existing readiness gate.

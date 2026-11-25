@@ -13,7 +13,7 @@ async function helper(key, request, port = defaultPort) {
   const endpoint = 'http://127.0.0.1:' + port + '/inspector'
   if (!key) throw Error('Pair the local helper in extension settings')
   const response = await fetch(endpoint, {
-    method: 'POST',
+    method: 'POST', redirect: 'error',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key },
     body: JSON.stringify(request),
     signal: AbortSignal.timeout(4500),

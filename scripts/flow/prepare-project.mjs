@@ -203,7 +203,24 @@ export function prepareProject(project, destination, namespace, boundary = 'src'
     }
   }
   scan(source)
-  const report = { version: 1, namespace, boundary, files, unresolved, sites }
+  const previous = existsSync(destination) ? JSON.parse(readFileSync(destination, 'utf8')) : null
+  const currentIds = new Set(sites.map((site) => site.id))
+  const retiredSites =
+    previous?.namespace === namespace
+      ? [...new Set([...previous.sites.map((s) => s.id), ...(previous.retiredSites ?? [])])].filter(
+          (id) => !currentIds.has(id),
+        )
+      : []
+  const report = {
+    version: 1,
+    namespace,
+    boundary,
+    files,
+    unresolved,
+    sites,
+    retiredSites,
+    buttonAdapter: button ? { file: buttonSource, digest: buttonRevision } : null,
+  }
   const tmp = destination + '.' + process.pid + '.tmp'
   writeFileSync(tmp, JSON.stringify(report, null, 2))
   renameSync(tmp, destination)

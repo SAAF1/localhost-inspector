@@ -5,6 +5,9 @@ import { once } from 'node:events'
 import { createServer } from 'node:net'
 import {
   existsSync,
+  lstatSync,
+  symlinkSync,
+  unlinkSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -13,13 +16,14 @@ import {
   copyFileSync,
   renameSync,
 } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createProposal } from './proposal.mjs'
 import { helperResult, sessionFile } from './proposal-journal.mjs'
 import { prepareProject } from './flow/prepare-project.mjs'
-import { forkPrepared } from './fork-prepared.mjs'
+import { forkableEdits, forkPrepared } from './fork-prepared.mjs'
 
 const [directory, sourceArg, mapArg] = process.argv.slice(2)
 if (!directory)
@@ -41,19 +45,33 @@ function write(path, value) {
   writeFileSync(temp, JSON.stringify(value, null, 2), { mode: 0o600 })
   renameSync(temp, path)
 }
-async function start(args, cwd, env, ready) {
+async function start(args, cwd, env, ready, onFork) {
   const child = spawn(process.execPath, args, {
     cwd,
     env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: onFork ? ['ignore', 'pipe', 'pipe', 'ipc'] : ['ignore', 'pipe', 'pipe'],
   })
   children.add(child)
+  if (onFork)
+    child.on('message', async (message) => {
+      if (message?.type !== 'fork-studio') return
+      let reply
+      try {
+        reply = { origin: await onFork() }
+      } catch (error) {
+        reply = { error: error.message }
+      }
+      if (child.connected) child.send({ id: message.id, ...reply })
+    })
   let log = ''
   child.stderr.on('data', (data) => {
     log = (log + data).slice(-3000)
   })
   await new Promise((ok, fail) => {
-    const timer = setTimeout(() => fail(Error('Startup timeout ' + log)), 30000)
+    const timer = setTimeout(() => {
+      child.kill()
+      fail(Error('Startup timeout ' + log))
+    }, 30000)
     child.once('error', (e) => {
       clearTimeout(timer)
       fail(e)
@@ -71,6 +89,7 @@ async function start(args, cwd, env, ready) {
       }
     })
   })
+  return child
 }
 function stop() {
   for (const child of children) child.kill()
@@ -108,27 +127,76 @@ try {
   }
   process.env.INSPECTOR_HELPER_PORT = String(studio.helperPort)
   await start([join(repo, 'local-helper.mjs'), state, 'serve'], repo, {}, 'helper listening')
-  for (const version of studio.versions) {
+  let forking = false
+  let ready = false
+  async function forkVersion(parent) {
+    if (!ready || forking || studio.versions.length >= 8)
+      throw Error('Studio is starting, copying another design, or at its eight-design limit.')
+    forking = true
+    try {
+      const handoff = helperResult(state, 'handoff', String(parent.port))
+      const revision = handoff.revision
+      await forkableEdits(state, handoff, revision)
+      const id = 'design-' + randomUUID().slice(0, 8),
+        directory = join(root, id)
+      const { appRoot: app, basis } = createProposal(parent.app, directory)
+      const port = await freePort(),
+        origin = 'http://127.0.0.1:' + port
+      const version = {
+        id,
+        directory,
+        app,
+        basis,
+        port,
+        origin,
+        label: 'Design ' + String.fromCharCode(64 + studio.versions.length),
+        parent: parent.id,
+      }
+      await startVersion(version, revision)
+      studio.versions.push(version)
+      write(file, studio)
+      for (const item of studio.versions) {
+        const path = join(item.directory, 'canvas/map.json'),
+          map = JSON.parse(readFileSync(path, 'utf8'))
+        write(path, { ...map, designVersions: studio.versions.map(({ label, origin }) => ({ label, origin })) })
+      }
+      return origin
+    } finally {
+      forking = false
+    }
+  }
+  async function startVersion(version, atRevision) {
     const { app, directory: dir, port, origin, id } = version
+    const modules = join(app, 'node_modules')
+    if (lstatSync(modules).isSymbolicLink()) {
+      const installed = realpathSync(modules)
+      unlinkSync(modules)
+      mkdirSync(modules)
+      for (const name of readdirSync(installed))
+        if (!name.startsWith('.') || name === '.bin') symlinkSync(join(installed, name), join(modules, name))
+    }
     const map = join(dir, 'canvas'),
       manifest = join(dir, 'prepared.json')
     mkdirSync(join(map, 'variants'), { recursive: true })
     if (!existsSync(join(map, 'canvas-project.json'))) write(join(map, 'canvas-project.json'), { version: 1 })
-    const capture = JSON.parse(readFileSync(join(studio.map, 'map.json'), 'utf8'))
+    const capturedMap = existsSync(join(studio.map, 'map.json'))
+      ? studio.map
+      : join(studio.versions[0].directory, 'canvas')
+    const capture = JSON.parse(readFileSync(join(capturedMap, 'map.json'), 'utf8'))
     const designVersions = studio.versions.map(({ label, origin }) => ({ label, origin }))
     write(join(map, 'map.json'), { ...capture, origin, designVersions })
-    for (const name of readdirSync(studio.map)) {
+    for (const name of readdirSync(capturedMap)) {
       if (
         !/^(?:(?:previews|audit)\.json|frame-\d+(?:\.png|-(?:desktop|tablet|phone)(?:-hug)?(?:-2x)?\.webp))$/.test(
           name,
         )
       )
         continue
-      if (!existsSync(join(map, name)) && existsSync(join(studio.map, name)))
-        copyFileSync(join(studio.map, name), join(map, name))
+      if (!existsSync(join(map, name)) && existsSync(join(capturedMap, name)))
+        copyFileSync(join(capturedMap, name), join(map, name))
     }
     const inventory = prepareProject(app, manifest, studio.namespace)
-    await start(
+    const child = await start(
       [join(repo, 'scripts/flow/serve.mjs'), '--source', app, String(port), map],
       app,
       {
@@ -137,26 +205,34 @@ try {
         INSPECTOR_VITE_CACHE: join(dir, 'vite-cache'),
       },
       'project preview listening',
+      () => forkVersion(version),
     )
-    const binding = helperResult(state, 'bind', String(port), app)
-    if (id === 'original') {
-      const theme = 'src/styles/theme.css'
-      const css = readFileSync(join(app, theme), 'utf8')
-      const spacing = [...new Set([...css.matchAll(/(--space-[\w-]+)\s*:/g)].map((m) => m[1]))]
-      if (spacing.length) helperResult(state, 'register-spacing', String(port), theme, ...spacing)
-      const colors = ['--primary', '--secondary', '--foreground', '--muted-foreground'].filter((name) =>
-        css.includes(name + ':'),
-      )
-      if (colors.length) helperResult(state, 'register-colors', String(port), theme, ...colors)
-    } else if (!existsSync(sessionFile(dir))) {
-      const parent = studio.versions[0]
-      helperResult(state, 'copy-registrations', String(parent.port), String(port))
-      const revision = helperResult(state, 'handoff', String(parent.port)).revision
-      await forkPrepared(state, parent.port, port, dir, revision)
-      write(sessionFile(dir), { state, port: String(port), binding: binding.id })
+    try {
+      const binding = helperResult(state, 'bind', String(port), app)
+      if (id === 'original') {
+        const theme = 'src/styles/theme.css'
+        const css = readFileSync(join(app, theme), 'utf8')
+        const spacing = [...new Set([...css.matchAll(/(--space-[\w-]+)\s*:/g)].map((m) => m[1]))]
+        if (spacing.length) helperResult(state, 'register-spacing', String(port), theme, ...spacing)
+        const colors = ['--primary', '--secondary', '--foreground', '--muted-foreground'].filter((name) =>
+          css.includes(name + ':'),
+        )
+        if (colors.length) helperResult(state, 'register-colors', String(port), theme, ...colors)
+      } else if (!existsSync(sessionFile(dir))) {
+        const parent = studio.versions.find((v) => v.id === (version.parent ?? 'original'))
+        helperResult(state, 'copy-registrations', String(parent.port), String(port))
+        const revision = atRevision ?? helperResult(state, 'handoff', String(parent.port)).revision
+        await forkPrepared(state, parent.port, port, dir, revision)
+        write(sessionFile(dir), { state, port: String(port), binding: binding.id })
+      }
+    } catch (error) {
+      child.kill()
+      throw error
     }
     console.log(id, inventory.sites.length + ' candidate sites', origin + '/__inspector-flow/?page=/tasks')
   }
+  for (const version of studio.versions) await startVersion(version)
+  ready = true
   console.log('Studio ready', file)
   while (children.size) await delay(1000)
 } finally {

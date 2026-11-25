@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export async function openStudio(
   directory,
-  { id = 'a', headless = false, profile = join(directory, 'browser-profile') } = {},
+  { id = 'a', route = '/tasks', headless = false, profile = join(directory, 'browser-profile') } = {},
 ) {
   const studio = JSON.parse(await readFile(join(directory, 'studio.json'), 'utf8'))
   const version = studio.versions.find((item) => item.id === id)
@@ -35,7 +35,7 @@ export async function openStudio(
     await settings.locator('#result').filter({ hasText: 'Connected' }).waitFor({ timeout: 7000 })
     await settings.close()
     const page = await context.newPage()
-    await page.goto(version.origin + '/__inspector-flow/?page=/tasks&editor=extension')
+    await page.goto(version.origin + '/__inspector-flow/?page=' + encodeURIComponent(route) + '&editor=extension')
     const cdp = await context.browser().newBrowserCDPSession()
     try {
       const { targetInfos } = await cdp.send('Target.getTargets', { filter: [{ type: 'tab' }] })

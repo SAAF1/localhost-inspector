@@ -1,5 +1,5 @@
 import { preparedSites } from './prepared-sites.mjs'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { watch } from 'node:fs'
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
@@ -94,6 +94,23 @@ async function serve(request, response) {
     return
   }
   const path = decodeURIComponent(new URL(request.url, origin).pathname)
+  if (path === flowPath+'duplicate-design' && process.send && process.env.INSPECTOR_PREPARED_SITES) {
+    if(request.method!=='POST' || request.headers.origin!==origin || request.headers['content-type']!=='application/json'){
+      response.writeHead(403).end()
+      return
+    }
+    const id=randomUUID()
+    const finish=message=>{
+      if(message?.id!==id)return
+      clearTimeout(timer)
+      process.off('message',finish)
+      response.writeHead(message.error?409:201,{'content-type':'application/json','cache-control':'no-store'}).end(JSON.stringify(message))
+    }
+    const timer=setTimeout(()=>finish({id,error:'Copying timed out. Reload to check available designs.'}),60000)
+    process.on('message',finish)
+    process.send({type:'fork-studio',id})
+    return
+  }
   if (editor && path === flowPath + 'workspace-inspector') return handleVariantInspector(request, response, new URL(origin), editor)
   if (request.method !== 'GET') { response.writeHead(404).end(); return }
   let data

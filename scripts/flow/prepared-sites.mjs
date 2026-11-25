@@ -1,12 +1,23 @@
 // Explicit development recipes for qualified JSX sites. An ambiguous opening
 // never inherits a previous operation. No application files are rewritten.
 import { createHash } from 'node:crypto'
-import { readFileSync, realpathSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
 import { parse } from '@babel/parser'
 import MagicString from 'magic-string'
 
-const styleProperties = new Set(['gap', 'width', 'height', 'min-width', 'max-width', 'min-height', 'max-height', 'font-weight', 'color', 'background-color'])
+const styleProperties = new Set([
+  'gap',
+  'width',
+  'height',
+  'min-width',
+  'max-width',
+  'min-height',
+  'max-height',
+  'font-weight',
+  'color',
+  'background-color',
+])
 const runtime = 'virtual:inspector-prepared'
 const runtimeSource = new URL('../../integrations/prepared-input.mjs', import.meta.url)
 function walk(node, visit, owner) {
@@ -20,18 +31,72 @@ function walk(node, visit, owner) {
   }
 }
 
+export function preparedOpenings(tree) {
+  const openings = []
+  walk(tree.program, (node, owner) => {
+    if (node.type === 'JSXElement' && owner)
+      openings.push({ node: node.openingElement, children: node.children, owner })
+  })
+  return openings
+}
+
 export function preparedSites(root, manifest) {
   if (!manifest) return
   root = realpathSync(root)
   const read = () => JSON.parse(readFileSync(manifest, 'utf8'))
   let manifestData = read()
   const styles = new Map()
+  let compatibleAlias = true
   return {
     name: 'inspector-prepared-sites',
     enforce: 'pre',
     apply: 'serve',
     config() {
       return { optimizeDeps: { include: ['react', 'react-dom'] } }
+    },
+    configResolved(config) {
+      const path = '@/components/ui/button'
+      const alias = config.resolve.alias.find(({ find }) =>
+        typeof find === 'string' ? path === find || path.startsWith(find + '/') : find.test(path),
+      )
+      compatibleAlias = Boolean(
+        alias &&
+        typeof alias.find === 'string' &&
+        !alias.customResolver &&
+        resolve(alias.replacement + path.slice(alias.find.length)) === join(root, 'src/components/ui/button'),
+      )
+    },
+    configureServer(server) {
+      // Some copied workspaces miss native file events. Revalidate the
+      // prepared files when the app document is reopened, before Vite can
+      // serve a cached module from the previous source revision.
+      let stamps
+      const stamp = () =>
+        [
+          ...new Set([
+            manifest,
+            ...manifestData.sites.flatMap((site) =>
+              [site.file, ...(site.dependencies ?? [])].map((file) => join(root, file)),
+            ),
+          ]),
+        ]
+          .map((file) => {
+            const stat = statSync(file, { throwIfNoEntry: false, bigint: true })
+            return stat ? stat.mtimeNs.toString() + ':' + stat.size : '-'
+          })
+          .join('|')
+      stamps = stamp()
+      server.middlewares.use((req, res, next) => {
+        if (req.headers['sec-fetch-dest'] === 'document' || req.headers['sec-fetch-dest'] === 'iframe') {
+          const latest = stamp()
+          if (latest !== stamps) {
+            manifestData = read()
+            stamps = stamp()
+            server.moduleGraph.invalidateAll()
+          }
+        }
+        next()
+      })
     },
     handleHotUpdate({ file, server, modules }) {
       const changedManifest = file === manifest
@@ -53,7 +118,12 @@ export function preparedSites(root, manifest) {
     },
     load(id) {
       if (id === '\0virtual:inspector-prepared-registry')
-        return readFileSync(new URL('../../integrations/prepared-registry.mjs', import.meta.url), 'utf8')
+        return (
+          readFileSync(new URL('../../integrations/prepared-registry.mjs', import.meta.url), 'utf8') +
+          '\nreportPreparedSites(' +
+          JSON.stringify(Object.fromEntries((manifestData.retiredSites ?? []).map((id) => [id, null]))) +
+          ');'
+        )
       if (id === '\0' + runtime) return readFileSync(runtimeSource, 'utf8')
       return styles.get(id.slice(1))
     },
@@ -65,11 +135,7 @@ export function preparedSites(root, manifest) {
       const recipes = sites.filter((site) => site.file === file)
       if (!recipes.length) return
       const tree = parse(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
-      const openings = []
-      walk(tree.program, (node, owner) => {
-        if (node.type === 'JSXElement' && owner)
-          openings.push({ node: node.openingElement, children: node.children, owner })
-      })
+      const openings = preparedOpenings(tree)
       const out = new MagicString(code)
       const revisions = {}
       let usesInput = false
@@ -81,6 +147,17 @@ export function preparedSites(root, manifest) {
         )
         revisions[site.id] = null
         if (matches.length !== 1) continue
+        const adapter = manifestData.buttonAdapter
+        if (
+          site.input &&
+          adapter &&
+          (!compatibleAlias ||
+            !statSync(join(root, adapter.file), { throwIfNoEntry: false }) ||
+            createHash('sha256')
+              .update(readFileSync(join(root, adapter.file)))
+              .digest('hex') !== adapter.digest)
+        )
+          continue
         const { node, children, owner } = matches[0]
         let slotTag
         if (site.input?.child) {
@@ -119,7 +196,9 @@ export function preparedSites(root, manifest) {
           const value = attr(attribute)?.value
           if (!value) throw Error('Missing prepared style expression')
           const expression = code.slice(value.start, value.end)
-          const start = utility ? [...expression.matchAll(/[^\s'"]+/g)].find(m => m[0] === literal)?.index ?? -1 : expression.indexOf(literal)
+          const start = utility
+            ? ([...expression.matchAll(/[^\s'"]+/g)].find((m) => m[0] === literal)?.index ?? -1)
+            : expression.indexOf(literal)
           if (start < 0 || (!utility && expression.indexOf(literal, start + literal.length) >= 0))
             throw Error('Ambiguous prepared style expression')
           // Preserve dynamic inline/sx ownership. The variable is consumed at
