@@ -50,6 +50,8 @@ export function preparedSites(root, manifest) {
   if (!manifest) return
   root = realpathSync(root)
   const read = () => JSON.parse(readFileSync(manifest, 'utf8'))
+  const runtimeKey = ({ sites, retiredSites, utilityEntry, buttonAdapter }) =>
+    JSON.stringify([sites, retiredSites, utilityEntry, buttonAdapter])
   let manifestData = read()
   const styles = new Map()
   let compatibleAlias = true
@@ -67,9 +69,9 @@ export function preparedSites(root, manifest) {
       )
       compatibleAlias = Boolean(
         alias &&
-        typeof alias.find === 'string' &&
-        !alias.customResolver &&
-        resolve(alias.replacement + path.slice(alias.find.length)) === join(root, 'src/components/ui/button'),
+          typeof alias.find === 'string' &&
+          !alias.customResolver &&
+          resolve(alias.replacement + path.slice(alias.find.length)) === join(root, 'src/components/ui/button'),
       )
     },
     configureServer(server) {
@@ -78,9 +80,19 @@ export function preparedSites(root, manifest) {
       // serve a cached module from the previous source revision.
       if (manifestData.boundary) {
         let timer
-        const refresh = () => {
+        let queue = Promise.resolve()
+        const refresh = async () => {
+          const before = runtimeKey(manifestData)
           try {
-            manifestData = prepareProject(root, manifest, manifestData.namespace, manifestData.boundary)
+            const next = await prepareProject(
+              root,
+              manifest,
+              manifestData.namespace,
+              manifestData.boundary,
+              server,
+            )
+            manifestData = next
+            if (runtimeKey(next) === before) return
           } catch (error) {
             server.config.logger.warn('Inspector discovery could not refresh: ' + error.message)
             return
@@ -96,11 +108,16 @@ export function preparedSites(root, manifest) {
             )
           if (
             !['add', 'unlink', 'change'].includes(event) ||
-            (!config && !(path.startsWith(manifestData.boundary + '/') && /\.(?:[cm]?[jt]sx?|css)$/.test(path)))
+            (!config &&
+              path !== 'index.html' &&
+              !manifestData.stylesheetGraph?.sheets.some((s) => s.file === path) &&
+              !(path.startsWith(manifestData.boundary + '/') && /\.(?:[cm]?[jt]sx?|css)$/.test(path)))
           )
             return
           clearTimeout(timer)
-          timer = setTimeout(refresh, 100)
+          timer = setTimeout(() => {
+            queue = queue.then(refresh)
+          }, 100)
         }
         server.watcher.on('all', schedule)
         server.httpServer?.once('close', () => {
@@ -138,7 +155,12 @@ export function preparedSites(root, manifest) {
     },
     handleHotUpdate({ file, server, modules }) {
       const changedManifest = file === manifest
-      if (changedManifest) manifestData = read()
+      if (changedManifest) {
+        const next = read()
+        const unchanged = runtimeKey(next) === runtimeKey(manifestData)
+        manifestData = next
+        if (unchanged) return []
+      }
       const affected = manifestData.sites.filter(
         (site) => changedManifest || site.dependencies?.includes(relative(root, file)),
       )
@@ -165,187 +187,201 @@ export function preparedSites(root, manifest) {
       if (id === '\0' + runtime) return readFileSync(runtimeSource, 'utf8')
       return styles.get(id.slice(1))
     },
-    transform(code, id) {
-      const file = relative(root, id)
-      if (!/\.[jt]sx$/.test(file) || file.includes('node_modules')) return
-      this.addWatchFile(manifest)
-      const { namespace, sites } = manifestData
-      const recipes = sites.filter((site) => site.file === file)
-      if (!recipes.length) return
-      const tree = parse(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
-      const openings = preparedOpenings(tree)
-      const out = new MagicString(code)
-      const revisions = {}
-      let usesInput = false
-      for (const [index, site] of recipes.entries()) {
-        if (!/^[a-z][a-z0-9-]{0,63}$/.test(site.id) || sites.filter((s) => s.id === site.id).length !== 1)
-          throw Error('Invalid prepared site identity')
-        const matches = openings.filter(
-          ({ node, owner }) => owner.id.name === site.owner && code.slice(node.start, node.end) === site.opening,
-        )
-        revisions[site.id] = null
-        if (matches.length !== 1) continue
-        const adapter = manifestData.buttonAdapter
-        if (
-          site.input &&
-          adapter &&
-          (!compatibleAlias ||
-            !statSync(join(root, adapter.file), { throwIfNoEntry: false }) ||
-            createHash('sha256')
-              .update(readFileSync(join(root, adapter.file)))
-              .digest('hex') !== adapter.digest)
-        )
-          continue
-        const { node, children, owner } = matches[0]
-        let slotTag
-        if (site.input?.child) {
-          const slots = children.filter(
-            (child) =>
-              child.type === 'JSXElement' &&
-              child.openingElement.selfClosing &&
-              code.slice(child.start, child.end) === site.input.child,
+    transform: {
+      order: 'pre',
+      handler(code, id) {
+        const file = relative(root, id)
+        if (!/\.[jt]sx$/.test(file) || file.includes('node_modules')) return
+        this.addWatchFile(manifest)
+        const { namespace, sites } = manifestData
+        const recipes = sites.filter((site) => site.file === file)
+        if (!recipes.length) return
+        const tree = parse(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
+        const openings = preparedOpenings(tree)
+        const out = new MagicString(code)
+        const revisions = {}
+        const registrationsForModule = new Set()
+        const dependencies = new Map()
+        let usesInput = false
+        for (const [index, site] of recipes.entries()) {
+          if (!/^[a-z][a-z0-9-]{0,63}$/.test(site.id) || sites.filter((s) => s.id === site.id).length !== 1)
+            throw Error('Invalid prepared site identity')
+          const matches = openings.filter(
+            ({ node, owner }) => owner.id.name === site.owner && code.slice(node.start, node.end) === site.opening,
           )
-          if (slots.length !== 1 || slots[0].openingElement.name.name !== site.input.choices?.[site.input.base])
-            continue
-          slotTag = slots[0].openingElement.name
-        }
-        const hash = createHash('sha256').update(
-          JSON.stringify([namespace, site, code.slice(owner.start, owner.end)]),
-        )
-        for (const statement of tree.program.body) {
-          const name = (statement.declaration ?? statement).id?.name
-          if (statement.type === 'ImportDeclaration' || site.symbols?.includes(name))
-            hash.update(code.slice(statement.start, statement.end))
-        }
-        for (const path of site.dependencies ?? []) {
-          this.addWatchFile(join(root, path))
-          hash.update(readFileSync(join(root, path)))
-        }
-        const revision = hash.digest('hex')
-        revisions[site.id] = revision
-        const prefix = '--li-' + revision.slice(0, 20)
-        const fields = {}
-        const attr = (name) => node.attributes.find((a) => a.name?.name === name)
-        let markers = ''
-        for (const style of site.styles ?? (site.style ? [site.style] : [])) {
-          const { property, literal, attribute, unit = '', utility } = style
-          const variable = site.styles ? prefix + '-' + property : prefix
-          if (!styleProperties.has(property)) throw Error('Unsupported prepared style recipe')
-          const value = attr(attribute)?.value
-          if (!value) throw Error('Missing prepared style expression')
-          const expression = code.slice(value.start, value.end)
-          const start =
-            utility || style.css
-              ? ([...expression.matchAll(/[^\s'"]+/g)].find((m) => m[0] === literal)?.index ?? -1)
-              : expression.indexOf(literal)
-          if (start < 0 || (!utility && expression.indexOf(literal, start + literal.length) >= 0))
-            throw Error('Ambiguous prepared style expression')
-          // Preserve dynamic inline/sx ownership. The variable is consumed at
-          // the original declaration, so hover and media rules still compete normally.
-          if (utility || style.css) {
-            const shorthand = style.css?.declaration === 'padding'
-            const key = cssInput(shorthand ? { ...style, property: 'padding' } : style)
-            const marker = cssReady(style)
-            const moduleId = 'virtual:inspector-' + variable.slice(2) + '.css'
-            const registrations = [key, marker]
-              .map((name) => '@property ' + name + ' {syntax:"*";inherits:false;}')
-              .join(' ')
-            let binding = key + ':var(' + variable + ');'
-            if (shorthand) {
-              const fallback = paddingParts(style.css.value)[sides.indexOf(property.slice(8))]
-              binding = key + ':var(' + prefix + '-padding);' + prefix + '-base-' + property + ':' + fallback + ';'
-            }
-            styles.set(moduleId, registrations + ' [data-li-revision="' + revision + '"]{' + binding + '}')
-            ;(fields.cssReady ??= {})[property] = marker
-            out.prepend('import ' + JSON.stringify(moduleId) + ';\n')
-          } else {
-            const fallback = '"var(' + variable + ', " + (' + literal + ') + ' + JSON.stringify(unit + ')')
-            out.overwrite(value.start + start, value.start + start + literal.length, '(' + fallback + ')')
-          }
-          if (site.styles) (fields.styles ??= []).push(property)
-          else fields.style = property
-        }
-        if (site.input) {
-          if (owner.type !== 'FunctionDeclaration') throw Error('A prepared input needs a React component owner')
-          const { field, options, base, attribute, choices } = site.input
-          const value = attr(attribute)?.value
-          const child = site.input.child
+          revisions[site.id] = null
+          if (matches.length !== 1) continue
+          const adapter = manifestData.buttonAdapter
           if (
-            (!value && !child) ||
-            !options.includes(base) ||
-            !options.every((s) => typeof s === 'string' && /^[\w-]{1,60}$/.test(s))
+            site.input &&
+            adapter &&
+            (!compatibleAlias ||
+              !statSync(join(root, adapter.file), { throwIfNoEntry: false }) ||
+              createHash('sha256')
+                .update(readFileSync(join(root, adapter.file)))
+                .digest('hex') !== adapter.digest)
           )
-            throw Error('Invalid prepared input')
-          const state = '__liInput' + index
-          out.appendLeft(
-            owner.body.directives?.at(-1)?.end ?? owner.body.start + 1,
-            '\nconst ' + state + ' = __liUse(' + JSON.stringify(revision) + ');\n',
-          )
-          if (child) {
-            if (!options.every((key) => /^[A-Z][\w]*$/.test(choices?.[key])))
-              throw Error('Expected registered JSX components')
-            const slot = '__LiSlot' + index
-            out.appendLeft(
-              owner.body.start + 1,
-              '\nconst ' +
-                slot +
-                ' = ({' +
-                options.map((key) => JSON.stringify(key) + ':' + choices[key]).join(',') +
-                '})[' +
-                state +
-                '] ?? ' +
-                slotTag.name +
-                ';\n',
+            continue
+          const { node, children, owner } = matches[0]
+          let slotTag
+          if (site.input?.child) {
+            const slots = children.filter(
+              (child) =>
+                child.type === 'JSXElement' &&
+                child.openingElement.selfClosing &&
+                code.slice(child.start, child.end) === site.input.child,
             )
-            out.overwrite(slotTag.start, slotTag.end, slot)
-          } else {
-            const original =
-              value.type === 'JSXExpressionContainer'
-                ? code.slice(value.expression.start, value.expression.end)
-                : code.slice(value.start, value.end)
-            let override = state
-            if (choices) {
-              if (!options.every((key) => /^[A-Z][\w]*$/.test(choices[key])))
-                throw Error('Expected registered JSX components')
-              override =
-                '({' +
-                options.map((key) => JSON.stringify(key) + ': <' + choices[key] + ' />').join(',') +
-                '})[' +
-                state +
-                ']'
-            }
-            out.overwrite(
-              value.start,
-              value.end,
-              '{' + state + ' == null ? (' + original + ') : ' + override + '}',
-            )
+            if (slots.length !== 1 || slots[0].openingElement.name.name !== site.input.choices?.[site.input.base])
+              continue
+            slotTag = slots[0].openingElement.name
           }
-          markers += ' data-li-choice={' + state + ' ?? ' + JSON.stringify(base) + '}'
-          if (!options.every((key) => site.input.verify?.[key]?.self || site.input.verify?.[key]?.child))
-            throw Error('Expected a rendered option check')
-          fields.input = { field, options, base, verify: site.input.verify }
-          usesInput = true
+          const hash = createHash('sha256').update(
+            JSON.stringify([namespace, site, code.slice(owner.start, owner.end)]),
+          )
+          for (const statement of tree.program.body) {
+            const name = (statement.declaration ?? statement).id?.name
+            if (statement.type === 'ImportDeclaration' || site.symbols?.includes(name))
+              hash.update(code.slice(statement.start, statement.end))
+          }
+          for (const path of site.dependencies ?? []) {
+            if (!dependencies.has(path)) {
+              this.addWatchFile(join(root, path))
+              dependencies.set(path, readFileSync(join(root, path)))
+            }
+            hash.update(dependencies.get(path))
+          }
+          const revision = hash.digest('hex')
+          revisions[site.id] = revision
+          const prefix = '--li-' + revision.slice(0, 20)
+          const fields = {}
+          const attr = (name) => node.attributes.find((a) => a.name?.name === name)
+          let markers = ''
+          for (const style of site.styles ?? (site.style ? [site.style] : [])) {
+            const { property, literal, attribute, unit = '', utility } = style
+            const variable = site.styles ? prefix + '-' + property : prefix
+            if (!styleProperties.has(property)) throw Error('Unsupported prepared style recipe')
+            const value = attr(attribute)?.value
+            if (!value) throw Error('Missing prepared style expression')
+            const expression = code.slice(value.start, value.end)
+            const start =
+              utility || style.css
+                ? ([...expression.matchAll(/[^\s'"]+/g)].find((m) => m[0] === literal)?.index ?? -1)
+                : expression.indexOf(literal)
+            if (start < 0 || (!utility && expression.indexOf(literal, start + literal.length) >= 0))
+              throw Error('Ambiguous prepared style expression')
+            // Preserve dynamic inline/sx ownership. The variable is consumed at
+            // the original declaration, so hover and media rules still compete normally.
+            if (utility || style.css) {
+              const shorthand = style.css?.declaration === 'padding'
+              const key = cssInput(shorthand ? { ...style, property: 'padding' } : style)
+              if (utility?.axis === 'inline') (fields.logicalInline ??= []).push(property)
+              const marker = cssReady(style)
+              const registrations = [key, marker]
+                .map((name) => '@property ' + name + ' {syntax:"*";inherits:false;}')
+                .join(' ')
+              let binding = key + ':var(' + variable + ');'
+              if (shorthand) {
+                const fallback = paddingParts(style.css.value)[sides.indexOf(property.slice(8))]
+                binding =
+                  key + ':var(' + prefix + '-padding);' + prefix + '-base-' + property + ':' + fallback + ';'
+              }
+              registrationsForModule.add(registrations + ' [data-li-revision="' + revision + '"]{' + binding + '}')
+              ;(fields.cssReady ??= {})[property] = marker
+            } else {
+              const fallback = '"var(' + variable + ', " + (' + literal + ') + ' + JSON.stringify(unit + ')')
+              out.overwrite(value.start + start, value.start + start + literal.length, '(' + fallback + ')')
+            }
+            if (site.styles) (fields.styles ??= []).push(property)
+            else fields.style = property
+          }
+          if (site.input) {
+            if (owner.type !== 'FunctionDeclaration') throw Error('A prepared input needs a React component owner')
+            const { field, options, base, attribute, choices } = site.input
+            const value = attr(attribute)?.value
+            const child = site.input.child
+            if (
+              (!value && !child) ||
+              !options.includes(base) ||
+              !options.every((s) => typeof s === 'string' && /^[\w-]{1,60}$/.test(s))
+            )
+              throw Error('Invalid prepared input')
+            const state = '__liInput' + index
+            out.appendLeft(
+              owner.body.directives?.at(-1)?.end ?? owner.body.start + 1,
+              '\nconst ' + state + ' = __liUse(' + JSON.stringify(revision) + ');\n',
+            )
+            if (child) {
+              if (!options.every((key) => /^[A-Z][\w]*$/.test(choices?.[key])))
+                throw Error('Expected registered JSX components')
+              const slot = '__LiSlot' + index
+              out.appendLeft(
+                owner.body.start + 1,
+                '\nconst ' +
+                  slot +
+                  ' = ({' +
+                  options.map((key) => JSON.stringify(key) + ':' + choices[key]).join(',') +
+                  '})[' +
+                  state +
+                  '] ?? ' +
+                  slotTag.name +
+                  ';\n',
+              )
+              out.overwrite(slotTag.start, slotTag.end, slot)
+            } else {
+              const original =
+                value.type === 'JSXExpressionContainer'
+                  ? code.slice(value.expression.start, value.expression.end)
+                  : code.slice(value.start, value.end)
+              let override = state
+              if (choices) {
+                if (!options.every((key) => /^[A-Z][\w]*$/.test(choices[key])))
+                  throw Error('Expected registered JSX components')
+                override =
+                  '({' +
+                  options.map((key) => JSON.stringify(key) + ': <' + choices[key] + ' />').join(',') +
+                  '})[' +
+                  state +
+                  ']'
+              }
+              out.overwrite(
+                value.start,
+                value.end,
+                '{' + state + ' == null ? (' + original + ') : ' + override + '}',
+              )
+            }
+            markers += ' data-li-choice={' + state + ' ?? ' + JSON.stringify(base) + '}'
+            if (!options.every((key) => site.input.verify?.[key]?.self || site.input.verify?.[key]?.child))
+              throw Error('Expected a rendered option check')
+            fields.input = { field, options, base, verify: site.input.verify }
+            usesInput = true
+          }
+          const contract = { site: site.id, revision, file, ...fields }
+          out.appendLeft(
+            node.attributes.at(-1)?.end ?? node.name.end,
+            markers +
+              ' data-li-revision="' +
+              revision +
+              '" data-li-contract={' +
+              JSON.stringify(JSON.stringify(contract)) +
+              '}',
+          )
         }
-        const contract = { site: site.id, revision, file, ...fields }
-        out.appendLeft(
-          node.attributes.at(-1)?.end ?? node.name.end,
-          markers +
-            ' data-li-revision="' +
-            revision +
-            '" data-li-contract={' +
-            JSON.stringify(JSON.stringify(contract)) +
-            '}',
+        // Report known-but-stale sites separately from an absent scene. The registry
+        // contains only mappings for modules loaded in this page.
+        out.prepend(
+          'import { reportPreparedSites as __liReport } from "virtual:inspector-prepared-registry";\n__liReport(' +
+            JSON.stringify(revisions) +
+            ');\n',
         )
-      }
-      // Report known-but-stale sites separately from an absent scene. The registry
-      // contains only mappings for modules loaded in this page.
-      out.prepend(
-        'import { reportPreparedSites as __liReport } from "virtual:inspector-prepared-registry";\n__liReport(' +
-          JSON.stringify(revisions) +
-          ');\n',
-      )
-      if (usesInput) out.prepend('import { usePreparedInput as __liUse } from "' + runtime + '";\n')
-      return { code: out.toString(), map: out.generateMap({ hires: true, source: id }) }
+        if (registrationsForModule.size) {
+          const css = [...registrationsForModule].join('\n')
+          const moduleId = 'virtual:inspector-' + createHash('sha256').update(css).digest('hex') + '.css'
+          styles.set(moduleId, css)
+          out.prepend('import ' + JSON.stringify(moduleId) + ';\n')
+        }
+        if (usesInput) out.prepend('import { usePreparedInput as __liUse } from "' + runtime + '";\n')
+        return { code: out.toString(), map: out.generateMap({ hires: true, source: id }) }
+      },
     },
   }
 }

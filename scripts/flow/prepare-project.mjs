@@ -6,14 +6,13 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from '@babel/parser'
 import { baseRule, cssFields, cssParser } from './prepared-css.mjs'
+import { stylesheetGraph } from './stylesheet-graph.mjs'
 import { typeModule } from '../../component-types.mjs'
 
 const hash = (text) => createHash('sha256').update(text).digest('hex')
 const buttonSource = 'src/components/ui/button.tsx'
 const buttonRevision = '97ed8ef5651a6e264ded042b024b5be39673ba2ff222017fbcf845cf3ed37226'
 const dependencies = [
-  'src/styles/index.css',
-  'src/styles/theme.css',
   'pnpm-lock.yaml',
   'vite.config.ts',
   'package.json',
@@ -83,6 +82,18 @@ function analyze(code, file, config) {
         const eligible = tokens.flatMap((literal) => {
           const declarations = config.css.classes.get(literal) ?? []
           if (declarations.length) return declarations
+          if (
+            config.tailwind &&
+            /^px-(?:\d+(?:\.\d+)?|\[\d+(?:\.\d+)?px\])$/.test(literal) &&
+            !tokens.some((t) => t !== literal && /^(?:p|px|pl|pr|ps|pe)-/.test(t.replace(/^!/, '')))
+          ) {
+            return ['padding-left', 'padding-right'].map((property) => ({
+              property,
+              attribute: 'className',
+              literal,
+              utility: { axis: 'inline' },
+            }))
+          }
           const rule = config.tailwind && utility(literal, config.theme)
           if (
             !rule ||
@@ -115,6 +126,7 @@ function analyze(code, file, config) {
             dependencies: [
               ...new Set([
                 ...raw.dependencies,
+                ...(styles.some((s) => s.utility) ? config.css.utilityFiles : []),
                 ...styles.flatMap((s) => (s.css ? [s.css.file, ...config.css.tokenFiles] : [])),
               ]),
             ],
@@ -183,16 +195,15 @@ function analyze(code, file, config) {
   return { sites, rejected }
 }
 const trees = new Map()
-function ordinaryCSS(root, source) {
+function ordinaryCSS(root, graph) {
   const classes = new Map(),
     tokenFiles = [],
     spacingSources = [],
     referenced = new Set(),
     definitions = new Map()
   const parse = cssParser(root)
-  for (const path of readdirSync(source, { recursive: true }).filter((name) => name.endsWith('.css'))) {
-    const file = relative(root, join(source, path)),
-      code = readFileSync(join(root, file), 'utf8')
+  for (const { file, served } of graph.sheets) {
+    const code = readFileSync(join(root, file), 'utf8')
     const sheet = parse.parse(code, { from: file })
     const tokens = new Set()
     sheet.walkDecls((d) => {
@@ -218,7 +229,7 @@ function ordinaryCSS(root, source) {
             attribute: 'className',
             literal,
             property,
-            css: { file, declaration: d.prop, value: d.value },
+            css: { file, served, declaration: d.prop, value: d.value },
           })
           classes.set(literal, list)
         }
@@ -231,20 +242,24 @@ function ordinaryCSS(root, source) {
   }
   return { classes, tokenFiles, spacingSources }
 }
-export function prepareProject(project, destination, namespace, boundary = 'src') {
+export async function prepareProject(project, destination, namespace, boundary = 'src', server) {
   const root = realpathSync(project),
     source = realpathSync(join(root, boundary))
   if (!source.startsWith(root + sep) || resolve(destination).startsWith(root + sep))
     throw Error('Use an app source subdirectory and an external manifest.')
-  const deps = [...new Set(dependencies)].filter((path) => existsSync(join(root, path)))
-  const theme = existsSync(join(root, 'src/styles/theme.css'))
-    ? readFileSync(join(root, 'src/styles/theme.css'), 'utf8')
-    : ''
-  const entry = join(root, 'src/styles/index.css')
-  const tailwind = existsSync(entry) && /@import\s+['"]tailwindcss['"]/.test(readFileSync(entry, 'utf8'))
+  const graph = await stylesheetGraph(root, server)
+  const deps = [...new Set([...dependencies, ...graph.configuration])].filter((path) =>
+    existsSync(join(root, path)),
+  )
+  const theme = graph.sheets
+    .filter((sheet) => sheet.served.includes(graph.utilityEntries[0]))
+    .map(({ file }) => readFileSync(join(root, file), 'utf8'))
+    .join('\n')
+  const tailwind = graph.utilityEntries.length === 1
   const button =
     existsSync(join(root, buttonSource)) && hash(readFileSync(join(root, buttonSource))) === buttonRevision
-  const css = ordinaryCSS(root, source)
+  const css = ordinaryCSS(root, graph)
+  css.utilityFiles = graph.sheets.filter((s) => s.served.includes(graph.utilityEntries[0])).map((s) => s.file)
   const files = [],
     sites = [],
     unresolved = []
@@ -297,7 +312,8 @@ export function prepareProject(project, destination, namespace, boundary = 'src'
     sites,
     retiredSites,
     spacingSources: css.spacingSources,
-    utilityEntry: tailwind ? 'src/styles/index.css' : null,
+    stylesheetGraph: graph,
+    utilityEntry: tailwind ? graph.utilityEntries[0] : null,
     buttonAdapter: button ? { file: buttonSource, digest: buttonRevision } : null,
   }
   const tmp = destination + '.' + process.pid + '.tmp'
@@ -311,7 +327,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const [project, destination, namespace, boundary] = process.argv.slice(2)
   if (!project || !destination || !namespace)
     throw Error('Usage: prepare-project APP EXTERNAL_MANIFEST NAMESPACE [SOURCE_SUBDIRECTORY]')
-  const result = prepareProject(project, destination, namespace, boundary)
+  const result = await prepareProject(project, destination, namespace, boundary)
   console.log(
     JSON.stringify({
       manifest: basename(destination),

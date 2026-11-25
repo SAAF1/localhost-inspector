@@ -25,7 +25,21 @@ const scalar = /^(?:0|\d+(?:\.\d+)?(?:px|rem|em)|var\(--[\w-]+\))$/
 export function cssFields(decl) {
   const values = decl.value.trim().split(/\s+/)
   if (!values.every((v) => scalar.test(v))) return []
-  if (decl.prop === 'padding' && values.length <= 4) return sides.map((s) => 'padding-' + s)
+  if (
+    decl.prop === 'padding-inline' &&
+    styles.get('padding-left')?.utility?.axis === 'inline' &&
+    styles.get('padding-right')?.utility?.axis === 'inline' &&
+    !/\s+(?![^()]*\))/.test(decl.value) &&
+    rule.parent.name === 'layer' &&
+    rule.parent.params.trim() === 'utilities'
+  ) {
+    const left = styles.get('padding-left'),
+      right = styles.get('padding-right')
+    // Keep the compiler's logical declaration and its exact empty-journal fallback.
+    decl.value = 'var(' + cssInput(left) + ', ' + decl.value + ') var(' + cssInput(right) + ', ' + decl.value + ')'
+    for (const style of [left, right]) rule.append({ prop: cssReady(style), value: '1' })
+    changed = true
+  } else if (decl.prop === 'padding' && values.length <= 4) return sides.map((s) => 'padding-' + s)
   return values.length === 1 && /^(gap|width|height|padding-(?:top|right|bottom|left))$/.test(decl.prop)
     ? [decl.prop]
     : []
@@ -56,7 +70,12 @@ export function preparedStyles(root, manifest) {
       for (const site of inventory.sites) {
         for (const style of site.styles ?? [site.style]) {
           if (style?.utility && inventory.utilityEntry && inventory.utilityEntry !== file) continue
-          if (!style || (!style.utility && !style.css) || (style.css && style.css.file !== file)) continue
+          if (
+            !style ||
+            (!style.utility && !style.css) ||
+            (style.css && !(style.css.served ?? [style.css.file]).includes(file))
+          )
+            continue
           const styles = byClass.get(style.literal) ?? new Map()
           styles.set(style.property, style)
           byClass.set(style.literal, styles)
@@ -87,7 +106,22 @@ export function preparedStyles(root, manifest) {
             rule.append({ prop: cssReady(style), value: '1' })
             return 'var(' + cssInput(style) + ', ' + value + ')'
           }
-          if (decl.prop === 'padding' && styles.has('padding-left') && cssFields(decl).length === 4) {
+          if (
+            decl.prop === 'padding-inline' &&
+            styles.get('padding-left')?.utility?.axis === 'inline' &&
+            styles.get('padding-right')?.utility?.axis === 'inline' &&
+            !/\s+(?![^()]*\))/.test(decl.value) &&
+            rule.parent.name === 'layer' &&
+            rule.parent.params.trim() === 'utilities'
+          ) {
+            const left = styles.get('padding-left'),
+              right = styles.get('padding-right')
+            // Keep the compiler's logical declaration and its exact empty-journal fallback.
+            decl.value =
+              'var(' + cssInput(left) + ', ' + decl.value + ') var(' + cssInput(right) + ', ' + decl.value + ')'
+            for (const style of [left, right]) rule.append({ prop: cssReady(style), value: '1' })
+            changed = true
+          } else if (decl.prop === 'padding' && styles.has('padding-left') && cssFields(decl).length === 4) {
             const sidesPrepared = sides.map((side) => styles.get('padding-' + side))
             if (!sidesPrepared.every((style) => style?.css?.value === decl.value)) continue
             for (const style of sidesPrepared) rule.append({ prop: cssReady(style), value: '1' })

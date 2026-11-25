@@ -29,7 +29,8 @@
         node.getAttribute('data-li-revision') === c.revision
       ) {
         if(c.cssReady){
-          const available=key=>getComputedStyle(node).getPropertyValue(c.cssReady[key]).trim()==='1'
+          const computed=getComputedStyle(node)
+          const available=key=>(!c.logicalInline?.includes(key) || (computed.writingMode==='horizontal-tb' && computed.direction==='ltr')) && computed.getPropertyValue(c.cssReady[key]).trim()==='1'
           if(c.styles)c.styles=c.styles.filter(available)
           if(c.style && !available(c.style))delete c.style
         }

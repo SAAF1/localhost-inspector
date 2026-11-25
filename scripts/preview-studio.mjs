@@ -212,7 +212,7 @@ try {
       if (!existsSync(join(map, name)) && existsSync(join(capturedMap, name)))
         copyFileSync(join(capturedMap, name), join(map, name))
     }
-    const inventory = prepareProject(app, manifest, studio.namespace, studio.boundary)
+    const inventory = await prepareProject(app, manifest, studio.namespace, studio.boundary)
     const child = await start(
       [join(repo, 'scripts/flow/serve.mjs'), '--source', app, String(port), map],
       app,
@@ -227,8 +227,11 @@ try {
     try {
       const binding = helperResult(state, 'bind', String(port), app)
       if (id === 'original') {
-        const theme = 'src/styles/theme.css'
-        const css = existsSync(join(app, theme)) ? readFileSync(join(app, theme), 'utf8') : ''
+        const catalogs = inventory.stylesheetGraph.sheets
+          .map((s) => s.file)
+          .filter((file) => /--(?:space-[\w-]+|primary)\s*:/.test(readFileSync(join(app, file), 'utf8')))
+        const theme = catalogs.length === 1 ? catalogs[0] : null
+        const css = theme ? readFileSync(join(app, theme), 'utf8') : ''
         const spacing = [...new Set([...css.matchAll(/(--space-[\w-]+)\s*:/g)].map((m) => m[1]))]
         if (!spacing.length && inventory.spacingSources?.length === 1) {
           const source = inventory.spacingSources[0]
