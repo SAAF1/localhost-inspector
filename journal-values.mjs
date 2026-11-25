@@ -3,7 +3,7 @@ const pixelProperties = new Set(['font-size','line-height','letter-spacing','gap
 const keywords = {
   'flex-direction': ['row','column','row-reverse','column-reverse'],
   'justify-content': ['normal','start','center','end','space-between','space-around','space-evenly','stretch','flex-start','flex-end'],
-  'align-items': ['normal','start','center','end','stretch','baseline','flex-start','flex-end'],
+  'align-items': ['normal','start','center','end','stretch','baseline','last baseline','flex-start','flex-end'],
   'justify-items': ['normal','start','center','end','stretch'],
   'text-align': ['start','center','end','left','right','justify'],
 }

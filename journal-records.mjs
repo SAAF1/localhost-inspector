@@ -23,7 +23,21 @@ export function journalValidators(journalRoute) {
               record.requested === 'var(' + textStyle.name + '-' + record.property + ')'
             : validTextStyleValue(record.property, record.requested)
       )
-    const validRequest = group ? validTextStyleRequest : reference
+    const prepared = record?.prepared
+    const field = prepared?.field
+    if (prepared !== undefined) {
+      const validSite = typeof prepared?.site === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(prepared.site) &&
+        typeof prepared.revision === 'string' && /^[a-f0-9]{64}$/.test(prepared.revision) &&
+        typeof prepared.file === 'string' && prepared.file.length <= 240 && /\.[jt]sx$/.test(prepared.file) &&
+        !prepared.file.startsWith('/') && !prepared.file.split('/').includes('..')
+      const validControl = field === undefined ? record.property === 'gap' :
+        typeof field === 'string' && /^[a-zA-Z][a-zA-Z0-9-]{0,59}$/.test(field) && record.property === 'component-' + field &&
+        typeof record.requested === 'string' && /^[a-zA-Z0-9_-]{1,60}$/.test(record.requested) &&
+        record.observed === record.requested && !reference
+      if (!validSite || !validControl || group || pending || record.template || record.frameState ||
+          record.restore !== 'unique' || record.intent !== featureTemplateScope) throw Error('Invalid prepared contract')
+    }
+    const validRequest = field ? true : group ? validTextStyleRequest : reference
       ? !(token && spacing) && catalog && (spacing ? /^(gap|padding-(top|right|bottom|left))$/.test(record.property) : colors.has(record.property)) &&
         reference.source === catalog.source && catalog.names.includes(reference.name) &&
         record.requested === 'var(' + reference.name + ')' &&
@@ -39,7 +53,7 @@ export function journalValidators(journalRoute) {
     if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || !validRoute(record.route) || !validRequest || !validPending ||
         Object.hasOwn(record, 'group') || (!group && Object.hasOwn(record, 'textStyleToken')) ||
         ((Object.hasOwn(record, 'pendingTextStyle') || Object.hasOwn(record, 'pendingTextStyleName')) && !pendingTextStyle) ||
-        !(group ? validTextStyleValue(record.property, record.observed) : validValue(record.property, record.observed)) ||
+        !(field || (group ? validTextStyleValue(record.property, record.observed) : validValue(record.property, record.observed))) ||
         typeof record.before !== 'string' || record.before.length > (record.property === 'font-family' ? 512 : 100) ||
         !['unique', 'ambiguous'].includes(record.restore) || !target || !/^[a-z][a-z0-9-]*$/.test(target.tag) ||
         !validScopedTarget(target) || !validTargetKey(target.key) || [target.id, target.slot].some(value => value !== null && (typeof value !== 'string' || value.length > 120)) ||
@@ -65,6 +79,7 @@ export function journalValidators(journalRoute) {
     const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
     return {
       id, route: journalRoute(route), property, requested, observed, before, restore,
+      ...(prepared ? { prepared: { site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}) } } : {}),
       target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,
       templateSourceFingerprint: record.templateSourceFingerprint,
       colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,

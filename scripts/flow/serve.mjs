@@ -1,3 +1,4 @@
+import { preparedSites } from './prepared-sites.mjs'
 import { createHash } from 'node:crypto'
 import { watch } from 'node:fs'
 import { createServer } from 'node:http'
@@ -151,7 +152,7 @@ if (sourceMode) {
   const server = await createViteServer({
     root: appRoot,
     ...(comparison?.role === 'proposal' ? { cacheDir: resolve(appRoot, '../vite-cache') } : {}),
-    plugins: [workspace, componentPreviewSites(appRoot), tableRenderSites(appRoot)],
+    plugins: [workspace, preparedSites(appRoot, process.env.INSPECTOR_PREPARED_SITES), componentPreviewSites(appRoot), tableRenderSites(appRoot)],
     server: { host: '127.0.0.1', port: Number(port), strictPort: true, open: false },
   })
   await server.listen()

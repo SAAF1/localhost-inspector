@@ -59,7 +59,7 @@
       const optionValue = option => typeof option === 'object' && option !== null ? option.value : option
       const matched = options.find(option => optionValue(option) === prop.value)
       const value = matched === undefined ? String(prop.value ?? 'None') : optionLabel(matched)
-      if (!options.length || !(component.sourcePreview || prop.registeredSlot) || prop.unavailableReason) {
+      if (!options.length || !(prop.prepared || component.sourcePreview || prop.registeredSlot) || prop.unavailableReason) {
         const summary = ui.element('span', 'li-component-value', prop.unavailableReason || value)
         summary.title = prop.unavailableReason || label + ' · Read only'
         addProperty(label, summary)
@@ -85,7 +85,7 @@
       if (prop.overridden) menu.push([null, 'Restore original', { separator: true, command: true }])
       ui.createControls(context).attachMenu(trigger, label, menu, prop.value, next => context.run(() =>
         context.previewComponentProperty(context.node, component, prop, next, component.sourcePreview && next === null)),
-      { description: 'Saved in Edits · Preview resets on reload' })
+      { description: prop.prepared ? 'Saved in Edits · Shared source use' : 'Saved in Edits · Preview resets on reload' })
       addProperty(label, trigger)
     }
     const title = context.component?.name || 'Component'

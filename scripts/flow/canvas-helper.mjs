@@ -1,5 +1,6 @@
 // Only an explicitly paired launcher can give this canvas access to its original
 // project's journal. Never forward a client-provided origin or helper command.
+import { helperHost } from '../../helper-port.mjs'
 import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -39,7 +40,7 @@ export async function canvasHelper(canvas, project, origin, configured) {
       if (message.type === 'ping') return true
       if (!allowed.has(message.type)) throw Error('Unsupported canvas operation')
       const key = (await readFile(join(state, 'pairing-key'), 'utf8')).trim()
-      const response = await fetch('http://127.0.0.1:5188/inspector', {
+      const response = await fetch('http://' + helperHost + '/inspector', {
         method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key },
         body: JSON.stringify({ ...message, origin, expectedBindingId: binding.id }), signal: AbortSignal.timeout(5000),
       }).catch(() => { throw Error('The paired Inspector helper is offline. Restart it and reload to edit.') })

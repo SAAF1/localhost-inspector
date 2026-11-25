@@ -1,3 +1,4 @@
+import { helperHost, helperPort } from './helper-port.mjs'
 import { constants } from 'node:fs'
 import { createServer } from 'node:http'
 import { execFile } from 'node:child_process'
@@ -44,7 +45,7 @@ function printJson(value) {
   })
 }
 function originFor(port) {
-  if (!/^\d{1,5}$/.test(port) || Number(port) < 1024 || Number(port) > 65535 || port === '5188') {
+  if (!/^\d{1,5}$/.test(port) || Number(port) < 1024 || Number(port) > 65535 || Number(port) === helperPort) {
     throw Error('Expected a local development port')
   }
   return 'http://127.0.0.1:' + port
@@ -259,7 +260,7 @@ if (mode === 'complete') {
   const origin = originFor(port)
   const report = await readFile(reportPath, 'utf8').then(JSON.parse)
   const pairingKey = (await readFile(keyPath, 'utf8')).trim()
-  const response = await fetch('http://127.0.0.1:5188/inspector', {
+  const response = await fetch('http://' + helperHost + '/inspector', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + pairingKey },
     body: JSON.stringify({ type: 'complete', origin, expectedRevision: report?.revision, report }),
@@ -403,7 +404,7 @@ createServer(async (req, res) => {
   const authorization = Buffer.from(req.headers.authorization ?? '')
   const expected = Buffer.from('Bearer ' + key)
   const reply = (status, data) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)) }
-  if (req.method !== 'POST' || req.url !== '/inspector' || req.headers.host !== '127.0.0.1:5188' ||
+  if (req.method !== 'POST' || req.url !== '/inspector' || req.headers.host !== helperHost ||
       authorization.length !== expected.length || !timingSafeEqual(authorization, expected)) {
     reply(403, { error: 'Pairing required' })
     return
@@ -424,4 +425,4 @@ createServer(async (req, res) => {
     tail = task.catch(() => {})
     reply(200, { value: await task })
   } catch (error) { reply(409, { error: error.message, code: error.code ?? 'WRITE_REJECTED' }) }
-}).listen(5188, '127.0.0.1', () => console.log('Local inspector helper listening on 127.0.0.1:5188'))
+}).listen(helperPort, '127.0.0.1', () => console.log('Local inspector helper listening on ' + helperHost))

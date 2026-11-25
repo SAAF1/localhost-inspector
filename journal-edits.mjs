@@ -39,6 +39,7 @@ export function setPreviewVisibility(edits, id, hidden) {
 }
 
 function sameOccurrence(a, b) {
+  if (a.prepared || b.prepared) return Boolean(a.prepared && a.prepared.revision === b.prepared?.revision)
   const left = a.target
   const right = b.target
   if (a.template && b.template) {
@@ -81,7 +82,7 @@ export function removePendingEdit(edits, id) {
     }
     const possible = later.filter(entry => sameOccurrence(edit, entry) && entry.property === edit.property)
     const guarded = next => edit.target.id || (edit.target.anchor && next.target.anchor)
-    const sameVerifiedTarget = next => edit.template || next.template
+    const sameVerifiedTarget = next => edit.prepared ? edit.prepared.revision === next.prepared?.revision : edit.template || next.template
       ? Boolean(edit.template && edit.template === next.template && edit.templateSourceFingerprint === next.templateSourceFingerprint)
       : edit.frameState === next.frameState && Boolean(edit.target.key ||
       (guarded(next) && edit.target.regionFingerprint &&

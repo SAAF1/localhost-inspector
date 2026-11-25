@@ -52,11 +52,11 @@ function affectedProperties(property) {
   return property === 'gap' ? ['row-gap', 'column-gap'] : [property]
 }
 
-function operationChanges({ id, route, target, sourceContext, template, templateSourceFingerprint, viewport, property, requested, before, observed, restore,
+function operationChanges({ id, route, target, sourceContext, prepared, template, templateSourceFingerprint, viewport, property, requested, before, observed, restore,
   colorToken, spacingToken, textStyleToken, pendingColor, pendingTextStyle, pendingTextStyleName }) {
   const { tag, id: elementId, slot, key, classFingerprint } = target
   return {
-    id, route, viewport, target: { tag, id: elementId, slot, key, classFingerprint },
+    id, route, viewport, ...(prepared ? { prepared } : {}), target: { tag, id: elementId, slot, key, classFingerprint },
     sourceContext: sourceContextFrom(sourceContext), previewRestore: restore, ...(template ? { template, templateSourceFingerprint } : {}),
     property, affectedProperties: affectedProperties(property), requested, before, observed,
     colorToken, spacingToken, textStyleToken, pendingColor, pendingTextStyle, pendingTextStyleName,

@@ -223,8 +223,8 @@
     return null
   }
 
-  ui.authoredProperty = (node, property) => node.getRootNode() === node.ownerDocument
-    ? propertySource(node, property) : node.style.getPropertyValue(property) || null
+  ui.authoredProperty = (node, property) => ui.preparedPreview?.authored(node, property) ?? (node.getRootNode() === node.ownerDocument
+    ? propertySource(node, property) : node.style.getPropertyValue(property) || null)
   ui.authoredTemplateSource = (node, property, originalInline, positional) => {
     if (node.getRootNode() !== node.ownerDocument) return null
     // Only a declaration owned by this template part establishes a shared edit scope.

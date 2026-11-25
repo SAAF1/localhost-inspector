@@ -426,7 +426,13 @@
       for (const id of Array.from(attached.keys()).reverse()) detach(id)
     }
 
+    function projectPrepared(extra) {
+      const records = Array.from(saved.values()).filter(edit => edit.prepared)
+      if (extra) records.push(extra)
+      ui.preparedPreview.project(records)
+    }
     function clear() {
+      ui.preparedPreview.project([])
       reconcileConflicts()
       clearAttached()
       saved.clear()
@@ -455,6 +461,7 @@
       reconcileConflicts()
       const group = saved.get(id)?.group
       const ids = group ? Array.from(saved.values()).filter(edit => edit.group === group).map(edit => edit.id) : [id]
+      const hadPrepared = ids.some(id => saved.get(id)?.prepared)
       const removed = new Set(ids)
       for (const [key, entry] of Array.from(attached).reverse()) {
         if (removed.has(editId(key, entry))) detach(key)
@@ -464,6 +471,7 @@
         original.delete(member)
         conflicts.delete(member)
       }
+      if (hadPrepared) projectPrepared()
     }
 
     function operations() {
@@ -581,6 +589,7 @@
     }
 
     async function restore(isCurrent, fromOriginal = false) {
+      projectPrepared()
       const exactNodes = fromOriginal ? original : new Map()
       // Retain exact references for hidden session-only edits across comparison.
       const groups = operations()
@@ -589,7 +598,7 @@
       const definitions = new Map(pendingTextStyles().map(style => [style.name, style]))
       for (const edits of groups.values()) {
         if (!isCurrent()) return
-        if (edits[0].previewHidden) continue
+        if (edits[0].prepared || edits[0].previewHidden) continue
         if (edits[0].template) {
           await restoreTemplate(edits, isCurrent)
           continue
@@ -668,6 +677,7 @@
     }
 
     return {
+      projectPrepared,
       componentEntries(id) {
         return Array.from(attached).reverse().filter(([key, entry]) => sessionEntry(entry) && (!id || id === key))
           .map(([, entry]) => entry)
@@ -691,7 +701,7 @@
         return pending && entries.length === ui.textStyleProperties.length &&
           entries.every(entry => entry.pendingTextStyle?.name === pending.name && !lostPreview(entry)) ? pending : null
       },
-      get hasAttached() { return attached.size > 0 },
+      get hasAttached() { return attached.size > 0 || Array.from(saved.values()).some(edit => edit.prepared && !edit.previewHidden && ui.preparedPreview.locate(edit)) },
       get hasAttachedButtonSize() {
         return Array.from(attached.values()).some(entry => entry.property === 'button-size')
       },
@@ -705,6 +715,7 @@
       async locateSavedNode(id, isCurrent) {
         const edit = saved.get(id)
         if (!edit || (edit.frameState && !inState(edit, readFrameState()))) return null
+        if (edit.prepared) return ui.preparedPreview.locate(edit)
         if (edit.template) {
           const attached = this.previewNode(id)
           if (attached) return attached
@@ -745,20 +756,23 @@
       },
       get hasUnattached() {
         const state = currentState()
-        return Array.from(saved.values()).some(edit => !edit.previewHidden && (edit.template
+        return Array.from(saved.values()).some(edit => !edit.previewHidden && (edit.prepared ? !ui.preparedPreview.locate(edit) : edit.template
           ? templateNodes(edit).some(node => sameTemplateSource(edit, node) !== false && !templateIndex.get(edit.id)?.has(node))
           : inState(edit, state) && !attached.has(edit.id)))
       },
+      get hasPreparedConflict() {
+        return Array.from(saved.values()).some(edit => edit.prepared && !edit.previewHidden && ui.preparedPreview.stale(edit))
+      },
       get hasConflicts() { return [...conflicts].some(id => !saved.get(id)?.previewHidden) },
       get lastSavedId() {
-        return Array.from(saved.values()).findLast(edit => edit.route === savedRoute ||
+        return Array.from(saved.values()).findLast(edit => edit.route === savedRoute || (edit.prepared && ui.preparedPreview.locate(edit)) ||
           (edit.template && templateNodes(edit).some(node => sameTemplateSource(edit, node) !== false)))?.id
       },
       get needsRestore() {
         if (hasStyleConflict()) return true
         const state = currentState()
         return Array.from(operations().values()).some(edits => {
-          if (edits[0].previewHidden) return false
+          if (edits[0].prepared || edits[0].previewHidden) return false
           if (!sharedGroupValid(edits)) return edits.some(edit => attached.has(edit.id))
           if (edits[0].template) {
             return edits.some(edit => templateLayers(edit.id).some(([, entry]) =>
@@ -837,6 +851,7 @@
         if (!comparing) await restore(isCurrent, true)
       },
       showOriginal() {
+        ui.preparedPreview.project([])
         reconcileConflicts()
         for (const [id, entry] of Array.from(attached).reverse()) {
           detach(id)

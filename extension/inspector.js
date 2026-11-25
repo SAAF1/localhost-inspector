@@ -45,7 +45,8 @@
   async function inspectSelectedComponent(node, route) {
     const request = ++componentRead
     currentComponent = null
-    if (!node?.matches('[data-inspector-instance],[data-inspector-component]')) return
+    const contract = node && ui.preparedPreview.contract(node)
+    if (!contract?.input && !node?.matches('[data-inspector-instance],[data-inspector-component]')) return
     let component
     if (node.hasAttribute('data-inspector-component')) {
       const registered = await ui.inspectComponent(node, route)
@@ -59,6 +60,13 @@
         component = { ...live, sourcePreview: true }
       }
     }
+    if (contract?.input) {
+      const { field, options } = contract.input
+      const value = node.getAttribute('data-li-choice')
+      component = { ...(component ?? { name: contract.site }), prepared: contract,
+        properties: [...(component?.properties ?? []).filter(p => p.id !== field),
+          { id: field, options, value, prepared: true, unavailableReason: ui.preparedPreview.shows(node, contract.input, value) ? null : 'Unavailable in this state' }] }
+    }
     if (!component) return
     if (request !== componentRead || node !== selection.current || !node.isConnected || route !== currentRoute) return
     currentComponent = component
@@ -69,6 +77,12 @@
     const version = activeRouteVersion
     if (selection.current !== node || !node.isConnected || comparing || !isCurrentRoute(path, version)) {
       throw Error('Select the component again before changing its preview.')
+    }
+    if (property.prepared) {
+      if (property.value === next || !property.options.includes(next)) return
+      await commitPrepared(node, component.prepared, 'component-' + property.id, next, undefined, property.id)
+      await inspectSelectedComponent(node, path)
+      return
     }
     const kind = component.sourcePreview ? 'source' : 'slot'
     if (kind === 'slot' && !property.registeredSlot) throw Error('The slot is no longer available.')
@@ -168,6 +182,7 @@
   let scopedPreviewTargets = false
   let landmarkPreviewTargets = false
   let sectionPreviewTargets = false
+  let preparedPreviews = false
   let templatePreviews = false
   let templateSourcePreviews = false
   let templatePaddingPreviews = false
@@ -307,7 +322,7 @@
       const snapshot = await send({ type: 'load', route: path })
       if (busy || !isCurrentRoute(path, version) || journalRevision !== startedRevision || snapshot?.revision === journalRevision) return
       if (!validSnapshot(snapshot)) throw Error('Invalid journal snapshot')
-      if (startedRevision !== null && recovery.matchesSnapshot(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template))) {
+      if (startedRevision !== null && recovery.matchesSnapshot(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template || edit.prepared))) {
         const changes = new Map()
         for (const edit of snapshot.edits) {
           const id = edit.group ?? edit.id
@@ -743,10 +758,45 @@
   }
   ui.bindInspectorShortcuts({ root, panel, selection, undo: get('undo'), parent: get('parent') })
   window.addEventListener('pagehide', () => { ui.dismissTooltip(); ui.closeMenu(); revertDialog.dismiss() })
+  async function commitPrepared(node, contract, property, requested, tokenOptions, field) {
+    const path = currentRoute
+    const version = activeRouteVersion
+    if (!preparedPreviews) throw Error('Restart the local helper with prepared preview support.')
+    const read = () => field ? node.getAttribute('data-li-choice') : getComputedStyle(node).getPropertyValue(property)
+    const before = read()
+    if (ui.preparedPreview.contract(node)?.revision !== contract.revision ||
+        (field && !ui.preparedPreview.shows(node, contract.input, before))) {
+      throw Error('The prepared part changed. Select it again before editing.')
+    }
+    const edit = { id: crypto.randomUUID(), route: path, property, before, requested, ...tokenOptions,
+      target: { tag: node.localName, key: null, slot: node.getAttribute('data-slot'), id: node.id || null },
+      intent: 'feature-template', restore: 'unique', prepared: { site: contract.site, file: contract.file, revision: contract.revision, ...(field ? { field } : {}) },
+      sourceContext: ui.describeSourceContext(node), viewport: { width: innerWidth, height: innerHeight } }
+    try {
+      recovery.projectPrepared(edit)
+      edit.observed = read()
+      const expected = field ? requested : requested.startsWith('var(')
+        ? getComputedStyle(node).getPropertyValue(requested.slice(4, -1)).trim() : requested
+      const valueMatches = tokenOptions?.spacingToken
+        ? ui.spacingVariableMatches(node, property, tokenOptions.spacingToken.name, edit.observed)
+        : edit.observed === expected
+      const contentMatches = !field || ui.preparedPreview.shows(node, contract.input, requested)
+      if (!node.isConnected || !contentMatches || !valueMatches || !isCurrentRoute(path, version)) {
+        throw Error('The prepared edit did not reach the selected part in its current state.')
+      }
+      await write({ type: 'save', record: edit }, path, version)
+      if (isCurrentRoute(path, version)) recovery.remember(edit)
+    } finally { recovery.projectPrepared() }
+    reportRecovery()
+  }
   async function commitEdit(node, property, requested, tokenOptions, selectionOnly = false) {
     if (comparing || !canEdit(node, property)) {
       if (tokenOptions) throw Error('The selected property cannot be edited.')
       return
+    }
+    const prepared = ui.preparedPreview.contract(node)
+    if (prepared?.style === property && !selectionOnly && !tokenOptions?.pendingColor) {
+      return commitPrepared(node, prepared, property, requested, tokenOptions)
     }
     const editRoute = currentRoute
     const version = activeRouteVersion
@@ -1215,7 +1265,7 @@
     const notice = get('status')
     if (notice.hasAttribute('data-error')) return
     const message = buttonSizeRequiresReload ? 'Reload the page to clear the previous Button Size preview.' :
-      comparing ? '' : recovery.hasConflicts
+      comparing ? '' : recovery.hasPreparedConflict ? 'The prepared source changed. Review the saved edit before reapplying.' : recovery.hasConflicts
       ? 'The app changed a previewed style. Your edit is still saved.'
       : recovery.hasUnattached ? 'Some saved previews could not be restored.' :
         recovery.hasSessionPreview ? 'Some previews last only while this page stays open.' : ''
@@ -1235,6 +1285,7 @@
     scopedPreviewTargets = snapshot.scopedPreviewTargets === true
     landmarkPreviewTargets = snapshot.landmarkPreviewTargets === true
     sectionPreviewTargets = snapshot.sectionPreviewTargets === true
+    preparedPreviews = snapshot.preparedPreviews === true
     templatePreviews = snapshot.templatePreviews === true
     templateSourcePreviews = snapshot.templateSourcePreviews === true
     templatePaddingPreviews = snapshot.templatePaddingPreviews === true
@@ -1251,7 +1302,7 @@
       const firstEdit = snapshot.edits.find(edit => edit.target.mount === target.mount && edit.target.field === target.field)
       return !firstEdit || firstEdit.beforeState.overridden
     })
-    recovery.load(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template), snapshot.route)
+    recovery.load(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template || edit.prepared), snapshot.route)
     return snapshot.revision
   }
   let currentRoute = route()
@@ -1263,6 +1314,7 @@
     scopedPreviewTargets = false
     landmarkPreviewTargets = false
     sectionPreviewTargets = false
+    preparedPreviews = false
     templatePreviews = false
     templateSourcePreviews = false
     templatePaddingPreviews = false
