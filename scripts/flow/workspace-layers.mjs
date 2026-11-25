@@ -1,11 +1,12 @@
 import { createLayerHover, revealLayerLabel } from './workspace-layer-hover.mjs'
 import { addLayerRow, toggleLayerBranch, updateLayerSelection, visibilityButton } from './workspace-layer-row.mjs'
+import { createLayerFlows } from './workspace-layer-flows.mjs'
 import { layerDetails } from './workspace-layer-details.mjs'
 
 // Inspector surfaces are siblings of the inspected app and never become layers.
 const ignored = 'script,style,template,noscript,#localhost-inspector,#localhost-inspector-outlines,#localhost-inspector-dock,#localhost-inspector-spacing-preview,#localhost-inspector-text-editor'
 
-export function createWorkspaceLayers({ getDocument, selectNode, componentFor, getOutline, onOpenOutline }) {
+export function createWorkspaceLayers({ getDocument, selectNode, componentFor, getOutline, onOpenOutline, onFlowPopover }) {
   const ui = window.LocalhostInspector
   let mount
   let source
@@ -14,6 +15,19 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
   let selectedGroup = new Set()
   let revealNode
   let selectingRow = false
+  let currentTree
+  let ancestryExpanded = new WeakSet()
+  let previewBranches = []
+  const flowNavigation = createLayerFlows({ ui, onFlowPopover, onOpenOutline,
+    revealBranches(keys, commit) {
+      const folded = keys.filter(key => outlineDisclosure.get(key) === false)
+      if (commit) for (const key of folded) outlineDisclosure.set(key, true)
+      const next = commit ? [] : folded
+      if (next.length === previewBranches.length && next.every((key, i) => key === previewBranches[i])) return
+      previewBranches = next
+      if (mount) paint()
+    },
+  })
   const revealLabel = label => revealLayerLabel(mount, label)
   const hover = createLayerHover({ getMount: () => mount, getOutline, paint, revealLabel })
   const hiddenAttribute = 'data-localhost-inspector-layer-hidden'
@@ -39,17 +53,26 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
   let previousSelection
   let defaultExpanded
   const collapse = ui.action('Collapse layers', 'collapsePages', () => {
-    defaultExpanded = !mount.querySelector('[aria-expanded="true"]')
+    const outline = getOutline?.()
+    const hasFlows = outline?.flows?.length > 1
+    defaultExpanded = !visibleRows.some(row => row.expanded)
     disclosure = new WeakMap()
     outlineDisclosure.clear()
     if (!defaultExpanded) {
+      hover.clear()
+      revealNode = null
       function fold(items) {
         for (const item of items) {
           outlineDisclosure.set(item.key, false)
           if (item.children?.length) fold(item.children)
         }
       }
-      fold(getOutline?.()?.items || [])
+      if (hasFlows) {
+        for (const flow of outline.flows) {
+          outlineDisclosure.set('flow:' + flow.key, false)
+          fold(flow.items)
+        }
+      } else fold(outline?.items || [])
     }
     paint()
   })
@@ -91,6 +114,7 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
       selected = null
       focused = null
       disclosure = new WeakMap()
+      ancestryExpanded = new WeakSet()
     }
     if (!doc?.body || !mount) return
     observer = new doc.defaultView.MutationObserver(records => {
@@ -121,6 +145,7 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
     if (selected === node && !selectedGroup.size && !group.length && !repeat) return
     const temporaryBranches = hover.hasTemporaryBranches
     if (node || group.length) hover.clear()
+    const sameSelection = selected === node
     selectedGroup = new Set(group)
     selected = node
     const targets = node ? [node] : group
@@ -133,7 +158,7 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
     if (!mount) return
     const current = getOutline?.()
     const visibleTarget = node && visibleRows.find(row => row.node === node)
-    if (!temporaryBranches && visibleTarget && !group.length &&
+    if (!temporaryBranches && visibleTarget && sameSelection && !group.length &&
         current?.activeKey === previousActive && current?.selectedKey === previousSelection) {
       for (const row of visibleRows) updateLayerSelection(row, row.node === node)
       if (revealNode) revealLabel(visibleTarget.text)
@@ -149,7 +174,7 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
     tree.setAttribute('role', 'tree')
     tree.setAttribute('aria-label', 'Layers')
     const previousFocus = mount.getRootNode().activeElement
-    const restoreFocus = mount.contains(previousFocus)
+    const restoreFocus = currentTree?.contains(previousFocus)
     const restoreEye = previousFocus?.classList.contains('workspace-layer-eye')
     const restorePointerFocus = previousFocus?.hasAttribute('data-pointer-focus')
     const rows = []
@@ -183,12 +208,31 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
     const liveSelection = selected?.isConnected || [...selectedGroup].some(node => node.isConnected)
 
     const rowContext = { ui, rows, focus, onFocus(node) { focused = node } }
+    const roots = source?.body ? renderedChildren(source.body) : []
+    const deepPath = activeKey && !hover.hasTemporaryBranches ? selectedPath(roots) : []
+    const activeFrame = deepPath.length - 1 > 5 && outline?.items
+      .flatMap(item => [item, ...(item.children || [])]).find(item => item.key === activeKey && item.kind === 'frame')
 
-    function append(nodes, container, level, parent, rootLevel = level) {
+    function selectedPath(roots) {
+      const path = []
+      if (!selected?.isConnected || selectedGroup.size) return path
+      let siblings = roots
+      while (siblings.length) {
+        const ancestor = siblings.find(node => node === selected || node.contains(selected))
+        if (!ancestor) return []
+        path.push(ancestor)
+        if (ancestor === selected) return path
+        siblings = renderedChildren(ancestor)
+      }
+      return []
+    }
+
+    function append(nodes, container, level, parent, rootLevel = level, compactBranch = null) {
       for (const node of nodes) {
         const children = renderedChildren(node)
         const branch = children.length > 0
-        const expanded = branch && hover.expand(node, disclosure.get(node) ?? defaultExpanded ?? level === rootLevel)
+        const expanded = branch && (compactBranch ? compactBranch.length > 1 :
+          hover.expand(node, disclosure.get(node) ?? defaultExpanded ?? level === rootLevel))
         const details = layerDetails(node, branch)
         const component = componentFor(node)
         const label = component || details.label
@@ -199,6 +243,11 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
           title: component && details.label !== component ? component + ' · ' + details.label : label,
           direct: node === selected || selectedGroup.has(node),
           onToggle() {
+            if (compactBranch) {
+              ancestryExpanded.add(selected)
+              paint()
+              return
+            }
             disclosure.set(node, !record.expanded)
             if (hover.hasTemporaryBranches) { paint(); return }
             toggleLayerBranch(ui, rows, record, () => append(renderedChildren(node), record.group, level + 1, record, rootLevel))
@@ -213,7 +262,8 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
           },
         })
         if (node === revealNode) labelToReveal = record.text
-        if (expanded) append(children, record.group, level + 1, record, rootLevel)
+        if (expanded) append(compactBranch ? compactBranch.slice(1, 2) : children, record.group, level + 1, record, rootLevel,
+          compactBranch?.slice(1))
       }
     }
 
@@ -229,7 +279,7 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
         const openForSelection = (active || containsActive) && (activeChanged || revealNode)
           || selectionChanged && (direct || containsSelected)
         if (openForSelection && item.key !== request?.key) outlineDisclosure.delete(item.key)
-        const expanded = branch && hover.expand(item.key, (section || active) && (outlineDisclosure.get(item.key) ?? true))
+        const expanded = branch && hover.expand(item.key, (section || active) && (previewBranches.includes(item.key) || (outlineDisclosure.get(item.key) ?? true)))
         const record = addLayerRow(rowContext, { node: item.key, container, level, parent, label: item.label, icon: item.kind,
           direct, branch, expanded: Boolean(expanded), outlineKind: item.kind,
           onSelect() { onOpenOutline(item.key, Boolean(expanded)) },
@@ -245,11 +295,54 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
         if (selectionChanged && direct) labelToReveal = record.text
         if (!expanded) continue
         if (section) appendOutline(children, record.group, level + 1, record)
-        else if ((active || (hover.document === source && item.key === (outline.sourceKey || outline.hoverKey))) && source?.body) append(renderedChildren(source.body), record.group, level + 1, record)
+        else if ((active || (hover.document === source && item.key === (outline.sourceKey || outline.hoverKey))) && source?.body) {
+          const children = roots
+          const path = item === activeFrame ? deepPath : []
+          if (!path.length) {
+            append(children, record.group, level + 1, record)
+            continue
+          }
+          const target = selected
+          const expandedPath = ancestryExpanded.has(target)
+          const toggle = ui.element('button', 'workspace-layer-ancestry-toggle', expandedPath ? '−' : '…')
+          toggle.type = 'button'
+          toggle.setAttribute('aria-label', expandedPath ? 'Collapse skipped ancestors' : 'Expand skipped ancestors')
+          toggle.setAttribute('aria-expanded', String(expandedPath))
+          toggle.style.setProperty('--layer-depth', String(level))
+          toggle.onclick = () => {
+            if (expandedPath) ancestryExpanded.delete(target)
+            else ancestryExpanded.add(target)
+            paint()
+            currentTree.querySelector('.workspace-layer-ancestry-toggle')?.focus({ preventScroll: true })
+          }
+          record.group.append(toggle)
+          if (expandedPath) append(children, record.group, level + 1, record)
+          else {
+            tree.setAttribute('data-compressed-ancestry', '')
+            const tail = path.slice(-3)
+            append(tail.slice(0, 1), record.group, level + 2, record, level + 2, tail)
+            for (const row of rows.slice(-3)) row.item.setAttribute('aria-level', String(level + 1 + path.indexOf(row.node)))
+          }
+        }
       }
     }
 
-    if (outline) appendOutline(outline.items, tree, 1, null)
+    if (outline?.flows?.length > 1) {
+      tree.dataset.flowSections = ''
+      for (const flow of outline.flows) {
+        const key = 'flow:' + flow.key
+        const direct = key === selectedKey
+        if (flow.key === outline.flowKey && (revealNode || selectionChanged && selectedKey && !direct || activeChanged && activeKey)) {
+          outlineDisclosure.delete(key)
+        }
+        const expanded = previewBranches.includes(key) || (outlineDisclosure.get(key) ?? true)
+        const section = addLayerRow(rowContext, { node: key, container: tree, level: 1,
+          label: flow.label, icon: 'section', branch: true, expanded, outlineKind: 'flow', direct,
+          onSelect() { onOpenOutline(key, expanded) },
+          onToggle() { outlineDisclosure.set(key, !expanded); paint() } })
+        if (expanded) appendOutline(flow.items, section.group, 2, section)
+      }
+    } else if (outline) appendOutline(outline.items, tree, 1, null)
     else if (source?.body) append(renderedChildren(source.body), tree, 1, null)
     hover.setRows(rows)
     function syncCollapse() {
@@ -262,12 +355,17 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
     const nextFocus = rows.find(row => row.node === focused) ??
       rows.find(row => row.node === selected) ?? rows[0]
     if (!nextFocus) {
+      flowNavigation.connect(mount, [], null)
+      currentTree = null
       mount.replaceChildren(ui.element('p', 'workspace-layer-empty', 'No rendered layers'))
       return
     }
     nextFocus.item.tabIndex = 0
     if (restoreFocus && restorePointerFocus) nextFocus.item.dataset.pointerFocus = ''
-    mount.replaceChildren(tree)
+    if (currentTree?.parentNode === mount) currentTree.replaceWith(tree)
+    else mount.replaceChildren(tree)
+    currentTree = tree
+    flowNavigation.connect(mount, outline?.flows ?? [], outline?.flowKey, tree, selectedKey)
     if (labelToReveal) {
       revealLabel(labelToReveal)
       revealNode = null
@@ -276,10 +374,15 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
   }
 
   function render(container, header) {
-    if (header) header.append(collapse)
+    if (header && collapse.parentNode !== header) header.append(collapse, flowNavigation.headerButton)
     const doc = getDocument()
     const resume = container && !mount
-    if (!container) { hover.clear(); hover.resetRows(); visibleRows = [] }
+    if (!container) {
+      hover.clear()
+      hover.resetRows()
+      visibleRows = []
+      flowNavigation.connect(null, [], null)
+    }
     mount = container
     if (!mount || resume || doc !== source || doc?.URL !== sourceUrl) watch(doc)
     if (mount) paint()
@@ -290,5 +393,6 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
     hover.update(node)
   }
 
-  return { render, setSelected, setHovered, syncOutlineHover: hover.syncOutlineHover }
+  return { render, setSelected, setHovered, syncOutlineHover: hover.syncOutlineHover,
+    resumeFlowMenu: flowNavigation.resume, suspendFlowMenu: flowNavigation.suspend }
 }

@@ -94,3 +94,121 @@ test('Command-click and Layers inspect the rendered content of a cross-origin ca
     assert.equal(await originalTree.getByRole('treeitem', { selected: true }).count(), 0)
   } finally { await h.close() }
 })
+
+test('the outside flow menu previews a folded frame and restores the deep variant selection across iframe boundaries', async t => {
+  const server = createServer(async (request, response) => {
+    if (await serveWorkspaceAsset(request.url, response)) return
+    response.writeHead(200, { 'content-type': 'text/html' }).end('<script type="module" src="/__inspector-flow/preview-wheel.mjs"></script><main style="padding:32px">' +
+      '<div>'.repeat(7) + '<h1>Selected amount</h1>' + '</div>'.repeat(7) + '</main>')
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  const flowFrames = Array.from({ length: 16 }, (_, i) => [
+    { id: 'base-' + i, label: 'Flow ' + i, route: '/group-' + i },
+    { id: 'child-' + i, label: 'Screen ' + i, route: '/group-' + i + '/screen' },
+  ]).flat().map(frame => ({ ...frame, steps: [], checkpoint: [], image: 'frame-1.png' }))
+  const h = await createHarness({ canvas: true, dock: true, flowFrames, flowVariants: [
+    { id: 'draft', label: 'Draft', section: 'Explorations', route: '/group-0', anchor: 'base-0', origin: 'http://127.0.0.1:' + server.address().port },
+  ] })
+  try {
+    const page = h.page
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await h.open()
+    await page.goto(page.url().split('#')[0] + '#context=1&frame=base-0&page=%2Fgroup-0&view=canvas&variant=draft')
+    const wrapper = page.locator('[data-variant="draft"]')
+    const target = wrapper.frameLocator('iframe').getByRole('heading', { name: 'Selected amount' })
+    await wrapper.getByRole('button', { name: 'Interact with Draft' }).waitFor()
+    const targetBounds = await target.boundingBox()
+    await page.keyboard.down('Meta')
+    try { await page.mouse.click(targetBounds.x + 4, targetBounds.y + targetBounds.height / 2) }
+    finally { await page.keyboard.up('Meta') }
+    const viewer = page.locator('iframe[title="Variant layers"]')
+    const layers = viewer.contentFrame()
+    const selected = layers.getByRole('treeitem', { name: 'Selected amount', selected: true, exact: true })
+    await selected.waitFor()
+    const ellipsis = layers.getByRole('button', { name: 'Expand skipped ancestors' })
+    await ellipsis.click()
+    await layers.getByRole('button', { name: 'Collapse skipped ancestors' }).click()
+    const pane = layers.locator('main')
+    const section = layers.locator('[aria-roledescription="flow"][aria-label="Flow 13"]')
+    await section.locator(':scope > .workspace-layer-line .workspace-layer-caret').click()
+    await pane.evaluate(node => { node.scrollTop = 0 })
+    const trigger = layers.getByRole('button', { name: 'Show flows' })
+    const clip = await viewer.boundingBox()
+    const menu = layers.getByRole('group', { name: 'Flows and frames' })
+    const screen = menu.getByRole('button', { name: 'Screen 13', exact: true })
+    const open = async () => {
+      await trigger.hover()
+      await menu.waitFor()
+      await menu.getByRole('heading', { name: 'Flows', exact: true }).waitFor()
+      assert.equal(await menu.locator('[data-group] small').count(), 0)
+      assert.equal(await menu.getByRole('button', { name: /Explorations/ }).locator('small').textContent(), '1')
+      assert.equal(await pane.evaluate(node => getComputedStyle(node).scrollbarWidth), 'none')
+      const bounds = await menu.boundingBox()
+      assert.ok(Math.abs(bounds.x - clip.x - clip.width - 4) < 1)
+      await page.mouse.move(bounds.x + 6, bounds.y + 12, { steps: 12 })
+      await menu.locator('[data-key="flow:/group-0"]').hover()
+      assert.equal(await pane.evaluate(node => node.scrollTop), 0)
+      if (!await screen.isVisible()) await menu.locator('summary[data-flow="/group-13"] svg').click()
+      // Opening a flow also previews its heading. Start the frame jump offscreen.
+      await pane.evaluate(node => { node.scrollTop = 0 })
+      await screen.hover()
+      assert.equal(await section.getAttribute('aria-expanded'), 'true')
+      assert.ok(await pane.evaluate(node => node.scrollTop > 0))
+      const hovered = layers.locator('[data-outline-key="frame:child-13"][data-hovered] > .workspace-layer-line')
+      await hovered.waitFor()
+      assert.ok(await hovered.evaluate(row => {
+        const view = row.closest('main')
+        const bounds = view.getBoundingClientRect()
+        const box = row.getBoundingClientRect()
+        const centered = Math.abs(bounds.y + bounds.height / 2 - box.y - box.height / 2) < 2
+        return centered || Math.abs(view.scrollTop - (view.scrollHeight - view.clientHeight)) < 1
+      }))
+      assert.equal(await selected.count(), 1)
+    }
+    await open()
+    await page.mouse.move(clip.x + clip.width + 245, clip.y + 50)
+    await menu.waitFor({ state: 'hidden' })
+    assert.equal(await pane.evaluate(node => node.scrollTop), 0)
+    assert.equal(await section.getAttribute('aria-expanded'), 'false')
+    await open()
+    await page.keyboard.press('Escape')
+    await menu.waitFor({ state: 'hidden' })
+    assert.equal(await pane.evaluate(node => node.scrollTop), 0)
+    assert.equal(await selected.count(), 1)
+    // Re-enter from outside the trigger after dismissing it by keyboard.
+    await page.mouse.move(clip.x + 30, clip.y + 15)
+    await open()
+    const previousMenuScroll = await menu.locator('.workspace-layer-flow-list').evaluate(node => node.scrollTop)
+    await screen.click()
+    await viewer.waitFor({ state: 'hidden' })
+    const destination = page.getByRole('treeitem', { name: 'Screen 13', selected: true, exact: true })
+    await destination.waitFor()
+    assert.equal(await destination.getAttribute('data-selection'), 'direct')
+    const hostMenu = page.getByRole('group', { name: 'Flows and frames' })
+    await hostMenu.waitFor({ timeout: 4000 })
+    assert.equal(await hostMenu.locator('.workspace-layer-flow-list').evaluate(node => node.scrollTop), previousMenuScroll)
+    const nextScreen = hostMenu.getByRole('button', { name: 'Screen 14', exact: true })
+    if (!await nextScreen.isVisible()) await hostMenu.locator('summary[data-flow="/group-14"] svg').click()
+    await nextScreen.click()
+    const nextDestination = page.getByRole('treeitem', { name: 'Screen 14', selected: true, exact: true })
+    await nextDestination.waitFor()
+    await hostMenu.waitFor({ timeout: 4000 })
+    const hostPane = page.locator('.li-variables-layers')
+    const committedScroll = await hostPane.evaluate(node => node.scrollTop)
+    await hostMenu.getByRole('button', { name: 'Screen 0', exact: true }).hover()
+    const screenZero = page.locator('[data-outline-key="frame:child-0"][data-hovered]')
+    await screenZero.waitFor()
+    await page.keyboard.press('Escape')
+    await hostMenu.waitFor({ state: 'hidden' })
+    assert.equal(await hostPane.evaluate(node => node.scrollTop), committedScroll)
+    assert.equal(await nextDestination.getAttribute('data-selection'), 'direct')
+    await page.getByRole('button', { name: 'Show flows' }).hover()
+    assert.equal(await hostMenu.getByRole('button', { name: 'Draft', exact: true }).count(), 0)
+    await hostMenu.getByRole('button', { name: /Explorations/ }).click()
+    const sectionRow = page.getByRole('treeitem', { name: 'Explorations', selected: true, exact: true })
+    await sectionRow.waitFor()
+    assert.equal(await sectionRow.getAttribute('aria-expanded'), 'true')
+    await sectionRow.getByRole('treeitem', { name: 'Draft', exact: true }).waitFor()
+  } finally { await h.close() }
+})

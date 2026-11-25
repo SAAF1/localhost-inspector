@@ -90,6 +90,7 @@ export function renderFrames(map, data, groups, activate, viewOf, previews, swit
     }
     const heading = document.createElement('h2')
     heading.className = 'flow-heading'
+    heading.dataset.outlineFlow = 'flow:' + group.key
     heading.textContent = group.label
     headings.set(group, heading)
     first.button.before(heading)
@@ -169,5 +170,5 @@ export function renderFrames(map, data, groups, activate, viewOf, previews, swit
     }
   }
   layout()
-  return { cards, layout }
+  return { cards, headings, layout }
 }

@@ -28,6 +28,7 @@ const assets = new Map([
   ['spacing-preview.mjs', ['spacing-preview.mjs', 'text/javascript']],
   ['workspace-sidebar.mjs', ['workspace-sidebar.mjs', 'text/javascript']],
   ['workspace-layers.mjs', ['workspace-layers.mjs', 'text/javascript']],
+  ['workspace-layer-flows.mjs', ['workspace-layer-flows.mjs', 'text/javascript']],
   ['workspace-layer-hover.mjs', ['workspace-layer-hover.mjs', 'text/javascript']],
   ['workspace-layer-row.mjs', ['workspace-layer-row.mjs', 'text/javascript']],
   ['workspace-layer-details.mjs', ['workspace-layer-details.mjs', 'text/javascript']],
@@ -60,7 +61,7 @@ export function serveWorkspaceAsset(path, response, canvasEditor = false) {
 
 const previewAssets = new Set(['inspector-request.mjs', 'variant-editor.html', 'variant-editor.mjs', 'variant-runtime.mjs', 'component-preview.js',
   'inter-latin.woff2', 'preview-wheel.mjs', 'variant-inspection.mjs', 'variant-layers.mjs',
-  'variant-layers.html', 'workspace-layers.mjs', 'workspace-layer-row.mjs', 'workspace-layer-hover.mjs', 'workspace-layer-details.mjs', 'workspace-layers.css', 'tokens.js', 'styles.js',
+  'variant-layers.html', 'workspace-layers.mjs', 'workspace-layer-row.mjs', 'workspace-layer-hover.mjs', 'workspace-layer-flows.mjs', 'workspace-layer-details.mjs', 'workspace-layers.css', 'tokens.js', 'styles.js',
   'icons.js', 'dom.js', 'tooltip.js'].map(name => flowPath + name))
 
 export function servePreviewAsset(path, response) {

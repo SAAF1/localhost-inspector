@@ -6,6 +6,7 @@
   "openOccurrences": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
   "instance": '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linejoin="round"><path d="m8 1.5 6.5 6.5L8 14.5 1.5 8z"/></svg>',
   "textLayer": '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M2.5 5V3h11v2M8 3v10m-2.5 0h5"/></svg>',
+  "bulletedList": '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="2.5" cy="4" r="1"/><circle cx="2.5" cy="8" r="1"/><circle cx="2.5" cy="12" r="1"/><path d="M6 4h7.5M6 8h7.5M6 12h7.5" fill="none" stroke="currentColor" stroke-linecap="round"/></svg>',
   "collapsePages": '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h7M2 8h7M2 12h7m1-9 2 2 2-2m-4 10 2-2 2 2"/></svg>',
   "workspaceFile": '<svg fill="none" viewBox="0 0 16 16" stroke="currentColor" stroke-linejoin="round"><path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/></svg>',
   "info": '<svg fill="none" viewBox="0 0 16 16" stroke="currentColor" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M8 7.5v3M8 5.25v.1"/></svg>',

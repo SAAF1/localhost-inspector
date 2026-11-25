@@ -22,8 +22,15 @@ const parentOrigin = document.referrer ? new URL(document.referrer).origin : nul
 const layers = createWorkspaceLayers({
   getDocument: () => doc,
   getOutline: () => outline,
-  onOpenOutline(key, expanded) {
-    if (parentOrigin) parent.postMessage({ type: 'open-outline-item', key, expanded }, parentOrigin)
+  onFlowPopover(bounds) {
+    if (!parentOrigin) return
+    const panel = root.host
+    if (bounds && !panel.style.width) panel.style.width = panel.offsetWidth + 'px'
+    if (!bounds) panel.style.removeProperty('width')
+    parent.postMessage({ type: 'variant-flow-popover', bounds }, parentOrigin)
+  },
+  onOpenOutline(key, expanded, flowMenu) {
+    if (parentOrigin) parent.postMessage({ type: 'open-outline-item', key, expanded, flowMenu }, parentOrigin)
   },
   componentFor: node => node.getAttribute('data-inspector-component-name') || undefined,
   selectNode(node) {
@@ -51,6 +58,10 @@ window.addEventListener('keydown', event => {
 })
 window.addEventListener('message', event => {
   if (event.source !== parent || event.origin !== parentOrigin) return
+  if (event.data?.type === 'dismiss-flow-popover') {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    return
+  }
   if (event.data?.type === 'variant-outline-hover') {
     if (outline) outline.hoverKey = event.data.key
     layers.syncOutlineHover()
@@ -77,4 +88,5 @@ window.addEventListener('message', event => {
   }
   layers.render(main, header)
   if (doc) sync()
+  if (event.data.flowMenu) layers.resumeFlowMenu(event.data.flowMenu)
 })

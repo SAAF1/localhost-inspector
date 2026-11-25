@@ -60,6 +60,7 @@ export function addLayerRow({ ui, rows, focus, onFocus }, { node, container, lev
   const record = { node, item, text, eye, expanded, branch, parent, level, caret }
   updateLayerSelection(record, direct)
   rows.push(record)
+  line.addEventListener('pointerdown', () => { item.dataset.pointerFocus = '' })
   line.addEventListener('click', event => {
     if (eye?.contains(event.target)) return
     if (event.detail > 0) item.dataset.pointerFocus = ''

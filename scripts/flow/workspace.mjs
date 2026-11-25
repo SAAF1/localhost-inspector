@@ -53,6 +53,7 @@ let layoutVariantSections
 let focusedVariant
 let outlinesByFlow
 let selectedSection
+let selectedFlow
 let selectedOriginal
 let pendingInspectTarget
 let inspectedVariant
@@ -60,7 +61,7 @@ let selectedComparison = false
 let hoverKey = null
 let disclosureRequest
 let disclosureVersion = 0
-const { cards, layout: layoutFrames } = renderFrames(map, data, groups, activate, viewOf, previewIndex,
+const { cards, headings, layout: layoutFrames } = renderFrames(map, data, groups, activate, viewOf, previewIndex,
   anchor => changeView({ preset: 'desktop', anchor }))
 function layout() {
   const extras = linkedFrame ? [linkedFrame, ...variantFrames.values()] : [...variantFrames.values()]
@@ -243,12 +244,14 @@ function getOutline() {
     outlinesByFlow = new Map(groups.map(group => {
       const items = group.frames.flatMap(({ id }) => {
         const label = cards.get(id).button.firstElementChild.textContent
-        const rows = [{ kind: 'frame', label, key: 'frame:' + id, children: [] }]
+        const variants = byAnchor.get(id) ?? []
+        const rows = [{ kind: 'frame', label, key: 'frame:' + id, children: [],
+          variantCount: variants.filter(item => item.kind === 'frame').length }]
         if (linkedFrame?.id === id) rows.push({ kind: 'frame', label: linkedFrame.label, key: 'comparison:' + id, children: [] })
-        return rows.concat(byAnchor.get(id) ?? [])
+        return rows.concat(variants)
       })
       const keys = new Set(items.flatMap(item => [item.key, ...item.children.map(child => child.key)]))
-      return [group.key, { items, keys }]
+      return [group.key, { key: group.key, label: group.label, items, keys }]
     }))
   }
   const flowKey = groupByFrame.get(flowFrameId)?.key
@@ -260,8 +263,17 @@ function getOutline() {
   if (selectedOriginal) selectedKey = 'frame:' + selectedOriginal
   if (selectedComparison && linkedFrame) selectedKey = 'comparison:' + linkedFrame.id
   if (selectedSection) selectedKey = selectedSection.dataset.sectionKey
-  return { items: scope?.items ?? [], flowKey, flowFrameId, activeKey, sourceKey, disclosureRequest,
-    hoverKey: scope?.keys.has(hoverKey) ? hoverKey : null, selectedKey: scope?.keys.has(selectedKey) ? selectedKey : null }
+  if (selectedFlow) selectedKey = 'flow:' + selectedFlow.key
+  const isFlowKey = key => groups.length > 1 && key?.startsWith('flow:') && outlinesByFlow.has(key.slice(5))
+  return { items: scope?.items ?? [], flows: [...outlinesByFlow.values()].map(({ key, label, items }) => ({ key, label, items })), flowKey, flowFrameId, activeKey, sourceKey, disclosureRequest,
+    hoverKey: scope?.keys.has(hoverKey) || isFlowKey(hoverKey) ? hoverKey : null,
+    selectedKey: scope?.keys.has(selectedKey) || isFlowKey(selectedKey) ? selectedKey : null }
+}
+
+function markFlow(group) {
+  headings.get(selectedFlow)?.removeAttribute('data-selected')
+  selectedFlow = group
+  headings.get(group)?.setAttribute('data-selected', '')
 }
 
 function markSection(section) {
@@ -285,7 +297,23 @@ function selectSection(key) {
 }
 
 async function onOpenOutline(key, expandedRow) {
-  if (!expanded || typeof key !== 'string' || !outlinesByFlow?.get(groupByFrame.get(flowFrameId)?.key)?.keys.has(key)) return
+  if (!expanded || typeof key !== 'string') return
+  if (key.startsWith('flow:')) {
+    const group = groups.length > 1 && groups.find(group => group.key === key.slice(5))
+    if (!group || !clearCanvasSelection()) return
+    flowFrameId = group.frames[0].id
+    sidebar?.revealFlowFrame(flowFrameId)
+    markFlow(group)
+    sidebar?.changed()
+    sidebar?.refreshOutline()
+    const heading = headings.get(group) ?? cards.get(flowFrameId).button.firstElementChild
+    const point = heading.getBoundingClientRect()
+    const board = map.getBoundingClientRect()
+    focusSidebarPoint((point.left + point.width / 2 - board.left) / camera.scale,
+      (point.top + point.height / 2 - board.top) / camera.scale)
+    return
+  }
+  if (!outlinesByFlow || ![...outlinesByFlow.values()].some(flow => flow.keys.has(key))) return
   disclosureRequest = typeof expandedRow === 'boolean' ? { key, expanded: expandedRow, version: ++disclosureVersion } : undefined
   if (key.startsWith('section:')) {
     selectSection(key)
@@ -315,6 +343,7 @@ function setFrameSelected(selected) {
   if (selectedOriginal) cards.get(selectedOriginal).button.setAttribute('aria-pressed', 'false')
   selectedOriginal = selected ? active : null
   if (selectedOriginal) {
+    markFlow(null)
     flowFrameId = selectedOriginal
     sidebar?.revealFlowFrame(flowFrameId)
     markSection(null)
@@ -356,6 +385,7 @@ function inspectVariant(frame, action, details) {
     return
   }
   markSection(null)
+  markFlow(null)
   selectedComparison = false
   inspectedVariant = frame.variant
   flowFrameId = variantFrames.get(frame.variant).id
@@ -391,6 +421,7 @@ function clearCanvasSelection() {
   clearHover()
   if (candidate) cancelCandidate()
   markSection(null)
+  markFlow(null)
   selectedComparison = false
   setFrameSelected(false)
   return true
@@ -873,6 +904,8 @@ function fillsCanvas(card) {
 
 function hoverTargetKey(node) {
   if (node === preview) return active ? 'frame:' + active : null
+  const flow = node?.closest('[data-outline-flow]')
+  if (flow) return flow.dataset.outlineFlow
   const frame = node?.closest('.flow-frame, .linked-frame, .variant-section-surface')
   if (!frame) return null
   if (frame.dataset.frame) return 'frame:' + frame.dataset.frame
@@ -898,7 +931,7 @@ function warmAt(x, y, inspect = false) {
   if (pendingCard || resizing) return
   // A single original document owns the user's live element selection.
   // Keep that document mounted while merely pointing at a different frame.
-  if (inspectedVariant || selectedSection || selectedComparison ||
+  if (inspectedVariant || selectedFlow || selectedSection || selectedComparison ||
       preview.contentDocument?.querySelector('#localhost-inspector-outlines #outline:not([hidden])')) {
     clearHover()
     return

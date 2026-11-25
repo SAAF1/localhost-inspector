@@ -194,7 +194,7 @@ test('flow headings are one disclosure row and canvas selection reveals its curr
   try {
     await h.open()
     const sidebar = h.page.locator('#workspace-sidebar')
-    const headers = sidebar.locator('.flow-group > summary, .single-flow')
+    const headers = sidebar.locator('.flow-roster').locator('.flow-group > summary, .single-flow')
     assert.deepEqual(await headers.allTextContents(), ['Home', 'Details', 'Missing'])
     const home = headers.first()
     const detail = headers.nth(1)
@@ -980,7 +980,60 @@ test('canvas zoom reaches one percent with presets and pinch, and fit can go bel
   } finally { await h.close() }
 })
 
-test('Layers follows the selected flow, including same-named sections, and keeps it after deselecting', async () => {
+test('selecting a Layers flow highlights its screens and preserves disclosure', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
+  try {
+    const page = h.page
+    await page.locator('#flow-toggle').click()
+    await h.open()
+    const tree = page.getByRole('tree', { name: 'Layers', exact: true })
+    const flow = tree.locator('[data-outline-key="flow:/"]')
+    const screen = flow.locator('[data-outline-key="frame:visible"]')
+    const sibling = tree.locator('[data-outline-key="flow:/other"]')
+    const heading = page.locator('[data-outline-flow="flow:/"]')
+    const line = flow.locator(':scope > .workspace-layer-line')
+    const caret = line.locator('.workspace-layer-caret')
+    const outline = () => line.evaluate(row => getComputedStyle(row).outlineStyle)
+    await flow.press('Enter')
+    await heading.and(page.locator('[data-selected]')).waitFor()
+    assert.equal(await flow.getAttribute('data-selection'), 'direct')
+    assert.equal(await screen.getAttribute('data-selection'), 'inherited')
+    assert.equal(await sibling.getAttribute('data-selection'), null)
+    assert.equal(await outline(), 'solid')
+    await line.locator('.workspace-layer-label').click()
+    assert.equal(await outline(), 'none')
+    await caret.click()
+    assert.equal(await flow.getAttribute('aria-expanded'), 'false')
+    await flow.press('Enter')
+    assert.equal(await flow.getAttribute('aria-expanded'), 'false')
+    assert.equal(await flow.getAttribute('data-selection'), 'direct')
+    await page.keyboard.press('Escape')
+    assert.equal(await flow.getAttribute('data-selection'), null)
+    await page.keyboard.down('Meta')
+    try {
+      await heading.hover()
+      await flow.and(tree.locator('[data-hovered]')).waitFor({ timeout: 2000 })
+      assert.equal(await flow.getAttribute('aria-expanded'), 'false')
+      assert.equal(await flow.getAttribute('data-selection'), null)
+    } finally { await page.keyboard.up('Meta') }
+    await flow.and(tree.locator('[data-hovered]')).waitFor({ state: 'detached' })
+    await caret.click()
+    await flow.press('Enter')
+    await screen.press('Enter')
+    await screen.and(tree.locator('[data-selection="direct"]')).waitFor()
+    assert.equal(await flow.getAttribute('data-selection'), null)
+    assert.equal(await heading.getAttribute('data-selected'), null)
+    await page.getByRole('button', { name: 'Collapse layers', exact: true }).click()
+    const expand = page.getByRole('button', { name: 'Expand layers', exact: true })
+    await expand.waitFor()
+    assert.equal(await tree.locator('[role="treeitem"]:not([aria-roledescription="flow"])').count(), 0)
+    assert.equal(await tree.locator('[aria-roledescription="flow"]').count(), 3)
+    await expand.click()
+    await screen.waitFor()
+  } finally { await h.close() }
+})
+
+test('Layers keeps frames and same-named sections under their own flows during selection and deselection', async () => {
   const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages,
     flowVariants: [
       { id: 'home-draft', label: 'Overview draft', section: 'Alternatives', anchor: 'home', route: '/' },
@@ -992,21 +1045,32 @@ test('Layers follows the selected flow, including same-named sections, and keeps
     await h.open()
     const tree = page.getByRole('tree', { name: 'Layers', exact: true })
     const row = (name, selected) => tree.getByRole('treeitem', { name, exact: true, selected })
-    const frameRoots = () => tree.locator('[aria-level="1"][aria-roledescription="frame"]').evaluateAll(items => items.map(item => item.getAttribute('aria-label')))
+    const flowWithFrame = label => tree.locator('[aria-level="1"]').filter({
+      has: page.getByRole('treeitem', { name: label, exact: true }),
+    })
+    const originalFrameNames = flow => flow.locator('[aria-level="2"][data-outline-key^="frame:"]').evaluateAll(
+      rows => rows.map(item => item.getAttribute('aria-label')))
+    const home = flowWithFrame('Overview draft')
+    const details = flowWithFrame('Detail draft')
     await row('Overview draft').waitFor()
-    assert.deepEqual(await frameRoots(), ['Home', 'View', 'Hidden dialog'])
-    assert.equal(await row('Detail draft').count(), 0)
+    assert.deepEqual(await originalFrameNames(home), ['Home', 'View', 'Hidden dialog'])
+    assert.deepEqual(await originalFrameNames(details), ['Details'])
     await page.locator('[data-anchor="other"] .variant-section-surface button').press('Enter')
-    await row('Alternatives', true).waitFor()
-    assert.deepEqual(await frameRoots(), ['Details'])
-    assert.equal(await row('Overview draft').count(), 0)
-    await row('Detail draft').waitFor()
+    await details.getByRole('treeitem', { name: 'Alternatives', exact: true, selected: true }).waitFor()
+    assert.equal(await home.getByRole('treeitem', { name: 'Alternatives', exact: true, selected: true }).count(), 0)
     await page.keyboard.press('Escape')
-    await row('Alternatives', false).waitFor()
-    assert.deepEqual(await frameRoots(), ['Details'])
+    await details.getByRole('treeitem', { name: 'Alternatives', exact: true, selected: false }).waitFor()
     await page.locator('[data-variant="home-draft"] > button').press('Enter')
     const variantTree = page.frameLocator('iframe[title="Variant layers"]').getByRole('tree', { name: 'Layers' })
     await variantTree.getByRole('treeitem', { name: 'Overview draft', exact: true, selected: true }).waitFor()
-    assert.equal(await variantTree.getByRole('treeitem', { name: 'Detail draft', exact: true }).count(), 0)
+    await variantTree.getByRole('treeitem', { name: 'Detail draft', exact: true, selected: false }).waitFor()
+    const variantLayers = page.frameLocator('iframe[title="Variant layers"]')
+    await variantLayers.getByRole('button', { name: 'Collapse layers', exact: true }).click()
+    const expand = variantLayers.getByRole('button', { name: 'Expand layers', exact: true })
+    await expand.waitFor()
+    assert.equal(await variantTree.locator('[role="treeitem"]:not([aria-roledescription="flow"])').count(), 0)
+    assert.equal(await variantTree.locator('[aria-roledescription="flow"]').count(), 3)
+    await expand.click()
+    await variantTree.getByRole('treeitem', { name: 'Overview draft', exact: true, selected: true }).waitFor()
   } finally { await h.close() }
 })

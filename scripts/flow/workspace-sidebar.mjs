@@ -175,7 +175,7 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
     getDocument: () => getFrame().contentDocument,
     selectNode: focusResult,
     getOutline,
-    onOpenOutline,
+    onOpenOutline: openLayerOutline,
   })
   let selectionDocument
   function syncLayerHover(event) {
@@ -458,7 +458,17 @@ export function connectSidebar({ data, groups, dock, getFrame, selectedRoute, li
       cancelScan()
     }
   }
-  const variantPanels = createVariantPanels(pane, dock, syncDock, { getOutline, onOpenOutline })
+  const variantPanels = createVariantPanels(pane, dock, syncDock, { getOutline, onOpenOutline: openLayerOutline })
+  async function openLayerOutline(key, expanded, flowMenu) {
+    const source = variantPanels.active
+    await onOpenOutline(key, expanded)
+    const destination = variantPanels.active
+    if (!flowMenu || source === destination) return
+    if (destination) {
+      if (!source) layers.suspendFlowMenu()
+      variantPanels.resumeFlowMenu(flowMenu)
+    } else layers.resumeFlowMenu(flowMenu)
+  }
   file.onclick = () => { variantPanels.leave(); show('File') }
   variables.onclick = () => { variantPanels.leave(); show('Variables') }
   show('File')
