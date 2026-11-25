@@ -193,23 +193,27 @@
   const editDestinationKey = 'localhost-inspector.pending-destination'
   const editsUI = ui.createPendingEdits({
     host, root, panel, get,
-    locate: id => recovery.previewNode(id),
+    observe: id => recovery.observeOperation(id, comparing),
     openEdit: goToEdit,
     removeEdit: id => run(() => removeJournalEdit(id)),
     setPreviewVisibility: (id, hidden) => run(() => toggleSavedPreview(id, hidden)),
     refresh: refreshJournal,
-    highlight: id => selection.previewRelated(id ? () => recovery.previewNode(id) : null),
+    highlight: id => {
+      const observation = id && recovery.observeOperation(id, comparing)
+      const node = observation?.state === 'applied' ? observation.node : null
+      selection.previewRelated(node ? () => node.isConnected ? node : null : null)
+    },
   })
 
   function syncPending() {
-    editsUI.update(pendingRows, savedRoute, previewVisibility)
+    editsUI.update(pendingRows, previewVisibility)
     if (host.hasAttribute('data-workspace-toolbar')) host.dispatchEvent(new Event('variables-data-changed', { bubbles: true }))
   }
 
   async function goToEdit(edit) {
     const navigation = ++editNavigation
     status('')
-    if (edit.template || edit.route === savedRoute) {
+    if (recovery.hasPreparedOperation(edit.id) || edit.template || edit.route === savedRoute) {
       if (await selectEditTarget(edit.id, navigation)) {
         if (panel.hidden) setOpen(true)
         if (isCanvasExpanded?.()) openEditRoute(route())
@@ -224,9 +228,14 @@
         sessionStorage.removeItem(editDestinationKey)
       }
       if (isCanvasExpanded?.()) openEditRoute(route())
+      if (recovery.hasPreparedOperation(edit.id)) {
+        status(comparing || edit.previewHidden
+          ? 'This preview is hidden.' : 'This saved preview is unavailable in the current view.', false, true)
+        return false
+      }
       const wrongState = edit.frameState && edit.frameState !== readFrameState()
       status(wrongState ? 'Open the original Canvas view to locate this saved edit.' :
-        'Couldn’t locate the element for this edit.', true)
+        missingEditMessage(edit), true)
       return false
     }
     const address = new URL(edit.route, location.origin)
@@ -247,6 +256,11 @@
       location.assign(address.href)
     }
     return true
+  }
+
+  function missingEditMessage(edit) {
+    return edit?.sessionOnly ? 'The original element is no longer available. This preview applies only to that element.' :
+      'Couldn’t locate the element for this edit.'
   }
 
   function rememberEditDestination({ id, route, frameState }) {
@@ -283,16 +297,23 @@
     const path = currentRoute
     const version = activeRouteVersion
     const isCurrent = () => navigation === editNavigation && isCurrentRoute(path, version)
-    const node = await recovery.locateSavedNode(id, isCurrent)
-    if (!node?.isConnected || !isCurrent() || !node.getClientRects().length ||
-        getComputedStyle(node).visibility !== 'visible') return false
+    const observation = await recovery.locateSavedEdit(id, isCurrent, comparing)
+    if (!isCurrent()) return false
+    const { node, state } = observation
+    if (state === 'stale') {
+      status(recovery.hasPreparedOperation(id) ? sourceConflictNotice : 'The saved style source changed. Review the edit before reapplying.', true)
+      return true
+    }
+    if (!node) return false
     node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
     selection.select(node)
-    if (!comparing && !pendingRows.find(edit => edit.id === id)?.previewHidden && !recovery.previewNode(id)) {
+    if (state === 'failed') {
       const baseline = recovery.changedBaseline(id, node)
       status(baseline ? 'The app now uses ' + baseline.value + ' for ' + baseline.label + '. Your edit is still saved.' :
         'Found the element. The saved preview couldn’t be applied here.', true)
-    }
+    } else if (state === 'superseded') status('A newer edit is previewing on this setting.', false, true)
+    else if (state === 'hidden') status(comparing ? 'Showing the original app.' : 'This preview is hidden.', false, true)
+    else if (state === 'unobservable') status('This saved preview is unavailable in the current view.', false, true)
     return true
   }
 
@@ -308,7 +329,9 @@
     const navigation = ++editNavigation
     if (await selectEditTarget(destination.id, navigation)) editsUI.markSelected(destination.id)
     else if (navigation === editNavigation && destination.route === savedRoute) {
-      status('Opened the page. Couldn’t locate the element for this edit.', true)
+      if (recovery.hasPreparedOperation(destination.id))
+        status('This saved preview is unavailable in the current view.', false, true)
+      else status('Opened the page. ' + missingEditMessage(pendingRows.find(edit => edit.id === destination.id)), true)
     }
   }
 
@@ -586,12 +609,12 @@
   }
   const isCurrentRoute = (path, version) => path === route() && version === activeRouteVersion
   const sourceConflictNotice = 'The prepared source changed. Review the saved edit before reapplying.'
-  function status(message, error = false) {
+  function status(message, error = false, savedEdit = false) {
     const notice = get('status')
     notice.textContent = message
     notice.toggleAttribute('data-error', error)
     const pendingNotice = get('pending-status')
-    pendingNotice.textContent = error || message === sourceConflictNotice ? message : ''
+    pendingNotice.textContent = error || savedEdit || message === sourceConflictNotice ? message : ''
     pendingNotice.toggleAttribute('data-error', error)
   }
   const send = (message) => window.phaseABridge(message)
@@ -774,8 +797,7 @@
       selection.current === node &&
       isCurrentRoute(path, version) &&
       ui.preparedPreview.contract(node)?.revision === contract.revision
-    const read = (key) =>
-      field ? node.getAttribute('data-li-choice') : getComputedStyle(node).getPropertyValue(key)
+    const read = (key) => ui.preparedPreview.read(node, { property: key, prepared: { field } })
     if (!current() || (field && !ui.preparedPreview.shows(node, contract.input, read(property))))
       throw Error('The prepared part changed. Select it again before editing.')
     const records = properties.map((key) => ({
@@ -801,28 +823,8 @@
       ? ['padding-top','padding-right','padding-bottom','padding-left'].filter(key=>!properties.includes(key)).map(key=>[key,read(key)])
       : []
     function verified(edit) {
-      const key = edit.property
-      edit.observed = read(key)
-      if (field) return edit.observed === requested && ui.preparedPreview.shows(node, contract.input, requested)
-      if (key === 'width' && ['100%', 'fit-content'].includes(requested)) {
-        if (
-          !ui.widthModes(node).length ||
-          String(node.computedStyleMap().get('width')) !== requested ||
-          !Number.isFinite(parseFloat(edit.observed))
-        )
-          return false
-        if (requested === 'fit-content') return true
-        const parent = node.parentElement,
-          style = getComputedStyle(parent)
-        const available = parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
-        return Math.abs(parseFloat(edit.observed) - available) <= 1
-      }
-      if (tokenOptions?.spacingToken)
-        return ui.spacingVariableMatches(node, key, tokenOptions.spacingToken.name, edit.observed)
-      if (tokenOptions?.colorToken)
-        return edit.observed === ui.resolveColorVariable(node, tokenOptions.colorToken.name)
-      if (['color', 'background-color'].includes(key)) return edit.observed === ui.normalizeSolidColor(requested)
-      return edit.observed === requested
+      edit.observed = ui.preparedPreview.read(node, edit)
+      return ui.preparedPreview.showsEffect(node, edit, contract, edit.observed)
     }
     try {
       recovery.projectPrepared(records)
@@ -1319,11 +1321,14 @@
     syncPending()
     const notice = get('status')
     if (notice.hasAttribute('data-error')) return
+    const states = comparing ? [] : recovery.recoveryStates()
     const message = buttonSizeRequiresReload ? 'Reload the page to clear the previous Button Size preview.' :
-      comparing ? '' : recovery.hasPreparedConflict ? sourceConflictNotice : recovery.hasConflicts
-      ? 'The app changed a previewed style. Your edit is still saved.'
-      : recovery.hasUnattached ? 'Some saved previews could not be restored.' :
-        recovery.hasSessionPreview ? 'Some previews last only while this page stays open.' : ''
+      comparing ? '' : states.includes('prepared-stale') ? sourceConflictNotice :
+      states.includes('stale') ? 'A saved style source changed. Review the edit before reapplying.' :
+      recovery.hasConflicts ? 'The app changed a previewed style. Your edit is still saved.' :
+      states.includes('failed') || states.includes('unobservable')
+      ? 'Some saved previews could not be restored.'
+      : recovery.hasSessionPreview ? 'Some previews last only while this page stays open.' : ''
     if (notice.textContent !== message) status(message)
   }
   async function restore(requestedRoute, version, fromOriginal = false) {

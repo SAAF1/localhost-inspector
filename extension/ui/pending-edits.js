@@ -18,7 +18,7 @@
     return names.map(humanize).join(' / ') || 'Home'
   }
 
-  ui.createPendingEdits = ({ host, root, panel, get, locate, openEdit, removeEdit, setPreviewVisibility, refresh, highlight }) => {
+  ui.createPendingEdits = ({ host, root, panel, get, observe, openEdit, removeEdit, setPreviewVisibility, refresh, highlight }) => {
     const design = get('design-tab')
     const edits = get('edits-tab')
     const launcher = get('pending-launcher')
@@ -28,7 +28,6 @@
     const list = get('pending-list')
     const order = get('pending-order')
     let records = []
-    let currentRoute
     let current = false
     let floating = false
     let recent = false
@@ -119,16 +118,20 @@
           open.type = 'button'
           open.dataset.editId = remove.dataset.editId = edit.id
           row.toggleAttribute('data-selected', selectedId === edit.id)
-          const node = edit.template || edit.route === currentRoute ? locate(edit.id) : null
+          const { node, state } = observe(edit.id)
+          row.dataset.previewState = state
           const observed = ui.inspectedLabel(node)
           const target = edit.target
           const name = observed?.slice(0, 64) || humanize(target.slot || target.id || ({ div: 'Container', span: 'Text', tr: 'Row', td: 'Cell' }[target.tag] ?? target.tag ?? 'Element'))
           const property = properties[edit.property] ?? humanize(edit.property)
           const detail = property + '  ' + edit.before + ' → ' + edit.requested +
-            (edit.template ? ' · Whole template' : '')
+            (edit.template ? ' · Whole template' : '') + (edit.sessionOnly ? ' · Current element only' : '') + ({
+              applied: ' · Previewing', hidden: ' · Hidden', superseded: ' · Overridden by a newer edit',
+              stale: ' · Source changed', failed: ' · Effect missing', unobservable: ' · Unavailable in this view',
+            }[state] ?? '')
           open.append(ui.element('span', 'li-pending-name', name), ui.element('span', 'li-pending-detail',
             recent ? pageName(edit.route) + ' · ' + detail : detail))
-          if (node) {
+          if (state === 'applied' && node) {
             open.addEventListener('pointerenter', () => highlight(edit.id))
             open.addEventListener('pointerleave', () => highlight(null))
             open.addEventListener('focus', () => highlight(edit.id))
@@ -216,10 +219,9 @@
       markSelected,
       showEdits: () => selectTab(true),
       showDesign: () => { if (current || floating) selectTab(false) },
-      update(next, route, visibilityAvailable = canToggleVisibility) {
+      update(next, visibilityAvailable = canToggleVisibility) {
         if (Array.isArray(next)) records = next
         canToggleVisibility = visibilityAvailable
-        currentRoute = route
         if (current || floating || edits.textContent !== (records.length ? 'Edits ' + records.length : 'Edits')) sync()
       },
       setDisabled(value) {

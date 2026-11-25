@@ -286,6 +286,8 @@
     const saved = new Map()
     const attached = new Map()
     const inlineStacks = new WeakMap()
+    const entryIds = new WeakMap()
+    const lastResolved = new WeakMap()
     const templateIndex = new Map()
     const conflicts = new Set()
     let templateConflicts = new WeakMap()
@@ -324,6 +326,10 @@
 
     function attach(id, entry) {
       attached.set(id, entry)
+      const record = saved.get(editId(id, entry))
+      entryIds.set(entry, editId(id, entry))
+      if (record && !record.template && !record.target.mount)
+        lastResolved.set(record, { node: entry.node, identity: entry.liveTarget })
       if (!inlineStacks.has(entry.node)) inlineStacks.set(entry.node, new Map())
       const stacks = inlineStacks.get(entry.node)
       if (!stacks.has(entry.property)) stacks.set(entry.property, [])
@@ -636,6 +642,7 @@
           }
           try {
             const identity = describe(node)
+            lastResolved.set(edit, { node, identity })
             const before = edit.restore === 'session'
               ? ui.buttonSize.currentSize(node, edit.target.key)
               : getComputedStyle(node).getPropertyValue(edit.property)
@@ -676,6 +683,65 @@
       }
     }
 
+    function visible(node) {
+      return node?.isConnected && node.getClientRects().length &&
+        getComputedStyle(node).visibility === 'visible' &&
+        !node.closest('[data-localhost-inspector-layer-hidden]')
+    }
+
+    function entryShowsEffect(edit, entry) {
+      if (edit.target.kind === 'text')
+        return ui.textEditing.resolve(edit.target.mount)?.data === edit.afterState.value
+      // Registered slots and source props have a separate confirmation protocol.
+      if (edit.target.mount) return true
+      if (edit.property === 'button-size')
+        return ui.buttonSize.currentSize(entry.node, edit.target.key) === edit.requested
+      return !lostPreview(entry)
+    }
+
+    function observeMember(edit, hidden, state) {
+      if (!inState(edit, state)) return { state: 'unobservable' }
+      if (edit.prepared) return ui.preparedPreview.observe(edit, visible, hidden)
+      const resolved = lastResolved.get(edit)
+      const exact = attached.get(edit.id)?.node ?? original.get(edit.id)?.node ??
+        (resolved && matchesTarget(resolved.node, resolved.identity, true) &&
+          findTarget(edit.target, resolved.node) === resolved.node ? resolved.node : null)
+      const candidates = edit.template ? templateNodes(edit).filter(visible) : [exact].filter(visible)
+      const nodes = edit.template && !hidden
+        ? candidates.filter(node => sameTemplateSource(edit, node) === true) : candidates
+      if (edit.template && candidates.length && !nodes.length &&
+          candidates.every(node => sameTemplateSource(edit, node) === false)) return { state: 'stale' }
+      if (!nodes.length) return { state: hidden ? 'hidden' : 'unobservable' }
+      const results = nodes.map(node => {
+        if (hidden) return 'hidden'
+        const entry = edit.template ? templateIndex.get(edit.id)?.get(node)?.[1] : attached.get(edit.id)
+        if (!entry || !isAttached(edit, entry)) return 'failed'
+        const top = inlineStacks.get(node)?.get(edit.property)?.at(-1)
+        if (top && top !== entry) {
+          const winner = saved.get(entryIds.get(top))
+          return isAttached(winner, top) && entryShowsEffect(winner, top) ? 'superseded' : 'failed'
+        }
+        return entryShowsEffect(edit, entry) ? 'applied' : 'failed'
+      })
+      const status = ['failed', 'hidden', 'superseded', 'applied'].find(value => results.includes(value))
+      return { state: status, node: nodes[0] }
+    }
+
+    function operation(id) {
+      const edit = saved.get(id)
+      if (!edit || !edit.group) return edit ? [edit] : undefined
+      return operations().get(id)
+    }
+
+    function observeOperation(edits, comparing, state) {
+      if (!edits) return { state: 'unobservable' }
+      const results = edits.map(edit => observeMember(edit, comparing || edit.previewHidden, state))
+      const status = ['stale', 'failed', 'hidden', 'unobservable', 'superseded', 'applied']
+        .find(value => results.some(result => result.state === value))
+      return { state: status, node: results.find(result => result.state === status)?.node ??
+        results.find(result => result.node)?.node }
+    }
+
     return {
       projectPrepared,
       componentEntries(id) {
@@ -705,37 +771,30 @@
       get hasAttachedButtonSize() {
         return Array.from(attached.values()).some(entry => entry.property === 'button-size')
       },
-      previewNode(id) {
-        const edit = saved.get(id)
-        const entry = attached.get(id) ?? (edit?.template
-          ? templateLayers(id).find(([, layer]) => isAttached(edit, layer) && layer.node.getClientRects().length)?.[1]
-          : null)
-        return entry && (!edit?.frameState || inState(edit, readFrameState())) && isAttached(edit, entry) ? entry.node : null
+      observeOperation(id, comparing) {
+        return observeOperation(operation(id), comparing, currentState())
       },
-      async locateSavedNode(id, isCurrent) {
-        const edit = saved.get(id)
-        if (!edit || (edit.frameState && !inState(edit, readFrameState()))) return null
-        if (edit.prepared) return ui.preparedPreview.locate(edit)
-        if (edit.template) {
-          const attached = this.previewNode(id)
-          if (attached) return attached
-          for (const node of templateNodes(edit)) {
-            const source = savedTemplateSource(edit, node)
-            if (typeof source === 'string') await sourceFingerprint(source).ready
-            if (!isCurrent() || saved.get(id) !== edit) return null
-            if (sameTemplateSource(edit, node)) return node
-          }
-          return null
+      async locateSavedEdit(id, isCurrent, comparing) {
+        const edits = operation(id)
+        if (!edits) return { state: 'unobservable' }
+        const observation = observeOperation(edits, comparing, currentState())
+        const [edit] = edits
+        if (observation.state === 'applied' && edit.target.mount) {
+          const actual = await ui.componentEdits.read(edit.target, savedRoute).catch(() => null)
+          if (!isCurrent() || saved.get(edit.id) !== edit || !visible(observation.node))
+            return { state: 'unobservable' }
+          if (!ui.componentEdits.equal(actual, edit.afterState)) return { ...observation, state: 'failed' }
         }
-        const targetCurrent = () => isCurrent() && (!edit.frameState || inState(edit, readFrameState()))
-        const entry = attached.get(id)
-        if (entry && isAttached(edit, entry)) return entry.node
-        const exact = original.get(id)
-        if (exact && matchesTarget(exact.node, exact.target) &&
-            (edit.restore !== 'unique' || findTarget(edit.target, exact.node) === exact.node)) return exact.node
-        if (edit.restore !== 'unique') return null
-        const node = await resolveSavedNode(edit, targetCurrent)
-        return saved.get(id) === edit ? node : null
+        if (observation.node || observation.state === 'stale' || edit.prepared ||
+            (edit.frameState && !inState(edit, readFrameState()))) return observation
+        const current = () => isCurrent() && saved.get(edit.id) === edit &&
+          (!edit.frameState || inState(edit, readFrameState()))
+        const exact = original.get(edit.id)
+        const node = exact && matchesTarget(exact.node, exact.target) &&
+            (edit.restore !== 'unique' || findTarget(edit.target, exact.node) === exact.node) ? exact.node :
+          !edit.template && edit.restore === 'unique' ? await resolveSavedNode(edit, current) : null
+        if (!current() || !visible(node)) return observation
+        return { node, state: comparing || edit.previewHidden ? 'hidden' : 'failed' }
       },
       matchesSnapshot(edits) {
         return edits.length === saved.size && edits.every(edit => saved.get(edit.id)?.before === edit.before)
@@ -754,14 +813,15 @@
         return value !== edit.before && value !== edit.observed
           ? { label: edit.property.replaceAll('-', ' '), value } : null
       },
-      get hasUnattached() {
+      recoveryStates() {
         const state = currentState()
-        return Array.from(saved.values()).some(edit => !edit.previewHidden && (edit.prepared ? !ui.preparedPreview.locate(edit) : edit.template
-          ? templateNodes(edit).some(node => sameTemplateSource(edit, node) !== false && !templateIndex.get(edit.id)?.has(node))
-          : inState(edit, state) && !attached.has(edit.id)))
-      },
-      get hasPreparedConflict() {
-        return Array.from(saved.values()).some(edit => edit.prepared && !edit.previewHidden && ui.preparedPreview.stale(edit))
+        return Array.from(operations().values(), edits => {
+          const result = observeOperation(edits, false, state)
+          const [edit] = edits
+          if (result.state === 'unobservable' && (edit.prepared || edit.route !== savedRoute)) return null
+          if (result.state === 'stale' && edit.prepared) return 'prepared-stale'
+          return result.state
+        })
       },
       get hasConflicts() { return [...conflicts].some(id => !saved.get(id)?.previewHidden) },
       get lastSavedId() {
@@ -840,6 +900,7 @@
         }
         if (rebased.length) await restore(isCurrent)
       },
+      hasPreparedOperation(id) { return Boolean(saved.get(id)?.prepared) },
       hasOperation(id) { return saved.has(id) },
       isPreviewHidden(id) { return saved.get(id)?.previewHidden === true },
       async setPreviewHidden(changes, isCurrent, comparing = false) {

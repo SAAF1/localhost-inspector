@@ -159,7 +159,7 @@ test('clicking a pending edit centers its Canvas frame at 90% even when its elem
     await viewport.dispatchEvent('wheel', { deltaX: 1600, deltaY: 900, bubbles: true, cancelable: true })
     assert.ok((await frame.boundingBox()).x - (await viewport.boundingBox()).x < -1000)
     await h.host.getByRole('button', { name: /0px → 4px/ }).click()
-    await h.host.locator('#pending-status').getByText('Couldn’t locate the element for this edit.', { exact: true }).waitFor()
+    await h.host.locator('#pending-status').getByText('The original element is no longer available. This preview applies only to that element.', { exact: true }).waitFor()
     assert.equal(await zoom.locator('option:checked').textContent(), '90%')
     await assertCentered()
     await zoom.selectOption('0.5')
@@ -313,7 +313,7 @@ test('an edit without a durable target keeps its live preview when another page 
     }
     assert.equal(await h.css('font-size', selector), '12px')
     await current.click()
-    await h.host.locator('#pending-status').getByText('Couldn’t locate the element for this edit.', { exact: true }).waitFor()
+    await h.host.locator('#pending-status').getByText('The original element is no longer available. This preview applies only to that element.', { exact: true }).waitFor()
     assert.equal((await h.journal()).length, 2)
   } finally { await h.close() }
 })
@@ -389,13 +389,18 @@ test('a pending eye toggles only its saved operation and preserves later layers 
     await h.enter('Horizontal padding', 24)
     await h.settled()
     await h.showEdits()
-    const eye = i => h.host.locator('.li-pending-row').nth(i).locator('.li-visibility-action')
+    const row = i => h.host.locator('.li-pending-row').nth(i)
+    const state = i => row(i).getAttribute('data-preview-state')
+    assert.deepEqual(await Promise.all([state(0), state(1), state(2)]), ['superseded', 'applied', 'applied'])
+    const eye = i => row(i).locator('.li-visibility-action')
     const toggle = async i => {
       await eye(i).focus()
       await eye(i).click()
       await h.settled()
     }
     await toggle(0)
+    assert.equal(await state(0), 'hidden')
+    assert.equal(await state(1), 'applied')
     assert.equal(await h.css('border-radius'), '16px')
     await h.app.locator('#target').evaluate(node => {
       const replacement = node.cloneNode(true)
@@ -431,5 +436,71 @@ test('a pending eye toggles only its saved operation and preserves later layers 
       assert.equal(await fresh.css('padding-right'), '24px')
       assert.equal((await fresh.journal()).length, 4)
     } finally { await fresh.close() }
+  } finally { await h.close() }
+})
+
+test('prepared edits observe rendered output and current source revision at every visible use', async () => {
+  const site = 'fixture-radius'
+  const revision = 'a'.repeat(64)
+  const prepared = { site, revision, file: 'fixture.jsx' }
+  const record = (id, value) => ({
+    id, prepared, route: '/', property: 'border-radius', before: '0px',
+    observed: value, requested: value, restore: 'unique',
+    target: { tag: 'div', id: null, key: null, slot: null },
+  })
+  const h = await createHarness({
+    pendingEdits: true,
+    journal: [record('older-radius', '12px'), record('newer-radius', '24px')],
+    flowPages: {
+      '/': { body: `<script>
+        const contract = ${JSON.stringify({ site, revision, style: 'border-radius' })};
+        window.fixtureRevisions = { [contract.site]: contract.revision };
+        window.publishFixtureRevisions = () => document.dispatchEvent(new CustomEvent('li-prepared-revisions',
+          { detail: JSON.stringify(window.fixtureRevisions) }));
+        document.addEventListener('li-read-prepared-revisions', window.publishFixtureRevisions);
+        for (const id of ['first-use', 'second-use']) {
+          const element = document.createElement('div');
+          element.id = id;
+          element.dataset.liRevision = contract.revision;
+          element.dataset.liContract = JSON.stringify(contract);
+          element.textContent = id;
+          element.style.borderRadius = 'var(--li-' + contract.revision.slice(0, 20) + '-border-radius, 0px)';
+          document.body.append(element);
+        }
+      </script>` },
+    },
+  })
+  try {
+    await h.open()
+    await h.showEdits()
+    const rows = h.host.locator('.li-pending-row')
+    assert.equal(await rows.first().getAttribute('data-preview-state'), 'superseded')
+    assert.equal(await rows.last().getAttribute('data-preview-state'), 'applied')
+    assert.equal(await h.css('border-radius', '#first-use'), '24px')
+    assert.equal(await h.css('border-radius', '#second-use'), '24px')
+
+    await h.app.locator('#second-use').evaluate(node => node.style.setProperty('border-radius', '2px', 'important'))
+    await rows.last().locator('.li-pending-open').click()
+    assert.match(await h.host.locator('#pending-status').textContent(), /couldn’t be applied/)
+    assert.equal(await h.css('border-radius', '#first-use'), '24px')
+    assert.equal(await h.css('border-radius', '#second-use'), '2px')
+
+    await h.app.evaluate(() => {
+      document.querySelector('#first-use').hidden = true
+      document.querySelector('#second-use').hidden = true
+    })
+    await h.showEdits()
+    assert.equal(await rows.last().getAttribute('data-preview-state'), 'unobservable')
+    await rows.last().locator('.li-pending-open').click()
+    const notice = h.host.locator('#pending-status')
+    assert.match(await notice.textContent(), /unavailable in the current view/)
+    assert.equal(await notice.getAttribute('data-error'), null)
+
+    await h.app.evaluate(([name, next]) => {
+      window.fixtureRevisions[name] = next
+      window.publishFixtureRevisions()
+    }, [site, 'b'.repeat(64)])
+    await rows.last().locator('.li-pending-open').click()
+    assert.match(await h.host.locator('#pending-status').textContent(), /source changed/i)
   } finally { await h.close() }
 })

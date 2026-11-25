@@ -16,6 +16,30 @@
     const check = input.verify?.[option]
     return check?.self ? node.matches(check.self) : Boolean(check?.child && node.querySelector(check.child))
   }
+  function read(node, edit) {
+    return edit.prepared.field ? node.getAttribute('data-li-choice') :
+      getComputedStyle(node).getPropertyValue(edit.property)
+  }
+  function showsEffect(node, edit, prepared, observed = read(node, edit)) {
+    const { property, requested, spacingToken, colorToken } = edit
+    if (edit.prepared.field)
+      return prepared.input?.field === edit.prepared.field && observed === requested &&
+        shows(node, prepared.input, requested)
+    if (property === 'width' && ['100%', 'fit-content'].includes(requested)) {
+      const parent = node.parentElement
+      if (!parent || !ui.widthModes(node).length ||
+          String(node.computedStyleMap().get('width')) !== requested ||
+          !Number.isFinite(parseFloat(observed))) return false
+      if (requested === 'fit-content') return true
+      const style = getComputedStyle(parent)
+      const available = parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+      return Math.abs(parseFloat(observed) - available) <= 1
+    }
+    if (spacingToken) return ui.spacingVariableMatches(node, property, spacingToken.name, observed)
+    if (colorToken) return observed === ui.resolveColorVariable(node, colorToken.name)
+    if (['color', 'background-color'].includes(property)) return observed === ui.normalizeSolidColor(requested)
+    return observed === requested
+  }
   let sheet
   let declarations = new Map()
   let inputs = new Map()
@@ -44,8 +68,11 @@
     document.dispatchEvent(new CustomEvent('li-prepared-input', { detail: JSON.stringify({ revision, value }) }))
   }
   document.addEventListener('li-prepared-ready', () => {
-    for (const [revision, value] of inputs) send(revision, value)
+    for (const [revision, edit] of inputs) send(revision, edit.requested)
   })
+  function supportedDeclaration(edit) {
+    return !/[;{}]/.test(edit.requested) && CSS.supports(edit.property, edit.requested)
+  }
   function project(records) {
     const next = new Map()
     const rules = []
@@ -54,8 +81,8 @@
       if (!edit.prepared || edit.previewHidden) continue
       const { revision, field } = edit.prepared
       if (!/^[a-f0-9]{64}$/.test(revision)) continue
-      if (field) next.set(revision, edit.requested)
-      else if (!/[;{}]/.test(edit.requested) && CSS.supports(edit.property, edit.requested)) {
+      if (field) next.set(revision, edit)
+      else if (supportedDeclaration(edit)) {
         declarations.set(revision + ':' + edit.property, edit)
         if(edit.property.startsWith('padding-')){
           const prefix='--li-'+revision.slice(0,20)
@@ -79,16 +106,35 @@
       }
     }
     for (const revision of inputs.keys()) if (!next.has(revision)) send(revision, null)
-    for (const [revision, value] of next) if (inputs.get(revision) !== value) send(revision, value)
+    for (const [revision, edit] of next) if (inputs.get(revision)?.requested !== edit.requested) send(revision, edit.requested)
     inputs = next
   }
   function locate(edit) {
     return document.querySelector('[data-li-revision="' + CSS.escape(edit.prepared.revision) + '"]')
+  }
+  function observe(edit, visible, hidden) {
+    if (!hidden && stale(edit)) return { state: 'stale' }
+    const { revision, site, field } = edit.prepared
+    const members = [...document.querySelectorAll('[data-li-revision="' + CSS.escape(revision) + '"]')]
+      .filter(visible)
+    if (!members.length) return { state: hidden ? 'hidden' : 'unobservable' }
+    const [node] = members
+    if (hidden) return { state: 'hidden', node }
+    const contracts = members.map(contract)
+    if (contracts.some(c => !c || c.site !== site)) return { state: 'stale' }
+    if (!field && !supportedDeclaration(edit)) return { state: 'failed', node }
+    const current = field ? inputs.get(revision) : declarations.get(revision + ':' + edit.property)
+    const effective = current && members.every((member, index) => {
+      const c = contracts[index]
+      return (field || c.style === edit.property || c.styles?.includes(edit.property)) &&
+        showsEffect(member, current, c)
+    })
+    return { state: effective ? (current.id === edit.id ? 'applied' : 'superseded') : 'failed', node }
   }
   function authored(node, property) {
     const revision = node.getAttribute('data-li-revision')
     const edit = revision && declarations.get(revision + ':' + property)
     return edit?.property === property ? edit.requested : undefined
   }
-  ui.preparedPreview = { contract, project, locate, authored, stale, shows }
+  ui.preparedPreview = { contract, project, locate, authored, shows, read, showsEffect, observe }
 })()

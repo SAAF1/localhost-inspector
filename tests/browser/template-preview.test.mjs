@@ -241,7 +241,7 @@ test('a saved template edit without a declaration owner stays removable when a d
     await h.open()
     await h.showEdits()
     await h.host.locator('.li-pending-open').click()
-    assert.match(await h.host.locator('#pending-status').textContent(), /locate/)
+    assert.match(await h.host.locator('#pending-status').textContent(), /source changed|couldn’t be applied/i)
     assert.equal(await h.css('opacity', '[data-inspector-template]'), '1')
     assert.deepEqual(await h.journal(), [edit])
     await h.previewAction('Undo last preview')
