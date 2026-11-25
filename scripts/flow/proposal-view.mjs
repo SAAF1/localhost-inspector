@@ -73,14 +73,16 @@ export function trackContext(frame, read) {
     attributeFilter: ['open', 'aria-selected', 'aria-expanded', 'data-state'] })
   const viewObserver = new MutationObserver(syncAddress)
   viewObserver.observe(document.body, { attributes: true, attributeFilter: ['data-expanded'] })
-  win.navigation?.addEventListener('currententrychange', update)
+  // A reload can follow a filter click before the delayed scene scan runs.
+  // Record the new URL at history commit. DOM changes still settle separately.
+  win.navigation?.addEventListener('currententrychange', syncAddress)
   win.addEventListener('pageshow', update)
   update()
   return () => {
     clearTimeout(timer)
     observer.disconnect()
     viewObserver.disconnect()
-    win.navigation?.removeEventListener('currententrychange', update)
+    win.navigation?.removeEventListener('currententrychange', syncAddress)
     win.removeEventListener('pageshow', update)
   }
 }

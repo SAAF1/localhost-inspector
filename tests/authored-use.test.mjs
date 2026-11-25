@@ -20,7 +20,7 @@ const part = `export function Row({ className, ...props }: React.ComponentProps<
   return <div className={className} {...props} />;
 }`
 
-function fixture(t) {
+function fixture(t, schema = 1) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'inspector-authored-use-')))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   function write(file, code) {
@@ -29,7 +29,7 @@ function fixture(t) {
   write('scene.tsx', source)
   write('part.tsx', part)
   async function markers() {
-    const plugin = authoredUseSites(root)
+    const plugin = authoredUseSites(root, schema)
     const read = readFileSync(join(root, 'scene.tsx'), 'utf8')
     const result = await plugin.transform.handler.call(
       {
@@ -107,4 +107,63 @@ test('external controlling edits and shadowed component imports cannot reuse a b
   assert.throws(() => reverseAuthoredUse(root, plan), /has changed/)
   write('scene.tsx', source.replace('Scene({ items })', 'Scene({ items, Controls })'))
   assert.equal((await markers()).filter(({ family }) => family === 'spacing').length, 0)
+})
+
+test('V2 verifies forwarded text paint and native fixed spacing as separate actions on structural uses', async (t) => {
+  const { root, write, markers } = fixture(t, 2)
+  const candidate = `import { Row as Item } from './part'
+export function Scene({ entries }) {
+  return entries.map((entry) => <article key={entry.id}>
+    <Item>{entry.name}</Item>
+    <Item>${'\u0024'}{entry.amount}</Item>
+    <div className="flex justify-between"><div><button>Decrease</button><button>Increase</button></div><button>Remove</button></div>
+  </article>)
+}
+`
+  write('scene.tsx', candidate)
+  write(
+    'part.tsx',
+    'export function Row({ className, ...props }) { return <td className={className} {...props} /> }',
+  )
+  const uses = await markers()
+  const [name, amount] = uses.filter(({ tag }) => tag === 'td')
+  assert.notEqual(name.id, amount.id)
+  assert.deepEqual(amount.actions, ['paint'])
+  assert.equal(amount.family, undefined)
+  assert.throws(() => planAuthoredUse(root, { ...amount, family: 'spacing' }, { gap: '16px' }), /unsupported/)
+  const paint = planAuthoredUse(root, { ...amount, family: 'paint' }, { color: '#e3bb52' })
+  assert.equal(paint.nextBinding.id, amount.id)
+  assert.notEqual(paint.nextBinding.revision, amount.revision)
+  assert.match(paint.after, /<Item style=\{\{ color: "#e3bb52" \}\}>\$\{entry.amount\}/)
+  assert.match(paint.after, /<Item>\{entry.name\}<\/Item>/)
+  write('scene.tsx', paint.after)
+  const spacing = (await markers()).find(({ tag, actions }) => tag === 'div' && actions.includes('spacing'))
+  assert.deepEqual(spacing.dependencies, [])
+  const gap = planAuthoredUse(root, { ...spacing, family: 'spacing' }, { gap: '16px' })
+  assert.equal(gap.nextBinding.id, spacing.id)
+  assert.match(gap.after, /<div style=\{\{ justifyContent: "flex-start", gap: "16px" \}\} className=/)
+  write('scene.tsx', gap.after)
+  const undo = reverseAuthoredUse(root, gap)
+  assert.equal(undo.after, paint.after)
+})
+
+test('V2 rejects a forwarding component that drops or replaces the authored children', async (t) => {
+  const { write, markers } = fixture(t, 2)
+  write(
+    'scene.tsx',
+    source.replace(
+      '<Controls className="flex"><button>New</button></Controls>',
+      '<Controls>{summary}</Controls>',
+    ),
+  )
+  write('part.tsx', part.replace('className, ...props', 'className, children, ...props'))
+  assert.equal(
+    (await markers()).some(({ dependencies }) => dependencies.length),
+    false,
+  )
+  write('part.tsx', part.replace('{...props} />', '{...props}>Replacement</div>'))
+  assert.equal(
+    (await markers()).some(({ dependencies }) => dependencies.length),
+    false,
+  )
 })

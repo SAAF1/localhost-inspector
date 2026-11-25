@@ -134,6 +134,7 @@ try {
     studio = {
       version: 1,
       authoredUses: process.env.INSPECTOR_AUTHORED_USE === '1',
+      authoredUseSchema: process.env.INSPECTOR_AUTHORED_USE === '1' ? 2 : 0,
       source,
       map,
       namespace,
@@ -224,6 +225,7 @@ try {
         INSPECTOR_CANVAS_HELPER_STATE: state,
         INSPECTOR_PREPARED_SITES: studio.authoredUses && id === 'original' ? '' : manifest,
         INSPECTOR_AUTHORED_USE: authoredBaseline ? '1' : '0',
+        INSPECTOR_AUTHORED_USE_SCHEMA: authoredBaseline ? String(studio.authoredUseSchema ?? 1) : '0',
         INSPECTOR_ORIGINAL_BASIS: studio.authoredUses && id === 'original' ? original.basis : '',
         INSPECTOR_VITE_CACHE: join(dir, 'vite-cache'),
       },

@@ -187,3 +187,28 @@ test('optional bounds add without edits, remove through the journal, and survive
     } finally { await h.close() }
   }
 })
+
+test('shared source intent refuses an unresolved use before mutation and permits an explicit occurrence edit', async () => {
+  const h = await createHarness({ authoredUse: true })
+  try {
+    await h.open()
+    const target = '#target > span:first-child'
+    await h.select(target)
+    const color = h.host.locator('#control-color')
+    const before = await h.css('color', target)
+    await color.fill('AB6E2F')
+    await color.press('Enter')
+    await h.settled()
+    assert.match(await h.host.locator('#status').innerText(), /Shared source is unavailable/)
+    assert.equal(await h.css('color', target), before)
+    assert.deepEqual(await h.journal(), [])
+    await h.host.locator('#authored-edit-scope').selectOption('selected')
+    await color.fill('AB6E2F')
+    await color.press('Enter')
+    await h.settled()
+    assert.equal(await h.css('color', target), 'rgb(171, 110, 47)')
+    assert.equal((await h.journal()).at(-1).intent, 'selected occurrence only')
+    await h.select('#other')
+    assert.equal(await h.host.locator('#authored-edit-scope').inputValue(), 'shared')
+  } finally { await h.close() }
+})

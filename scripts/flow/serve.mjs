@@ -194,12 +194,12 @@ if (sourceMode) {
     },
   }
   const manifest = process.env.INSPECTOR_PREPARED_SITES
-  const authoredUse = process.env.INSPECTOR_AUTHORED_USE === '1'
+  const authoredUseSchema = Number(process.env.INSPECTOR_AUTHORED_USE_SCHEMA || (process.env.INSPECTOR_AUTHORED_USE === '1' ? '2' : '0'))
   const server = await createViteServer({
     root: appRoot,
     ...(comparison?.role === 'proposal' ? { cacheDir: resolve(appRoot, '../vite-cache') } : {}),
     ...(process.env.INSPECTOR_VITE_CACHE ? {cacheDir: resolve(process.env.INSPECTOR_VITE_CACHE)} : {}),
-    plugins: [workspace, preparedStyles(appRoot, process.env.INSPECTOR_PREPARED_SITES), preparedSites(appRoot, manifest, { authoredUse }), !manifest && authoredUse && authoredUseSites(appRoot), componentPreviewSites(appRoot), tableRenderSites(appRoot)],
+    plugins: [workspace, preparedStyles(appRoot, process.env.INSPECTOR_PREPARED_SITES), preparedSites(appRoot, manifest, { authoredUseSchema }), !manifest && authoredUseSchema && authoredUseSites(appRoot, authoredUseSchema), componentPreviewSites(appRoot), tableRenderSites(appRoot)],
     server: { host: '127.0.0.1', port: Number(port), strictPort: true, open: false },
   })
   await server.listen()

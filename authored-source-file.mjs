@@ -73,7 +73,11 @@ export async function replaceSource(binding, patch, forward) {
 }
 
 function hasCompiledBinding(code, edit) {
-  const expected = JSON.stringify(edit)
+  // In V2 the operation chooses an action independently from the use marker.
+  // Match the exact emitted descriptor, without the receipt-only action field.
+  const { family, ...use } = edit
+  if (edit.schema === 2 && !edit.actions?.includes(family)) return false
+  const expected = JSON.stringify(edit.schema === 2 ? use : edit)
   const attribute = 'data-li-authored-use'
   const nodes = [parseAuthoredJsx(code).program]
   while (nodes.length) {

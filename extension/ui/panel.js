@@ -71,7 +71,16 @@
     const scope = ui.element('p', 'li-status')
     scope.id = 'prepared-scope'
     scope.hidden = true
-    properties.append(guidance, scope, fields)
+    const editScope = ui.element('select')
+    editScope.id = 'authored-edit-scope'
+    editScope.setAttribute('aria-label', 'Scope for text color and fixed spacing')
+    for (const [value, label] of [['shared', 'Shared use'], ['selected', 'Selected element only']]) {
+      const option = ui.element('option', '', label)
+      option.value = value
+      editScope.append(option)
+    }
+    editScope.hidden = true
+    properties.append(guidance, scope, editScope, fields)
 
     const footer = ui.element('footer', 'li-footer')
     const status = ui.element('output', 'li-status')

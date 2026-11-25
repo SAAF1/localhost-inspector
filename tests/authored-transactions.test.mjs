@@ -32,7 +32,7 @@ export function Example() { return <Row className="flex justify-between"><button
 `
 const part = 'export function Row({className, ...props}) { return <div className={className} {...props}/> }'
 
-async function fixture(t, family = 'paint') {
+async function fixture(t, family = 'paint', schema = 2) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'inspector-authored-tx-')))
   t.after(() => rmSync(home, { force: true, recursive: true }))
   const original = join(home, 'original')
@@ -48,11 +48,12 @@ async function fixture(t, family = 'paint') {
   let staleResponse
   let staleChecks = 0
   let compiledBeforeWrite
+  let replaceCompiledActions
   async function transformed() {
     const code = readFileSync(target, 'utf8')
     const tree = parseAuthoredJsx(code)
     const out = new MagicString(code)
-    await addAuthoredUseMarkers({ root: draft.appRoot, file: 'example.jsx', code, tree, out, resolveImport: specifier => specifier === './part' ? join(draft.appRoot, 'part.jsx') : null })
+    await addAuthoredUseMarkers({ root: draft.appRoot, file: 'example.jsx', code, tree, out, schema, resolveImport: specifier => specifier === './part' ? join(draft.appRoot, 'part.jsx') : null })
     return out.toString()
   }
   t.mock.method(globalThis, 'fetch', async () => {
@@ -65,7 +66,9 @@ async function fixture(t, family = 'paint') {
     }
     const markers = (await transformed()).matchAll(/data-li-authored-use=\{("(?:[^"\\]|\\.)+")\}/g)
     const compiled = Array.from(markers, match => {
-      const payload = JSON.parse(match[1]).replaceAll("'", "\\'")
+      const use = JSON.parse(JSON.parse(match[1]))
+      if (replaceCompiledActions) use.actions = replaceCompiledActions
+      const payload = JSON.stringify(use).replaceAll("'", "\\'")
       return `jsx("p", { "data-li-authored-use": '${payload}' });`
     }).join('\n')
     if (!written) compiledBeforeWrite = compiled
@@ -78,11 +81,13 @@ async function fixture(t, family = 'paint') {
   const tx = authoredTransactions({ binding, file, read, atomic, validators: journalValidators(route) })
   return { source: () => readFileSync(target, 'utf8'), target, original, tx, journal, binding, file, directory,
     failure() { failCandidateWrite = true },
+    serveWrongActions() { replaceCompiledActions = ['spacing'] },
     serveOneStaleModule() { staleResponse = true },
     staleChecks: () => staleChecks,
     async stage(requested, before = 'rgb(0, 0, 0)') {
       const matches = (await transformed()).matchAll(/data-li-authored-use=\{("(?:[^"\\]|\\.)+")\}/g)
-      const descriptor = Array.from(matches, match => JSON.parse(JSON.parse(match[1]))).find(item => item.family === family)
+      const use = Array.from(matches, match => JSON.parse(JSON.parse(match[1]))).find(item => item.family === family || item.actions?.includes(family))
+      const descriptor = { ...use, family }
       const property = family === 'paint' ? 'color' : 'gap'
       const authoredBefore = family === 'paint' ? { color: before } : { gap: 'normal', 'justify-content': 'space-between' }
       const record = { id: randomUUID(), route: '/', property, requested, observed: requested,
@@ -175,4 +180,20 @@ test('new helper process rolls back an unverified staged write and preserves a b
   assert.equal(f.source(), note + source)
   assert.equal((await read(f.file)).edits.length, 0)
   assert.equal(await read(f.file + '.authored-transaction', null), null)
+})
+
+test('schema two requires the compiled action list, and schema one receipts can still be verified and undone', async t => {
+  const revised = await fixture(t)
+  revised.serveWrongActions()
+  await assert.rejects(revised.stage('rgb(2, 3, 4)'), /compiled candidate module/)
+  assert.equal(revised.source(), source)
+  // Unmock the first candidate module probe before creating the legacy fixture.
+  t.mock.restoreAll()
+  const legacy = await fixture(t, 'paint', 1)
+  const saved = await legacy.stage('rgb(2, 3, 4)')
+  assert.equal(saved.edit.authoredBinding.schema, 1)
+  await legacy.tx.handle({ type: 'verifyAuthoredUse', id: saved.edit.id, observed: { color: 'rgb(2, 3, 4)' }, evidence: { visibleMembers: 1, protectedPeers: 0 } }, legacy.journal)
+  Object.assign(legacy.journal, await read(legacy.file))
+  await legacy.tx.handle({ type: 'removeEdit', id: saved.edit.id }, legacy.journal)
+  assert.equal(legacy.source(), source)
 })

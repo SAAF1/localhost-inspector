@@ -66,6 +66,18 @@ test('linked proposals share one canvas while retaining app content, filters and
   await page.goto(original + workspace + '#context=1&frame=records&page=%2Frecords%3Fstate%3Dopen')
   assert.equal((await initialLink)[0].data, 'null')
   const frame = page.frameLocator('#app-preview')
+  const records = frame.getByRole('heading', { name: 'Records', exact: true })
+  await records.waitFor()
+  await page.waitForFunction(() => document.querySelector('#app-preview')?.contentWindow?.location.search === '?state=open')
+  const immediateReturn = await records.evaluate(node => {
+    const app = node.ownerDocument.defaultView
+    app.history.replaceState(app.history.state, '', '/records')
+    return new URLSearchParams(app.parent.location.hash.slice(1)).get('page')
+  })
+  assert.equal(immediateReturn, '/records')
+  await page.reload()
+  assert.equal(await records.evaluate(node => node.ownerDocument.location.search), '')
+  await records.evaluate(node => node.ownerDocument.defaultView.history.replaceState(null, '', '/records?state=open'))
   await frame.getByRole('button', { name: 'Details' }).click()
   await page.waitForURL(url => new URLSearchParams(url.hash.slice(1)).get('frame') === 'details')
   assert.equal(new URL(page.url()).search, '')

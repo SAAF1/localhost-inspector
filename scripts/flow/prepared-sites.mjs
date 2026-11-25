@@ -75,13 +75,17 @@ function styleTargets(site, node, code) {
   return targets
 }
 
-export function preparedSites(root, manifest, { authoredUse = false } = {}) {
+export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
   if (!manifest) return
   root = realpathSync(root)
   const read = () => JSON.parse(readFileSync(manifest, 'utf8'))
   const runtimeKey = ({ sites, retiredSites, utilityEntry, buttonAdapter }) =>
     JSON.stringify([sites, retiredSites, utilityEntry, buttonAdapter])
   let manifestData = read()
+  // Watch the inputs directly. Making generated CSS an import of every
+  // prepared component makes an ordinary CSS update recreate React contexts.
+  const watchInputs = server => server.watcher.add([manifest, ...new Set(
+    manifestData.sites.flatMap(site => (site.dependencies ?? []).map(path => join(root, path))))])
   const styles = new Map()
   let compatibleAlias = true
   return {
@@ -104,6 +108,7 @@ export function preparedSites(root, manifest, { authoredUse = false } = {}) {
       )
     },
     configureServer(server) {
+      watchInputs(server)
       // Some copied workspaces miss native file events. Revalidate the
       // prepared files when the app document is reopened, before Vite can
       // serve a cached module from the previous source revision.
@@ -122,6 +127,7 @@ export function preparedSites(root, manifest, { authoredUse = false } = {}) {
             )
             manifestData = next
             if (runtimeKey(next) === before) return
+            watchInputs(server)
           } catch (error) {
             server.config.logger.warn('Inspector discovery could not refresh: ' + error.message)
             return
@@ -189,6 +195,7 @@ export function preparedSites(root, manifest, { authoredUse = false } = {}) {
         const unchanged = runtimeKey(next) === runtimeKey(manifestData)
         manifestData = next
         if (unchanged) return []
+        watchInputs(server)
       }
       const affected = manifestData.sites.filter(
         (site) => changedManifest || site.dependencies?.includes(relative(root, file)),
@@ -221,10 +228,9 @@ export function preparedSites(root, manifest, { authoredUse = false } = {}) {
       async handler(code, id) {
         const file = relative(root, id)
         if (!/\.[jt]sx$/.test(file) || file.startsWith('../') || file.includes('node_modules')) return
-        this.addWatchFile(manifest)
         const { namespace, sites } = manifestData
         const recipes = sites.filter((site) => site.file === file)
-        if (!recipes.length && !authoredUse) return
+        if (!recipes.length && !authoredUseSchema) return
         let tree
         try {
           tree = parse(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
@@ -302,7 +308,6 @@ export function preparedSites(root, manifest, { authoredUse = false } = {}) {
           let missingDependency = false
           for (const path of site.dependencies ?? []) {
             if (!dependencies.has(path)) {
-              this.addWatchFile(join(root, path))
               try {
                 dependencies.set(path, readFileSync(join(root, path)))
               } catch (error) {
@@ -407,9 +412,9 @@ export function preparedSites(root, manifest, { authoredUse = false } = {}) {
               '}',
           )
         }
-        if (authoredUse) {
+        if (authoredUseSchema) {
           const marked = await addAuthoredUseMarkers({
-            root, file, code, tree, out, reserved,
+            root, file, code, tree, out, reserved, schema: authoredUseSchema,
             resolveImport: async (specifier) => (await this.resolve(specifier, id))?.id,
           })
           if (!recipes.length) return marked ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined

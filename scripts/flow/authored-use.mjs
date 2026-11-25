@@ -4,7 +4,7 @@ import { isAbsolute, relative, resolve } from 'node:path'
 import MagicString from 'magic-string'
 import { authoredImports, forwardedHost, parseAuthoredJsx } from './authored-forwarding.mjs'
 
-const schema = 1
+export const authoredUseSchema = 2
 const marker = 'data-li-authored-use'
 const digest = (text) => createHash('sha256').update(text).digest('hex')
 const jsxFile = /\.[jt]sx$/
@@ -71,6 +71,15 @@ function paintPart(element) {
   return leaf
 }
 
+function groupedPart(element) {
+  const children = element.children.filter(
+    (child) =>
+      !(child.type === 'JSXText' && !child.value.trim()) &&
+      !(child.type === 'JSXExpressionContainer' && child.expression.type === 'JSXEmptyExpression'),
+  )
+  return children.length >= 2 && children.every((child) => child.type === 'JSXElement')
+}
+
 function authoredStyle(opening, family, code) {
   const styles = opening.attributes.filter((attr) => attr.name?.name === 'style')
   if (!styles.length) return { start: opening.name.end, end: opening.name.end, values: {} }
@@ -95,7 +104,7 @@ function authoredStyle(opening, family, code) {
   return { start, end: style.end, values }
 }
 
-function sourceUses(code, tree, file, components) {
+function sourceUses(code, tree, file, components, schema) {
   const elements = []
   const locals = new Set()
   walkSource(tree.program, (node, owner) => {
@@ -117,26 +126,39 @@ function sourceUses(code, tree, file, components) {
       opening.attributes.some((attr) => attr.name?.name === marker || attr.type === 'JSXSpreadAttribute')
     )
       return []
-    // Forwarded components take precedence. Native roots with a rest spread
-    // already carry the component-use marker, so they were excluded above.
     const component = !locals.has(name) && components.get(name)
-    const family = component
-      ? 'spacing'
-      : /^[a-z][a-z0-9]*$/.test(name) && paintPart(element)
-        ? 'paint'
-        : null
-    if (!family) return []
+    const native = /^[a-z][a-z0-9]*$/.test(name)
+    if (!component && !native) return []
+    // A forwarding proof carries over to both source-limited actions. For V2
+    // a native node also supports a group, and a forwarding use supports a leaf.
+    const candidates =
+      schema === 1
+        ? [component ? 'spacing' : paintPart(element) && 'paint']
+        : [paintPart(element) && 'paint', groupedPart(element) && 'spacing']
+    const admitted = candidates
+      .filter(Boolean)
+      .map((family) => ({
+        family,
+        style: authoredStyle(opening, family, code),
+      }))
+      .filter(({ style }) => style)
+    if (!admitted.length) return []
+    const { style, family } = admitted[0]
+    const actions = admitted.map(({ family }) => family)
     const tag = component?.tag ?? name
-    const style = authoredStyle(opening, family, code)
-    if (!style) return []
     const anchor = code.slice(element.start, style.start) + code.slice(style.end, element.end)
     const dependencies = component ? [component.dependency] : []
     const locator = { owner, host: name, structure: digest(anchor) }
-    const id = digest(JSON.stringify([file, locator, family, dependencies.map(({ file }) => file)]))
-    const revision = digest(
-      JSON.stringify([code.slice(element.start, element.end), dependencies, component?.imported]),
-    )
-    return [{ opening, style, binding: { schema, id, family, file, tag, locator, revision, dependencies } }]
+    const dependencyPaths = dependencies.map(({ file }) => file)
+    const fragment = code.slice(element.start, element.end)
+    if (schema === 1) {
+      const id = digest(JSON.stringify([file, locator, family, dependencyPaths]))
+      const revision = digest(JSON.stringify([fragment, dependencies, component?.imported]))
+      return [{ opening, style, binding: { schema, id, family, file, tag, locator, revision, dependencies } }]
+    }
+    const id = digest(JSON.stringify([file, locator, dependencyPaths, component?.imported]))
+    const revision = digest(JSON.stringify([fragment, dependencies, component?.imported, actions]))
+    return [{ opening, style, binding: { schema, id, file, tag, locator, revision, dependencies, actions } }]
   })
 }
 
@@ -148,6 +170,7 @@ export async function addAuthoredUseMarkers({
   out,
   resolveImport,
   reserved = new Set(),
+  schema = authoredUseSchema,
 }) {
   const components = new Map()
   const useNames = new Set()
@@ -165,7 +188,7 @@ export async function addAuthoredUseMarkers({
       const dependency = relative(root, path)
       if (!jsxFile.test(dependency)) continue
       const source = readFileSync(fileInside(root, dependency), 'utf8')
-      const tag = forwardedHost(source, imported.exported)
+      const tag = forwardedHost(source, imported.exported, { requireChildren: schema === 2 })
       if (tag)
         components.set(name, {
           tag,
@@ -176,7 +199,7 @@ export async function addAuthoredUseMarkers({
       // Leave opaque, stale and external imports without writable provenance.
     }
   }
-  const uses = sourceUses(code, tree, file, components)
+  const uses = sourceUses(code, tree, file, components, schema)
   const counts = new Map()
   for (const { binding } of uses) counts.set(binding.id, (counts.get(binding.id) ?? 0) + 1)
   let changed = false
@@ -188,7 +211,7 @@ export async function addAuthoredUseMarkers({
   return changed
 }
 
-export function authoredUseSites(root) {
+export function authoredUseSites(root, schema = authoredUseSchema) {
   root = realpathSync(root)
   return {
     name: 'inspector-authored-use',
@@ -214,6 +237,7 @@ export function authoredUseSites(root) {
             code,
             tree,
             out,
+            schema,
             resolveImport: async (specifier) => (await this.resolve(specifier, id))?.id,
           })
         )
@@ -223,30 +247,39 @@ export function authoredUseSites(root) {
   }
 }
 
-function readBinding(root, code, claimed, expectedDependencies = claimed.dependencies) {
-  if (claimed?.schema !== schema || !['paint', 'spacing'].includes(claimed.family)) {
+function readBinding(root, code, claimed) {
+  if (![1, 2].includes(claimed?.schema) || !Object.hasOwn(allowed, claimed.family)) {
     throw Error('Unsupported authored-use binding.')
   }
   const tree = parseAuthoredJsx(code)
   const components = new Map()
-  if (claimed.family === 'spacing') {
-    if (expectedDependencies?.length !== 1)
-      throw Error('A forwarded use needs exactly one verified dependency.')
+  const expectedDependencies = claimed.dependencies
+  if (
+    !Array.isArray(expectedDependencies) ||
+    expectedDependencies.length > 1 ||
+    (claimed.schema === 1 && claimed.family === 'spacing' && !expectedDependencies.length)
+  )
+    throw Error('Authored use has an unsupported forwarding dependency.')
+  if (expectedDependencies.length) {
     const [dependency] = expectedDependencies
     const source = readFileSync(fileInside(root, dependency.file), 'utf8')
     if (digest(source) !== dependency.revision) throw Error('Authored-use forwarding dependency changed.')
     for (const [name, imported] of authoredImports(tree)) {
       if (imported.specifier !== dependency.specifier || imported.exported !== dependency.exported) continue
-      const tag = forwardedHost(source, imported.exported)
+      const tag = forwardedHost(source, imported.exported, { requireChildren: claimed.schema === 2 })
       if (tag) components.set(name, { tag, imported, dependency })
     }
   }
-  const matches = sourceUses(code, tree, claimed.file, components).filter(
+  const matches = sourceUses(code, tree, claimed.file, components, claimed.schema).filter(
     ({ binding }) => binding.id === claimed.id,
   )
   if (matches.length !== 1 || matches[0].binding.tag !== claimed.tag)
     throw Error('Authored use is absent or ambiguous in the current source.')
-  return matches[0]
+  const { binding, style } = matches[0]
+  if (binding.schema === 1) return matches[0]
+  if (!binding.actions.includes(claimed.family))
+    throw Error('This shared action is unsupported at the authored use.')
+  return { binding: { ...binding, family: claimed.family }, style }
 }
 
 function transaction(file, before, after, binding, nextBinding, patch, properties) {

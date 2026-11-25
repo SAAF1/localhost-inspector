@@ -8,8 +8,9 @@
   function binding(node) {
     try {
       const value = JSON.parse(node?.getAttribute(attribute))
-      if (value?.schema === 1 && typeof value.id === 'string' && value.tag === node.localName &&
-          ['paint', 'spacing'].includes(value.family) && typeof value.revision === 'string') return value
+      const actions = value?.schema === 2 ? value.actions : value?.schema === 1 ? [value.family] : []
+      if (Array.isArray(actions) && actions.length && actions.every(action => ['paint', 'spacing'].includes(action)) &&
+          typeof value.id === 'string' && value.tag === node.localName && typeof value.revision === 'string') return value
     } catch {
       // The page can contain ordinary elements or unsupported markers.
     }
@@ -44,6 +45,10 @@
     }
   }
 
+  function eligible(node, family) {
+    return family === 'paint' ? !node.childElementCount && Boolean(node.textContent.trim()) : Boolean(separation(node))
+  }
+
   function expectedPaint(node, requested) {
     const token = /^var\((--[\w-]+)\)$/.exec(requested)?.[1]
     return token ? ui.resolveColorVariable(node, token) : ui.normalizeSolidColor(requested)
@@ -63,7 +68,7 @@
     if (nodes.length < count) return null
     const evidence = { visibleMembers: nodes.length }
     for (const node of nodes) {
-      if (binding(node).revision !== use.revision) return null
+      if (binding(node).revision !== use.revision || !eligible(node, use.family)) return null
       const actual = read(node, use.family)
       if (use.family === 'paint') {
         if (actual.color !== expectedPaint(node, values.color)) return null
@@ -81,10 +86,10 @@
   function protectPeers(selected, use, nodes) {
     const region = selected.closest('main, [role=main]') ?? document.body
     const candidates = use.family === 'paint'
-      ? [...region.querySelectorAll('p, h1, h2, h3, h4, h5, h6, span, small, label')].filter(node =>
+      ? [...region.querySelectorAll('p, h1, h2, h3, h4, h5, h6, span, small, label, td, th')].filter(node =>
         [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE && child.textContent.trim()))
       : [...new Set([...region.querySelectorAll('button, a')].map(node => node.parentElement))]
-        .filter(node => [...node.children].filter(child => child.matches('button, a')).length >= 2)
+        .filter(node => [...node.children].filter(child => child.matches('button, a')).length >= 1 && node.children.length >= 2)
     const peers = candidates.filter(node => visible(node) && !nodes.some(member => member === node || member.contains(node)))
       .map(node => ({ node, before: read(node, use.family), distances: use.family === 'spacing' ? separation(node) : null }))
     return {
@@ -133,5 +138,5 @@
     })
   }
 
-  ui.authoredUsePreview = { attribute, binding, compare, expectedPaint, intent, members, observation, observe, protectPeers, read, separation }
+  ui.authoredUsePreview = { attribute, binding, compare, eligible, expectedPaint, intent, members, observation, observe, protectPeers, read, separation }
 })()

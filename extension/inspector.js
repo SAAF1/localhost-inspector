@@ -184,6 +184,7 @@
   let sectionPreviewTargets = false
   let preparedPreviews = false
   let authoredUse = false
+  let scopeSelection
   let comparingSource = false
   const authored = ui.authoredUsePreview
   const sourceRows = () => pendingRows.filter(edit => edit.executor === 'authored-source')
@@ -486,9 +487,17 @@
     const shared = contract ? [...(contract.styles ?? (contract.style ? [contract.style] : [])), ...(contract.input ? [contract.input.field] : [])] : []
     const scope = get('prepared-scope')
     const use = authoredUse && hasSelection ? authored.binding(node) : null
-    scope.hidden = !shared.length && !use
-    const authoredLabel = use?.family === 'paint' ? 'text color' : 'fixed spacing'
-    scope.textContent = [use && 'Shared candidate source · ' + authoredLabel,
+    const editScope = get('authored-edit-scope')
+    if (scopeSelection !== node) {
+      editScope.value = 'shared'
+      scopeSelection = node
+    }
+    editScope.hidden = !authoredUse || !hasSelection
+    scope.hidden = !shared.length && editScope.hidden
+    const actions = (use?.actions ?? (use ? [use.family] : [])).filter(action => authored.eligible(node, action))
+    const authoredLabel = actions.map(action => action === 'paint' ? 'text color' : 'fixed spacing').join(', ')
+    scope.textContent = [authoredUse && hasSelection && (authoredLabel
+      ? 'Shared candidate source · ' + authoredLabel : 'Shared candidate source unavailable for text color and fixed spacing'),
       shared.length && 'Shared source controls · ' + shared.join(', ')].filter(Boolean).join(' · ')
     const canvasPaint = isCanvasExpanded?.() && ui.syncCanvasBackground(host, colorCatalog)
     const groupCount = selection.group.length
@@ -871,6 +880,9 @@
     const version = activeRouteVersion
     const current = () => isCurrentRoute(path, version)
     const nodes = authored.members(use)
+    if (nodes.some(member => !authored.eligible(member, use.family)))
+      throw Error(use.family === 'paint' ? 'Shared text color needs directly rendered text on every visible member.'
+        : 'Shared fixed spacing needs horizontal flex rows with measurable children.')
     const authoredBefore = authored.read(node, use.family)
     const observed = use.family === 'paint' ? authored.expectedPaint(node, values.color) : values[property]
     if (!nodes.includes(node) || !observed || nodes.some(member => authored.binding(member).revision !== use.revision))
@@ -951,16 +963,23 @@
       if (tokenOptions) throw Error('The selected property cannot be edited.')
       return
     }
-    const use = authoredUse ? authored.binding(node) : null
-    if (use) {
-      const values = !selectionOnly && authored.intent(node, use, property, requested)
-      if (values) return commitAuthoredUse(node, use, property, values, tokenOptions)
+    const prepared = ui.preparedPreview.contract(node)
+    const qualifiedPrepared = (prepared?.style === property || prepared?.styles?.includes(property)) && !tokenOptions?.pendingColor
+    const family = property === 'color' ? 'paint' : ['gap', 'justify-content'].includes(property) ? 'spacing' : null
+    if (authoredUse && family) {
+      selectionOnly ||= get('authored-edit-scope').value === 'selected'
+      const marker = authored.binding(node)
+      if (!selectionOnly) {
+        const use = marker && (marker.actions ?? [marker.family]).includes(family) && { ...marker, family }
+        const values = use && authored.intent(node, use, property, requested)
+        if (values) return commitAuthoredUse(node, use, property, values, tokenOptions)
+        if (!qualifiedPrepared)
+          throw Error('Shared source is unavailable for this change. Choose Selected element only to preview one occurrence.')
+      }
       if (sourceOwns(node, property)) throw Error(removeSourceFirst)
     }
-    const prepared = ui.preparedPreview.contract(node)
-    if ((prepared?.style === property || prepared?.styles?.includes(property)) && !selectionOnly && !tokenOptions?.pendingColor) {
+    if (qualifiedPrepared && !selectionOnly)
       return commitPrepared(node, prepared, property, requested, tokenOptions)
-    }
     const editRoute = currentRoute
     const version = activeRouteVersion
     const isCurrent = () => isCurrentRoute(editRoute, version)
