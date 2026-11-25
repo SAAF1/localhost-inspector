@@ -133,6 +133,7 @@ try {
     }
     studio = {
       version: 1,
+      authoredUses: process.env.INSPECTOR_AUTHORED_USE === '1',
       source,
       map,
       namespace,
@@ -201,7 +202,10 @@ try {
       : join(studio.versions[0].directory, 'canvas')
     const capture = JSON.parse(readFileSync(join(capturedMap, 'map.json'), 'utf8'))
     const designVersions = studio.versions.map(({ label, origin }) => ({ label, origin }))
-    write(join(map, 'map.json'), { ...capture, origin, designVersions })
+    const original = studio.versions[0]
+    const authoredBaseline = studio.authoredUses && id !== 'original'
+      ? { origin: original.origin, basis: original.basis } : null
+    write(join(map, 'map.json'), { ...capture, origin, designVersions, authoredBaseline })
     for (const name of readdirSync(capturedMap)) {
       if (
         !/^(?:(?:previews|audit)\.json|frame-\d+(?:\.png|-(?:desktop|tablet|phone)(?:-hug)?(?:-2x)?\.webp))$/.test(
@@ -218,7 +222,9 @@ try {
       app,
       {
         INSPECTOR_CANVAS_HELPER_STATE: state,
-        INSPECTOR_PREPARED_SITES: manifest,
+        INSPECTOR_PREPARED_SITES: studio.authoredUses && id === 'original' ? '' : manifest,
+        INSPECTOR_AUTHORED_USE: authoredBaseline ? '1' : '0',
+        INSPECTOR_ORIGINAL_BASIS: studio.authoredUses && id === 'original' ? original.basis : '',
         INSPECTOR_VITE_CACHE: join(dir, 'vite-cache'),
       },
       'project preview listening',
@@ -226,6 +232,7 @@ try {
     )
     try {
       const binding = helperResult(state, 'bind', String(port), app)
+      if (authoredBaseline) helperResult(state, 'authorize-authored-use', String(port), dir)
       if (id === 'original') {
         const catalogs = inventory.stylesheetGraph.sheets
           .map((s) => s.file)

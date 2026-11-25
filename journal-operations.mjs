@@ -3,14 +3,20 @@ import { access } from 'node:fs/promises'
 import { declaresVariable, validRoute } from './journal-values.mjs'
 import { pendingEdits, removePendingEdit, setPreviewVisibility } from './journal-edits.mjs'
 
-export function journalSnapshot(message, journal, journalRoute, buttonSize) {
+export function journalSnapshot(message, journal, journalRoute, buttonSize, authoredUse = false) {
   if (!validRoute(message.route)) throw Error('Expected a route')
   const route = journalRoute(message.route)
+  const visibleEdits = journal.edits.filter(edit => edit.route === route || edit.template || edit.prepared)
+    .map(edit => {
+      if (edit.executor !== 'authored-source') return edit
+      const { patch, ...sourceReceipt } = edit.sourceReceipt
+      return { ...edit, sourceReceipt }
+    })
   return { revision: journal.revision, route, preparedPreviews: true, scopedPreviewTargets: true, landmarkPreviewTargets: true, sectionPreviewTargets: true, templatePreviews: true,
-    templateSourcePreviews: true, templatePaddingPreviews: true, projectWideRevert: true, previewVisibility: true,
+    templateSourcePreviews: true, templatePaddingPreviews: true, projectWideRevert: true, ...(authoredUse ? { authoredUse: true } : {}), previewVisibility: true,
     textStyleDefinitions: journal.textStyleDefinitions ?? [],
     ...(message.forComponentReset === true ? { componentEdits: journal.edits.filter(edit => edit.target.mount) } : {}),
-    edits: journal.edits.filter(edit => edit.route === route || edit.template || edit.prepared), pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
+    edits: visibleEdits, pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
 }
 
 export function requireRevision(message, journal) {

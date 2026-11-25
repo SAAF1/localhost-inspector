@@ -12,6 +12,7 @@ import { declaresVariable, journalTarget, textStyleProperties, validRoute, varia
 import { journalValidators } from './journal-records.mjs'
 import { applyJournalOperation, journalSnapshot, requireRevision } from './journal-operations.mjs'
 import { buildSourceHandoff } from './source-handoff.mjs'
+import { assertAuthoredReady, authoredResult, authoredTransactions, guardAuthoredJournalOperation, requireAuthoredCandidate } from './authored-transactions.mjs'
 import { addVisualEvidence, maxEvidenceLength, removeVisualEvidence, saveVisualEvidence } from './visual-evidence.mjs'
 
 const exec = promisify(execFile)
@@ -24,7 +25,7 @@ const catalogKinds = new Map([
   ['register-font-families', 'font-families'],
   ['register-text-styles', 'text-styles'],
 ])
-if (!root || (!['bind', 'status', 'handoff', 'proposal-readiness', 'complete', 'serve', 'register-button-size', 'copy-registrations', 'visual-evidence'].includes(mode) && !catalogKinds.has(mode))) {
+if (!root || (!['bind', 'status', 'handoff', 'proposal-readiness', 'complete', 'serve', 'register-button-size', 'copy-registrations', 'visual-evidence', 'authorize-authored-use'].includes(mode) && !catalogKinds.has(mode))) {
   throw Error('Usage: local-helper.mjs <state-dir> bind <port> <repo-dir> | register-colors/register-spacing/register-font-families/register-text-styles <port> <relative.css> <name>... | register-button-size <port> <target-key> <relative-source> | copy-registrations <original-port> <proposal-port> | status | handoff <port> | complete <port> <report.json> | visual-evidence <port> on|off | serve')
 }
 if (!['handoff', 'proposal-readiness', 'complete'].includes(mode)) await mkdir(root, { recursive: true, mode: 0o700 })
@@ -36,7 +37,7 @@ const read = async (file, fallback) => readFile(file, 'utf8').then(JSON.parse).c
 })
 async function atomic(file, value) {
   const temp = file + '.' + randomUUID() + '.tmp'
-  await writeFile(temp, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
+  await writeFile(temp, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600, flush: true })
   await rename(temp, file)
 }
 function printJson(value) {
@@ -72,6 +73,21 @@ if (mode === 'bind') {
   bindings[origin] = binding
   await atomic(configPath, bindings)
   console.log(JSON.stringify(binding))
+  process.exit(0)
+}
+
+if (mode === 'authorize-authored-use') {
+  if (args.length !== 2) throw Error('Expected a candidate port and proposal directory')
+  const origin = originFor(args[0])
+  const directory = await realpath(args[1])
+  const bindings = await read(configPath, {})
+  const binding = bindings[origin]
+  if (!binding) throw Error('No saved project connection for this origin')
+  const { basis } = requireAuthoredCandidate(binding, directory)
+  await verify(binding)
+  binding.authoredUse = { directory, basis }
+  await atomic(configPath, bindings)
+  await printJson({ authoredUse: true })
   process.exit(0)
 }
 
@@ -234,6 +250,7 @@ if (mode === 'handoff' || mode === 'proposal-readiness') {
   const journal = await read(file, { version: 2, revision: 0, binding, edits: [] })
   assertJournalBinding(journal, binding)
   if (journal.version !== 2) throw Error('Open Inspector to migrate this journal before exporting a handoff')
+  await assertAuthoredReady(binding, file, journal, read)
   const handoff = buildSourceHandoff(binding, journal)
   if (journal.textStyleDefinitions?.length) {
     const catalog = await readCatalog(binding, 'text-styles')
@@ -373,14 +390,25 @@ async function handle(message) {
     await atomic(file, journal)
   }
   if (journal.version !== 2) throw Error('Unknown journal version')
+  const authored = authoredTransactions({ binding, file, read, atomic, validators, readCatalog: kind => readCatalog(binding, kind) })
+  if (binding.authoredUse) await authored.recover(journal)
   if (message.type === 'load') {
-    return journalSnapshot(message, journal, journalRoute, await readButtonSize(binding).catch(() => null))
+    if (binding.authoredUse) await authored.reportConflicts(journal)
+    return journalSnapshot(message, journal, journalRoute, await readButtonSize(binding).catch(() => null), Boolean(binding.authoredUse))
   }
   if (message.type === 'saveEvidence') {
     if (!validRoute(message.route)) return false
     return saveVisualEvidence(root, binding, journal, message.id, journalRoute(message.route), message.image)
   }
+  // Verification can already have rolled back the staged edit. Its retry
+  // acknowledges the current snapshot without writing through a stale revision.
+  if (binding.authoredUse && message.type === 'rejectAuthoredUse' && !journal.edits.some(edit => edit.id === message.id)) {
+    return authoredResult(journal)
+  }
   requireRevision(message, journal)
+  const nativeResult = await authored.handle(message, journal)
+  if (nativeResult) return nativeResult
+  guardAuthoredJournalOperation(message, journal)
   if (message.type === 'complete') {
     const originalEdits = journal.edits
     const { completed, retired } = completeHandoff(binding, journal, message.report, new Date().toISOString())

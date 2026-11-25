@@ -20,6 +20,7 @@ const assets = new Map([
   ['workspace-editor.mjs', ['workspace-editor.mjs', 'text/javascript']],
   ['variant-sections.mjs', ['variant-sections.mjs', 'text/javascript']],
   ['edition-switcher.mjs', ['edition-switcher.mjs','text/javascript']],
+  ['authored-compare.mjs', ['authored-compare.mjs', 'text/javascript']],
   ['workspace.mjs', ['workspace.mjs', 'text/javascript']],
   ...['tokens', 'styles', 'panel-styles', 'icons', 'tooltip', 'dom', 'menu', 'variables-panel',
     'variables-typography', 'variables-styles', 'authored-styles', 'policy', 'text-style-values', 'color-bindings', 'solid-color-picker', 'spacing-gap'].map(

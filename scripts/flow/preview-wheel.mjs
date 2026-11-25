@@ -26,3 +26,19 @@ if (window.parent !== window) {
   }
   window.addEventListener('message', connect)
 }
+
+// Cross-origin comparison confirms the source server and starting revision.
+// No editing code is attached to this read-only Original frame.
+if (parent !== window && window.name === 'inspector-source-original') {
+  window.addEventListener('message', async event => {
+    if (event.source !== parent || event.data?.type !== 'inspector-original-basis' ||
+        !/^http:\/\/127\.0\.0\.1:\d+$/.test(event.origin)) return
+    let basis
+    try {
+      const result = await fetch('/__inspector-flow/authored-original-basis', {cache:'no-store'})
+      if (result.ok) ({ basis } = await result.json())
+    } finally {
+      parent.postMessage({type:'inspector-original-ready', basis, requestId:event.data.requestId}, event.origin)
+    }
+  })
+}

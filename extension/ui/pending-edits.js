@@ -124,10 +124,11 @@
           const target = edit.target
           const name = observed?.slice(0, 64) || humanize(target.slot || target.id || ({ div: 'Container', span: 'Text', tr: 'Row', td: 'Cell' }[target.tag] ?? target.tag ?? 'Element'))
           const property = properties[edit.property] ?? humanize(edit.property)
+          const sourceEdit = edit.executor === 'authored-source'
           const detail = property + '  ' + edit.before + ' → ' + edit.requested +
-            (edit.template ? ' · Whole template' : '') + (edit.sessionOnly ? ' · Current element only' : '') + ({
+            (sourceEdit ? ' · Candidate source' : edit.template ? ' · Whole template' : '') + (edit.sessionOnly ? ' · Current element only' : '') + ({
               applied: ' · Previewing', hidden: ' · Hidden', superseded: ' · Overridden by a newer edit',
-              stale: ' · Source changed', failed: ' · Effect missing', unobservable: ' · Unavailable in this view',
+              pending: ' · Awaiting verification', stale: ' · Source changed', failed: ' · Effect missing', unobservable: ' · Unavailable in this view',
             }[state] ?? '')
           open.append(ui.element('span', 'li-pending-name', name), ui.element('span', 'li-pending-detail',
             recent ? pageName(edit.route) + ' · ' + detail : detail))
@@ -148,7 +149,11 @@
           const eye = ui.visibilityAction(name + ' ' + property.toLowerCase() + ' preview', !edit.previewHidden,
             visible => setPreviewVisibility(edit.id, !visible))
           eye.dataset.editId = edit.id
-          eye.disabled = disabled || !canToggleVisibility
+          eye.disabled = disabled || !canToggleVisibility || sourceEdit
+          if (sourceEdit) {
+            eye.dataset.sourceEdit = ''
+            ui.setTooltip(eye, 'Use Canvas Compare for candidate source edits')
+          }
           if (!canToggleVisibility) ui.setTooltip(eye, 'Update the local helper to toggle this preview')
           row.append(open, eye, remove)
           section.append(row)
@@ -228,7 +233,7 @@
         if (disabled === value) return
         disabled = value
         for (const button of list.querySelectorAll('.li-pending-row > .li-icon-button')) {
-          button.disabled = disabled || (!canToggleVisibility && button.classList.contains('li-visibility-action'))
+          button.disabled = disabled || button.hasAttribute('data-source-edit') || (!canToggleVisibility && button.classList.contains('li-visibility-action'))
         }
       },
       syncVisibility() {

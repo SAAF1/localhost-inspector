@@ -183,6 +183,15 @@
   let landmarkPreviewTargets = false
   let sectionPreviewTargets = false
   let preparedPreviews = false
+  let authoredUse = false
+  let comparingSource = false
+  const authored = ui.authoredUsePreview
+  const sourceRows = () => pendingRows.filter(edit => edit.executor === 'authored-source')
+  const sourceOwns = (node, property) => {
+    const use = authoredUse && authored.binding(node)
+    return use && sourceRows().some(edit => edit.authoredBinding.id === use.id && Object.hasOwn(edit.authoredValues, property))
+  }
+  const removeSourceFirst = 'Remove the candidate source edit before previewing this setting.'
   let templatePreviews = false
   let templateSourcePreviews = false
   let templatePaddingPreviews = false
@@ -213,7 +222,7 @@
   async function goToEdit(edit) {
     const navigation = ++editNavigation
     status('')
-    if (recovery.hasPreparedOperation(edit.id) || edit.template || edit.route === savedRoute) {
+    if (edit.executor === 'authored-source' || recovery.hasPreparedOperation(edit.id) || edit.template || edit.route === savedRoute) {
       if (await selectEditTarget(edit.id, navigation)) {
         if (panel.hidden) setOpen(true)
         if (isCanvasExpanded?.()) openEditRoute(route())
@@ -301,7 +310,8 @@
     if (!isCurrent()) return false
     const { node, state } = observation
     if (state === 'stale') {
-      status(recovery.hasPreparedOperation(id) ? sourceConflictNotice : 'The saved style source changed. Review the edit before reapplying.', true)
+      status(sourceRows().some(edit => edit.id === id) ? 'Candidate source changed. Review the source before changing this edit.' :
+        recovery.hasPreparedOperation(id) ? sourceConflictNotice : 'The saved style source changed. Review the edit before reapplying.', true)
       return true
     }
     if (!node) return false
@@ -343,9 +353,12 @@
     refreshing = true
     try {
       const snapshot = await send({ type: 'load', route: path })
-      if (busy || !isCurrentRoute(path, version) || journalRevision !== startedRevision || snapshot?.revision === journalRevision) return
+      if (busy || !isCurrentRoute(path, version) || journalRevision !== startedRevision) return
       if (!validSnapshot(snapshot)) throw Error('Invalid journal snapshot')
-      if (startedRevision !== null && recovery.matchesSnapshot(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template || edit.prepared))) {
+      const sourceStateChanged = sourceRows().some(edit =>
+        snapshot.pending?.find(candidate => candidate.id === edit.id)?.sourceState !== edit.sourceState)
+      if (snapshot.revision === journalRevision && !sourceStateChanged) return
+      if (startedRevision !== null && recovery.matchesSnapshot(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template || edit.prepared || edit.executor === 'authored-source'))) {
         const changes = new Map()
         for (const edit of snapshot.edits) {
           const id = edit.group ?? edit.id
@@ -405,6 +418,8 @@
 
   async function removeJournalEdit(id) {
     if (comparing) return
+    const sourceEdit = sourceRows().find(edit => edit.id === id)
+    if (sourceEdit) return undoAuthoredUse(sourceEdit, 'removeEdit')
     if (recovery.hasUnverifiedDependentPreview(id)) {
       throw Error('A newer live preview changes the same setting. Remove the newer edit first.')
     }
@@ -440,9 +455,11 @@
     const compare = get('clear')
     const reset = get('reset')
     undo.disabled = writesUnavailable || comparing || !recovery.hasSaved
-    compare.disabled = pageActionsUnavailable || (!comparing && !recovery.hasAttached)
+    const hasSourceEdit = sourceRows().length > 0
+    compare.disabled = pageActionsUnavailable ||
+      (!comparing && (hasSourceEdit ? window.parent === window : !recovery.hasAttached))
     const hasPendingEdits = pendingRows.length > 0 || recovery.hasSaved || hasOlderComponentOverrides
-    reset.disabled = writesUnavailable || !hasPendingEdits || !projectWideRevert
+    reset.disabled = writesUnavailable || !hasPendingEdits || !projectWideRevert || hasSourceEdit
     const pageBusy = pageActionsUnavailable ? 'Wait for the current page to finish updating' : ''
     const saveUnavailable = pageBusy || (journalRevision === null ? 'Reload to reconnect to saved edits' : '')
     const pendingReason = saveUnavailable || (!recovery.hasSaved ? 'No saved edits on this page' : '')
@@ -451,8 +468,10 @@
     compare.setAttribute('aria-pressed', String(comparing))
     const compareLabel = comparing ? 'Show previews' : 'Show original'
     compare.setAttribute('aria-label', compareLabel)
-    ui.setTooltip(compare, pageBusy || (compare.disabled ? 'No live previews on this page to compare' : compareLabel))
-    ui.setTooltip(reset, saveUnavailable || (!hasPendingEdits ? 'No saved edits in this app' :
+    ui.setTooltip(compare, pageBusy || (compare.disabled
+      ? hasSourceEdit ? 'Open this candidate in Canvas to compare source' : 'No live previews on this page to compare'
+      : compareLabel))
+    ui.setTooltip(reset, saveUnavailable || (hasSourceEdit ? 'Remove candidate source edits individually before reverting all' : !hasPendingEdits ? 'No saved edits in this app' :
       projectWideRevert ? 'Revert saved edits on all pages' : 'Restart the local helper with the updated Inspector to revert all edits'))
     get('comparison-mode').hidden = !comparing
     editsUI.setDisabled(writesUnavailable || comparing)
@@ -466,8 +485,11 @@
     const contract = hasSelection && ui.preparedPreview.contract(node)
     const shared = contract ? [...(contract.styles ?? (contract.style ? [contract.style] : [])), ...(contract.input ? [contract.input.field] : [])] : []
     const scope = get('prepared-scope')
-    scope.hidden = !shared.length
-    scope.textContent = shared.length ? 'Shared source controls · ' + shared.join(', ') : ''
+    const use = authoredUse && hasSelection ? authored.binding(node) : null
+    scope.hidden = !shared.length && !use
+    const authoredLabel = use?.family === 'paint' ? 'text color' : 'fixed spacing'
+    scope.textContent = [use && 'Shared candidate source · ' + authoredLabel,
+      shared.length && 'Shared source controls · ' + shared.join(', ')].filter(Boolean).join(' · ')
     const canvasPaint = isCanvasExpanded?.() && ui.syncCanvasBackground(host, colorCatalog)
     const groupCount = selection.group.length
     const canvasSection = !groupCount && !hasSelection && ui.canvasBackgroundSection({
@@ -505,6 +527,7 @@
         const valid = () => stillSelected() && value && !comparing && !loadingRoute && journalRevision !== null &&
           paints.every(({ node, property }) => canEdit(node, property) && roots.some(root => root.contains(node)))
         if (!valid()) throw Error('Selection changed.')
+        if (paints.some(({ node, property }) => sourceOwns(node, property))) throw Error(removeSourceFirst)
         if (paints.length === 1) {
           await commitEdit(paints[0].node, paints[0].property, value, undefined, true)
           return
@@ -629,7 +652,7 @@
       }
       return result
     } catch (error) {
-      if (error.code === 'WRITE_REJECTED') throw error
+      if (error.code === 'WRITE_REJECTED' || error.code === 'AUTHORED_SOURCE_REJECTED' || error.code === 'AUTHORED_SOURCE_CONFLICT') throw error
       // A stale write or a lost acknowledgment requires a fresh snapshot.
       if (isCurrentRoute(path, version)) journalRevision = null
       else if (currentRoute === path) window.phaseAInspectorReady = loadRoute()
@@ -843,10 +866,96 @@
     }
     reportRecovery()
   }
+  async function commitAuthoredUse(node, use, property, values, tokenOptions) {
+    const path = currentRoute
+    const version = activeRouteVersion
+    const current = () => isCurrentRoute(path, version)
+    const nodes = authored.members(use)
+    const authoredBefore = authored.read(node, use.family)
+    const observed = use.family === 'paint' ? authored.expectedPaint(node, values.color) : values[property]
+    if (!nodes.includes(node) || !observed || nodes.some(member => authored.binding(member).revision !== use.revision))
+      throw Error('The authored use changed. Select it again before editing.')
+    if (values.color?.startsWith('var(') && (!tokenOptions?.colorToken ||
+        values.color !== ui.colorVariableValue(tokenOptions.colorToken.name) ||
+        tokenOptions.colorToken.source !== colorCatalog?.source || !colorCatalog.names.includes(tokenOptions.colorToken.name))) {
+      throw Error('This source color variable is unavailable.')
+    }
+    if (nodes.some(member => {
+      const prepared = ui.preparedPreview.contract(member)
+      return Object.keys(values).some(key => recovery.ownsLiveProperty(member, key) || member.style.getPropertyPriority(key) ||
+        ((prepared?.style === key || prepared?.styles?.includes(key)) && ui.preparedPreview.authored(member, key)))
+    })) throw Error('A preview already controls this property. Remove it before editing candidate source.')
+    const protectedPeers = authored.protectPeers(node, use, nodes)
+    const id = crypto.randomUUID()
+    const record = {
+      id, route: path, property, before: authoredBefore[property], requested: values[property],
+      observed, authoredBefore, intent: 'feature-template',
+      ...(tokenOptions?.colorToken ? { colorToken: tokenOptions.colorToken } : {}),
+      target: { tag: node.localName, key: null, slot: node.getAttribute('data-slot'), id: node.id || null },
+    }
+    const staged = await write({ type: 'saveAuthoredUse', record, binding: use, values }, path, version)
+    if (!staged.edit) return
+    let accepted
+    try {
+      let effect
+      if (!await ui.waitForPreview(current, () => {
+        effect = authored.observation(staged.edit.authoredBinding, staged.edit.authoredValues, nodes.length)
+        return effect && protectedPeers.unchanged()
+      })) throw Error('The source edit did not reach every visible member while preserving nearby independent elements.')
+      accepted = await write({
+        type: 'verifyAuthoredUse', id, observed: effect.values,
+        evidence: { ...effect.evidence, protectedPeers: protectedPeers.count },
+      }, path, version)
+    } catch (error) {
+      try {
+        if (current()) await write({ type: 'rejectAuthoredUse', id }, path, version)
+        else await send({ type: 'rejectAuthoredUse', id, expectedRevision: staged.revision })
+      } catch {
+        if (current()) window.phaseAInspectorReady = loadRoute()
+        throw Error('The source edit could not be confirmed or restored. Reopen the candidate and check Edits.', { cause: error })
+      }
+      if (!current() && currentRoute === route()) window.phaseAInspectorReady = loadRoute()
+      throw error
+    }
+    if (current()) {
+      recovery.remember(accepted.edit ?? pendingRows.find(edit => edit.id === id))
+      if (selection.current === node && !node.isConnected) {
+        const replacements = authored.members(staged.edit.authoredBinding)
+        selection.select(replacements.length === 1 ? replacements[0] : null)
+      }
+      reportRecovery()
+    }
+  }
+
+  async function undoAuthoredUse(edit, type) {
+    const path = currentRoute
+    const version = activeRouteVersion
+    const current = () => isCurrentRoute(path, version)
+    const use = edit.authoredBinding
+    const count = authored.members(use).length
+    await write({ type, id: edit.id }, path, version)
+    if (!current()) return
+    recovery.forget(edit.id)
+    reportRecovery()
+    if (count && !await ui.waitForPreview(current, () => {
+      const members = authored.members(use)
+      return members.length >= count && members.every(node => {
+        const actual = authored.read(node, use.family)
+        return Object.entries(edit.authoredBefore).every(([property, value]) => actual[property] === value)
+      })
+    })) status('The source edit was removed, but the previous visible effect could not be confirmed.', true)
+  }
+
   async function commitEdit(node, property, requested, tokenOptions, selectionOnly = false) {
     if (comparing || !canEdit(node, property)) {
       if (tokenOptions) throw Error('The selected property cannot be edited.')
       return
+    }
+    const use = authoredUse ? authored.binding(node) : null
+    if (use) {
+      const values = !selectionOnly && authored.intent(node, use, property, requested)
+      if (values) return commitAuthoredUse(node, use, property, values, tokenOptions)
+      if (sourceOwns(node, property)) throw Error(removeSourceFirst)
     }
     const prepared = ui.preparedPreview.contract(node)
     if ((prepared?.style === property || prepared?.styles?.includes(property)) && !selectionOnly && !tokenOptions?.pendingColor) {
@@ -1230,6 +1339,8 @@
   get('undo').onclick = () => run(async () => {
     const id = recovery.lastSavedId
     if (!id || comparing) return
+    const sourceEdit = sourceRows().find(edit => edit.id === id)
+    if (sourceEdit) return undoAuthoredUse(sourceEdit, 'undo')
     const requestedRoute = currentRoute
     const version = activeRouteVersion
     const entries = recovery.componentEntries(id)
@@ -1247,6 +1358,13 @@
     if (!comparing) {
       const path = currentRoute
       const version = activeRouteVersion
+      if (sourceRows().length) {
+        await authored.compare(true)
+        comparingSource = true
+        comparing = true
+        syncPending()
+        return
+      }
       const entries = recovery.componentEntries()
       if (entries.length) await rewindComponentEntries(entries, path, version)
       if (!isCurrentRoute(path, version)) return
@@ -1254,6 +1372,13 @@
       recovery.showOriginal()
       syncPending()
     } else {
+      if (comparingSource) {
+        await authored.compare(false)
+        comparingSource = false
+        comparing = false
+        syncPending()
+        return
+      }
       comparing = false
       const requestedRoute = currentRoute
       const version = activeRouteVersion
@@ -1323,7 +1448,8 @@
     if (notice.hasAttribute('data-error')) return
     const states = comparing ? [] : recovery.recoveryStates()
     const message = buttonSizeRequiresReload ? 'Reload the page to clear the previous Button Size preview.' :
-      comparing ? '' : states.includes('prepared-stale') ? sourceConflictNotice :
+      comparing ? '' : states.includes('authored-stale') ? 'Candidate source changed. Review the source before changing the saved edit.' :
+      states.includes('prepared-stale') ? sourceConflictNotice :
       states.includes('stale') ? 'A saved style source changed. Review the edit before reapplying.' :
       recovery.hasConflicts ? 'The app changed a previewed style. Your edit is still saved.' :
       states.includes('failed') || states.includes('unobservable')
@@ -1346,6 +1472,7 @@
     landmarkPreviewTargets = snapshot.landmarkPreviewTargets === true
     sectionPreviewTargets = snapshot.sectionPreviewTargets === true
     preparedPreviews = snapshot.preparedPreviews === true
+    authoredUse = snapshot.authoredUse === true
     templatePreviews = snapshot.templatePreviews === true
     templateSourcePreviews = snapshot.templateSourcePreviews === true
     templatePaddingPreviews = snapshot.templatePaddingPreviews === true
@@ -1362,7 +1489,7 @@
       const firstEdit = snapshot.edits.find(edit => edit.target.mount === target.mount && edit.target.field === target.field)
       return !firstEdit || firstEdit.beforeState.overridden
     })
-    recovery.load(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template || edit.prepared), snapshot.route)
+    recovery.load(snapshot.edits.filter(edit => edit.route === snapshot.route || edit.template || edit.prepared || edit.executor === 'authored-source'), snapshot.route)
     return snapshot.revision
   }
   let currentRoute = route()
@@ -1375,6 +1502,7 @@
     landmarkPreviewTargets = false
     sectionPreviewTargets = false
     preparedPreviews = false
+    authoredUse = false
     templatePreviews = false
     templateSourcePreviews = false
     templatePaddingPreviews = false
@@ -1441,13 +1569,17 @@
     currentRoute = route()
     revertDialog.dismiss()
     comparing = false
+    if (comparingSource) {
+      comparingSource = false
+      void authored.compare(false).catch(() => {})
+    }
     recoveryRequested = false
     window.phaseAInspectorReady = loadRoute()
     selection.select(null)
   }
   const observedAttributes = new Set(['id', 'data-slot', 'data-inspector-target', 'role', 'style', 'class', 'data-theme', 'hidden',
     'fill', 'stroke', 'fill-opacity', 'stroke-opacity', 'opacity', 'visibility', 'data-localhost-inspector-layer-hidden', 'aria-hidden', 'aria-labelledby', 'aria-label', 'aria-selected', 'open', 'data-state',
-    ui.sharedPadding.attribute, ui.templatePreview.attribute])
+    ui.sharedPadding.attribute, ui.templatePreview.attribute, authored.attribute])
   new MutationObserver(mutations => {
     const records = mutations.filter(record => record.type !== 'attributes' ||
       observedAttributes.has(record.attributeName) || ui.isPreviewContextAttribute(record.attributeName))
@@ -1494,6 +1626,8 @@
       ))) renderFields({ keepPopup: true })
     }
     if (!recovery.hasRecords) return
+    if (!busy && !loadingRoute && sourceRows().length && records.some(record =>
+      (record.type === 'childList' && document.body.contains(record.target) && !host.contains(record.target)) || record.attributeName === authored.attribute)) reportRecovery()
     recoveryRequested ||= styleChanges.length !== records.length || recovery.hasTargetClassChange(styleChanges) ||
       ((recovery.hasScopedEdits || recovery.hasTemplateEdits) && styleChanges.some(record => record.attributeName === 'class')) ||
       (!busy && !loadingRoute && !comparing && recovery.hasStyleConflict(styleChanges))

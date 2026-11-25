@@ -3,7 +3,7 @@
   const keyAttribute = 'data-inspector-target'
   // A repeated marker names one authored template part. Occurrence keys still identify individual records.
   const templateAttribute = 'data-inspector-template'
-  const contextAttribute = name => /^data-(?!inspector-|localhost-inspector-|state$|slot$|theme$|active$|disabled$|open$|selected$|highlighted$|hovered$)/.test(name)
+  const contextAttribute = name => /^data-(?!inspector-|localhost-inspector-|li-authored-use$|state$|slot$|theme$|active$|disabled$|open$|selected$|highlighted$|hovered$)/.test(name)
   const templateOf = node => {
     const value = node?.getAttribute(templateAttribute)
     return /^[a-z0-9][a-z0-9._:/-]{0,119}$/i.test(value ?? '') ? value : undefined
@@ -604,7 +604,7 @@
       const definitions = new Map(pendingTextStyles().map(style => [style.name, style]))
       for (const edits of groups.values()) {
         if (!isCurrent()) return
-        if (edits[0].prepared || edits[0].previewHidden) continue
+        if (edits[0].prepared || edits[0].executor === 'authored-source' || edits[0].previewHidden) continue
         if (edits[0].template) {
           await restoreTemplate(edits, isCurrent)
           continue
@@ -702,6 +702,10 @@
     function observeMember(edit, hidden, state) {
       if (!inState(edit, state)) return { state: 'unobservable' }
       if (edit.prepared) return ui.preparedPreview.observe(edit, visible, hidden)
+      if (edit.executor === 'authored-source') {
+        const latest = [...saved.values()].findLast(member => member.authoredBinding?.id === edit.authoredBinding.id)
+        return ui.authoredUsePreview.observe(edit, hidden, latest)
+      }
       const resolved = lastResolved.get(edit)
       const exact = attached.get(edit.id)?.node ?? original.get(edit.id)?.node ??
         (resolved && matchesTarget(resolved.node, resolved.identity, true) &&
@@ -744,6 +748,10 @@
 
     return {
       projectPrepared,
+      ownsLiveProperty(node, property) {
+        const entry = inlineStacks.get(node)?.get(property)?.at(-1)
+        return Boolean(entry && ownsDeclaration(entry))
+      },
       componentEntries(id) {
         return Array.from(attached).reverse().filter(([key, entry]) => sessionEntry(entry) && (!id || id === key))
           .map(([, entry]) => entry)
@@ -785,7 +793,7 @@
             return { state: 'unobservable' }
           if (!ui.componentEdits.equal(actual, edit.afterState)) return { ...observation, state: 'failed' }
         }
-        if (observation.node || observation.state === 'stale' || edit.prepared ||
+        if (observation.node || observation.state === 'stale' || edit.prepared || edit.executor === 'authored-source' ||
             (edit.frameState && !inState(edit, readFrameState()))) return observation
         const current = () => isCurrent() && saved.get(edit.id) === edit &&
           (!edit.frameState || inState(edit, readFrameState()))
@@ -797,7 +805,8 @@
         return { node, state: comparing || edit.previewHidden ? 'hidden' : 'failed' }
       },
       matchesSnapshot(edits) {
-        return edits.length === saved.size && edits.every(edit => saved.get(edit.id)?.before === edit.before)
+        return edits.length === saved.size && edits.every(edit => saved.get(edit.id)?.before === edit.before &&
+          saved.get(edit.id)?.sourceState === edit.sourceState)
       },
       get hasSessionPreview() {
         return Array.from(attached).some(([id, entry]) => saved.get(editId(id, entry))?.restore !== 'unique')
@@ -818,21 +827,24 @@
         return Array.from(operations().values(), edits => {
           const result = observeOperation(edits, false, state)
           const [edit] = edits
-          if (result.state === 'unobservable' && (edit.prepared || edit.route !== savedRoute)) return null
+          if (result.state === 'unobservable' && (edit.prepared || edit.executor === 'authored-source' || edit.route !== savedRoute)) return null
           if (result.state === 'stale' && edit.prepared) return 'prepared-stale'
+          if (result.state === 'stale' && edit.executor === 'authored-source') return 'authored-stale'
           return result.state
         })
       },
       get hasConflicts() { return [...conflicts].some(id => !saved.get(id)?.previewHidden) },
       get lastSavedId() {
-        return Array.from(saved.values()).findLast(edit => edit.route === savedRoute || (edit.prepared && ui.preparedPreview.locate(edit)) ||
+        return Array.from(saved.values()).findLast(edit => edit.route === savedRoute ||
+          (edit.executor === 'authored-source' && ui.authoredUsePreview.members(edit.authoredBinding).length > 0) ||
+          (edit.prepared && ui.preparedPreview.locate(edit)) ||
           (edit.template && templateNodes(edit).some(node => sameTemplateSource(edit, node) !== false)))?.id
       },
       get needsRestore() {
         if (hasStyleConflict()) return true
         const state = currentState()
         return Array.from(operations().values()).some(edits => {
-          if (edits[0].prepared || edits[0].previewHidden) return false
+          if (edits[0].prepared || edits[0].executor === 'authored-source' || edits[0].previewHidden) return false
           if (!sharedGroupValid(edits)) return edits.some(edit => attached.has(edit.id))
           if (edits[0].template) {
             return edits.some(edit => templateLayers(edit.id).some(([, entry]) =>

@@ -86,7 +86,7 @@ function findPotentialOverlaps(operations) {
 export function buildSourceHandoff(binding, journal) {
   const byOperation = new Map()
   for (const edit of journal.edits) {
-    if (edit.undone) continue
+    if (edit.undone || edit.executor === 'authored-source') continue
     const id = edit.group ?? edit.id
     if (!byOperation.has(id)) byOperation.set(id, [])
     byOperation.get(id).push(edit)

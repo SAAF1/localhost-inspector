@@ -31,6 +31,10 @@ const dock = document.querySelector('#localhost-inspector-dock')
 connectCanvasBackground(dock, viewport)
 const data = await fetch('./map.json').then(response => response.json())
 if (data.origin !== location.origin) throw Error('This flow map belongs to a different app origin')
+if (data.authoredBaseline) {
+  const { mountSourceCompare } = await import('./authored-compare.mjs')
+  mountSourceCompare(data.authoredBaseline, () => preview)
+}
 const presets = framePresets(data.viewport)
 let device = 'desktop'
 const heights = new Map()

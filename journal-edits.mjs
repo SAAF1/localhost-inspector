@@ -13,8 +13,11 @@ export function pendingEdits(edits) {
     const { route, target, property, before, requested, pendingTextStyle, textStyleToken, spacingToken, colorToken, frameState, template } = group[0]
     const pair = properties => properties.every(name => group.some(edit => edit.property === name))
     const label = pendingTextStyle?.name ?? textStyleToken?.name ?? spacingToken?.name ?? colorToken?.name
+    const { executor, authoredValues, authoredBefore, authoredBinding, authoredEvidence, sourceState, sourceReceipt } = group[0]
+    const authored = executor === 'authored-source' && { executor, authoredValues, authoredBefore, authoredBinding, authoredEvidence, sourceState,
+      sourceReceipt: { id: sourceReceipt.id, beforeRevision: sourceReceipt.beforeRevision, afterRevision: sourceReceipt.afterRevision } }
     return {
-      id, route, frameState, ...(template ? { template } : {}), ...(group[0].previewHidden ? { previewHidden: true } : {}),
+      ...authored, id, route, frameState, ...(template ? { template } : {}), ...(group[0].previewHidden ? { previewHidden: true } : {}),
       sessionOnly: group.some(edit => edit.restore !== 'unique'), target: { id: target.id, tag: target.tag, slot: target.slot },
       property: pendingTextStyle || textStyleToken ? 'text-style' :
         pair(['padding-top', 'padding-bottom']) ? 'vertical-padding' :

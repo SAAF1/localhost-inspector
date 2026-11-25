@@ -7,6 +7,7 @@ import { join, relative, resolve } from 'node:path'
 import { parse } from '@babel/parser'
 import { cssInput, cssReady, paddingParts, sides } from './prepared-css.mjs'
 import MagicString from 'magic-string'
+import { addAuthoredUseMarkers } from './authored-use.mjs'
 
 const styleProperties = new Set([
   'gap',
@@ -74,7 +75,7 @@ function styleTargets(site, node, code) {
   return targets
 }
 
-export function preparedSites(root, manifest) {
+export function preparedSites(root, manifest, { authoredUse = false } = {}) {
   if (!manifest) return
   root = realpathSync(root)
   const read = () => JSON.parse(readFileSync(manifest, 'utf8'))
@@ -217,20 +218,27 @@ export function preparedSites(root, manifest) {
     },
     transform: {
       order: 'pre',
-      handler(code, id) {
+      async handler(code, id) {
         const file = relative(root, id)
-        if (!/\.[jt]sx$/.test(file) || file.includes('node_modules')) return
+        if (!/\.[jt]sx$/.test(file) || file.startsWith('../') || file.includes('node_modules')) return
         this.addWatchFile(manifest)
         const { namespace, sites } = manifestData
         const recipes = sites.filter((site) => site.file === file)
-        if (!recipes.length) return
-        const tree = parse(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
+        if (!recipes.length && !authoredUse) return
+        let tree
+        try {
+          tree = parse(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
+        } catch (error) {
+          if (recipes.length) throw error
+          return
+        }
         const openings = preparedOpenings(tree)
         const out = new MagicString(code)
         const revisions = {}
         const registrationsForModule = new Set()
         const dependencies = new Map()
         let usesInput = false
+        const reserved = new Set()
         for (const [index, site] of recipes.entries()) {
           if (typeof site.id !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(site.id)) continue
           revisions[site.id] = null
@@ -308,6 +316,7 @@ export function preparedSites(root, manifest) {
           if (missingDependency) continue
           const revision = hash.digest('hex')
           revisions[site.id] = revision
+          reserved.add(node.start)
           const prefix = '--li-' + revision.slice(0, 20)
           const fields = {}
           let markers = ''
@@ -397,6 +406,13 @@ export function preparedSites(root, manifest) {
               JSON.stringify(JSON.stringify(contract)) +
               '}',
           )
+        }
+        if (authoredUse) {
+          const marked = await addAuthoredUseMarkers({
+            root, file, code, tree, out, reserved,
+            resolveImport: async (specifier) => (await this.resolve(specifier, id))?.id,
+          })
+          if (!recipes.length) return marked ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
         }
         // Report known-but-stale sites separately from an absent scene. The registry
         // contains only mappings for modules loaded in this page.

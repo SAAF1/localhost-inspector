@@ -1,7 +1,9 @@
+import { authoredUseSites } from './authored-use.mjs'
 import { preparedStyles } from './prepared-css.mjs'
 import { preparedSites } from './prepared-sites.mjs'
 import { createHash, randomUUID } from 'node:crypto'
 import { watch } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
@@ -94,6 +96,16 @@ async function serve(request, response) {
     return
   }
   const path = decodeURIComponent(new URL(request.url, origin).pathname)
+  if (path === flowPath + 'authored-original-basis' && request.method === 'GET') {
+    const basis = process.env.INSPECTOR_ORIGINAL_BASIS
+    const git = args => execFileSync('git', args, {cwd:appRoot, encoding:'utf8'}).trim()
+    if (!basis || git(['rev-parse','HEAD']) !== basis || git(['status','--porcelain','--untracked-files=normal'])) {
+      response.writeHead(409).end()
+      return
+    }
+    response.writeHead(200, {'content-type':'application/json','cache-control':'no-store'}).end(JSON.stringify({basis}))
+    return
+  }
   if (path === flowPath+'duplicate-design' && process.send && process.env.INSPECTOR_PREPARED_SITES) {
     if(request.method!=='POST' || request.headers.origin!==origin || request.headers['content-type']!=='application/json'){
       response.writeHead(403).end()
@@ -181,11 +193,13 @@ if (sourceMode) {
       })
     },
   }
+  const manifest = process.env.INSPECTOR_PREPARED_SITES
+  const authoredUse = process.env.INSPECTOR_AUTHORED_USE === '1'
   const server = await createViteServer({
     root: appRoot,
     ...(comparison?.role === 'proposal' ? { cacheDir: resolve(appRoot, '../vite-cache') } : {}),
     ...(process.env.INSPECTOR_VITE_CACHE ? {cacheDir: resolve(process.env.INSPECTOR_VITE_CACHE)} : {}),
-    plugins: [workspace, preparedStyles(appRoot, process.env.INSPECTOR_PREPARED_SITES), preparedSites(appRoot, process.env.INSPECTOR_PREPARED_SITES), componentPreviewSites(appRoot), tableRenderSites(appRoot)],
+    plugins: [workspace, preparedStyles(appRoot, process.env.INSPECTOR_PREPARED_SITES), preparedSites(appRoot, manifest, { authoredUse }), !manifest && authoredUse && authoredUseSites(appRoot), componentPreviewSites(appRoot), tableRenderSites(appRoot)],
     server: { host: '127.0.0.1', port: Number(port), strictPort: true, open: false },
   })
   await server.listen()
