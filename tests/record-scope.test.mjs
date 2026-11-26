@@ -6,7 +6,7 @@ import test from 'node:test'
 import MagicString from 'magic-string'
 import { parseAuthoredJsx } from '../scripts/flow/authored-forwarding.mjs'
 import { markRecordCallers, markRecordHost, verifyRecordSource } from '../scripts/flow/record-scope.mjs'
-import { planRecordRadius } from '../scripts/flow/record-radius.mjs'
+import { planRecordRadius, planRecordRadii } from '../scripts/flow/record-radius.mjs'
 import { buildSourceHandoff } from '../source-handoff.mjs'
 
 const caller =
@@ -54,6 +54,12 @@ test('selected record retains its render site, record expression and ordinary so
   assert.equal(operation.changes[0].recordScope.field, 'slug')
   // Re-onboard the ordinary accepted files. The renderer prop can have an
   // application-chosen name; the input is identified from the root declaration.
+  const sibling = { ...proof, value: 'other', key: 'record:' + proof.id + ':other' }
+  const sharedHost = planRecordRadii(root, [change, { ...change, recordScope: sibling, requested: '31px' }])
+  assert.equal(sharedHost.get('Tile.jsx').updated, retained.get('Tile.jsx').updated)
+  assert.match(sharedHost.get('Shelf.jsx').updated, /17px.*other.*31px/)
+  assert.throws(() => planRecordRadii(root, [change, change]), /distinct values/)
+  assert.throws(() => planRecordRadii(root, [change, { ...change, recordScope: { ...sibling, field: 'wrong' } }]))
   const acceptedOwner = retained.get('Tile.jsx').updated.replaceAll('recordCornerRadius', 'tileRadius')
   const acceptedCaller = retained.get('Shelf.jsx').updated.replaceAll('recordCornerRadius', 'tileRadius')
   writeFileSync(join(root, 'Tile.jsx'), acceptedOwner)
@@ -67,6 +73,12 @@ test('selected record retains its render site, record expression and ordinary so
   const other = { ...current, value: 'different', key: 'record:' + next.id + ':different' }
   const third = planRecordRadius(root, { ...change, recordScope: other, requested: '9px' })
   assert.match(third.get('Shelf.jsx').updated, /17px.*different.*9px/)
+  const combined = planRecordRadii(root, [
+    { ...change, recordScope: current, requested: '23px' },
+    { ...change, recordScope: other, requested: '9px' },
+  ])
+  assert.deepEqual([...combined.keys()], ['Shelf.jsx'])
+  assert.match(combined.get('Shelf.jsx').updated, /23px.*different.*9px/)
   assert.equal(await instrument(acceptedCaller.replace('=== 1', '>= 1')), false)
   writeFileSync(join(root, 'Tile.jsx'), owner)
   assert.equal(await instrument(caller.replace('favorites.includes(row.slug)', 'false')), false)
