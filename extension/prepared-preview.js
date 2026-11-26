@@ -133,6 +133,24 @@
     return Array.from(root).filter(key => key.startsWith(prefix))
       .map(key => key.slice(prefix.length) + ':' + root.getPropertyValue(key).trim()).sort().join(',')
   }
+  // Re-attest only the same mounted authored use, with its original measured
+  // effect and protected neighboring surfaces at the recorded viewport.
+  async function cohortReceipt(edit) {
+    const members = [...membersOf(edit.prepared.revision)]
+    if (!members.length || edit.viewport?.width !== innerWidth || edit.viewport.height !== innerHeight) return
+    const rows = []
+    for (const member of members) {
+      const active = contract(member)
+      if (active?.site !== edit.prepared.site || !showsEffect(member,edit,active)) return
+      const part = partNode(member,edit.prepared.part)
+      const peers = new Set([member.parentElement,member,...member.children,...part.children])
+      peers.delete(part)
+      rows.push([part.tagName,...[...peers].filter(Boolean).map(n =>
+        [n.tagName,revisionOf(n),getComputedStyle(n).getPropertyValue(edit.property)])])
+    }
+    const bytes = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(rows)))
+    return [...new Uint8Array(bytes)].map(b=>b.toString(16).padStart(2,'0')).join('')
+  }
   function samePart(a,b) {
     return a?.id === b?.id && a?.revision === b?.revision && a?.depth === b?.depth
   }
@@ -387,5 +405,5 @@
     const edit = revision && declarations.get(revision + ':' + property)
     return edit?.property === property ? edit.requested : undefined
   }
-  ui.preparedPreview = { cascadeReceipt, choiceBackgroundToken, withdrawnBackground, receivesChoice, choiceFields, choiceValues, membersOf, samePart, contract, project, locate, waitForMember, authored, shows, read, showsEffect, observe }
+  ui.preparedPreview = { cascadeReceipt, cohortReceipt, choiceBackgroundToken, withdrawnBackground, receivesChoice, choiceFields, choiceValues, membersOf, samePart, contract, project, locate, waitForMember, authored, shows, read, showsEffect, observe }
 })()

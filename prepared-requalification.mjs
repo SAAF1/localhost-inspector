@@ -61,11 +61,11 @@ export async function recheckRenderedPartOwners(binding, operations, read) {
         const url = new URL('/' + file.split('/').map(encodeURIComponent).join('/') + '?direct',binding.origin)
         try {
           const response = await fetch(url,{redirect:'error',signal:AbortSignal.timeout(3000)})
-          emitted.set(file,response.ok ? await response.text() : '')
+          emitted.set(file,response.ok && /^text\/css\b/i.test(response.headers.get('content-type') ?? '') ? await response.text() : '')
         } catch { emitted.set(file,'') }
       }
       const key = cascadeSheet(file)
-      const pattern = new RegExp('--li-cascade-' + property + '-' + key + ':\\s*([a-f0-9]{64})(?=[;}]|\\s)')
+      const pattern = new RegExp('--li-cascade-' + property + '-' + key + ':\\s*([a-f0-9]{64}\\.[a-f0-9]{64})(?=[;}]|\\s)')
       const stamp = emitted.get(file).match(pattern)?.[1]
       if (!stamp) return false
       expected.push(key + ':' + stamp)

@@ -323,7 +323,23 @@
     const path = currentRoute
     const version = activeRouteVersion
     const isCurrent = () => navigation === editNavigation && isCurrentRoute(path, version)
-    const observation = await recovery.locateSavedEdit(id, isCurrent, comparing)
+    let observation = await recovery.locateSavedEdit(id, isCurrent, comparing)
+    if (isCurrent() && !comparing && observation.state === 'stale') {
+      const edit = recovery.renderedPartEdit(id)
+      const part = edit?.prepared.part
+      if (part?.cohort && edit.route === savedRoute && !edit.previewHidden) {
+        const cascade = ui.preparedPreview.cascadeReceipt(edit.property)
+        if (cascade !== part.cascade && await ui.preparedPreview.cohortReceipt(edit) === part.cohort && isCurrent()) {
+          const result = await write({type:'requalifyRenderedPart',id,route:path,previous:part.cascade,cascade,
+            cohort:part.cohort},path,version)
+          if (result.requalified && isCurrent()) {
+            part.cascade = cascade
+            observation = await recovery.locateSavedEdit(id,isCurrent,comparing)
+            if (observation.state === 'applied') status('')
+          }
+        }
+      }
+    }
     if (!isCurrent()) return false
     const { node, state } = observation
     if (state === 'stale') {
@@ -949,6 +965,7 @@
         records.every(verified) && untouchedPadding.every(([key,before])=>read(key)===before)
       if (!(await ui.waitForPreview(current, matches, previousChoice ? 2 : 0)))
         throw Error('The prepared edit did not reach the selected part in its current state.')
+      for (const edit of boundParts) edit.prepared.part.cohort = await ui.preparedPreview.cohortReceipt(edit)
       const pair = records.length === 2
       await write(
         pair ? { type: 'savePairedPadding', records } : { type: 'save', record: records[0] },

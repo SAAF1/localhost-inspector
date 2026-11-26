@@ -436,6 +436,24 @@ async function handle(message) {
     return authoredResult(journal)
   }
   requireRevision(message, journal)
+  if (message.type === 'requalifyRenderedPart') {
+    const edit = journal.edits.find(row=>row.id === message.id)
+    const part = edit?.prepared?.part
+    const unchangedGuards = value => value.split(',').map(sheet=>[sheet.split(':')[0],sheet.split('.')[1]])
+    const current = buildSourceHandoff(binding,journal).operations.find(op=>op.id === edit?.id)
+    if (!binding.authoredUse || !part?.cohort || part.cohort !== message.cohort || edit.previewHidden ||
+        edit.route !== journalRoute(message.route) || part.cascade !== message.previous ||
+        typeof message.cascade !== 'string' || message.cascade.length > 12000 ||
+        JSON.stringify(unchangedGuards(part.cascade)) !== JSON.stringify(unchangedGuards(message.cascade)) ||
+        current?.status !== 'pending' || current.changes.length !== 1) return {revision:journal.revision}
+    current.changes[0].prepared = {...current.changes[0].prepared,part:{...part,cascade:message.cascade}}
+    await recheckRenderedPartOwners(binding,[current],read)
+    if (current.status !== 'pending') return {revision:journal.revision}
+    part.cascade = message.cascade
+    journal.revision++
+    await atomic(file,journal)
+    return {revision:journal.revision,requalified:true}
+  }
   const nativeResult = await authored.handle(message, journal)
   if (nativeResult) return nativeResult
   guardAuthoredJournalOperation(message, journal)

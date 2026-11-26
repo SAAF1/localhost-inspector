@@ -996,6 +996,7 @@
         }
         if (rebased.length) await restore(isCurrent)
       },
+      renderedPartEdit(id) { const edit = saved.get(id); return edit?.prepared?.part ? edit : undefined },
       hasPreparedOperation(id) { return Boolean(saved.get(id)?.prepared) },
       waitForPreparedMember(id, current) {
         const edit = saved.get(id)

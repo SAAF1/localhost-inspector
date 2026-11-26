@@ -28,17 +28,19 @@ function unconditional(rule) {
 // have no bearing on which declaration wins.
 export const cascadeSheet = file => createHash('sha256').update(file).digest('hex').slice(0,24)
 function cascadeStamp(sheet, file, property, originalValues) {
-  const rows = []
+  const rows = [], conditional = []
   sheet.walk(node => {
-    if (node.type === 'atrule' && ['layer','scope','import'].includes(node.name)) rows.push([node.name,node.params])
+    if (node.type === 'atrule' && ['layer','scope','import'].includes(node.name)) { rows.push([node.name,node.params]); conditional.push([node.name,node.params]) }
     if (node.type !== 'decl' || !affects(node.prop,property)) return
     const ancestry = []
     for (let p = node.parent; p && p.type !== 'root'; p = p.parent)
       ancestry.push(p.type === 'rule' ? p.selector : [p.name,p.params])
-    rows.push([ancestry,node.prop,originalValues?.get(node) ?? node.value,!!node.important])
+    const row = [ancestry,node.prop,originalValues?.get(node) ?? node.value,!!node.important]
+    rows.push(row)
+    if (node.parent.type !== 'rule' || !unconditional(node.parent) || node.important) conditional.push(row)
   })
-  const digest = createHash('sha256').update(JSON.stringify(rows)).digest('hex')
-  return '--li-cascade-' + property + '-' + cascadeSheet(file) + ':' + digest
+  const digest = entries => createHash('sha256').update(JSON.stringify(entries)).digest('hex')
+  return '--li-cascade-' + property + '-' + cascadeSheet(file) + ':' + digest(rows) + '.' + digest(conditional)
 }
 
 export function bindRenderedDeclarations(sheet, file, originalValues, finiteChoices = false) {
