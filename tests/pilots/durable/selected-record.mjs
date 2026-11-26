@@ -34,8 +34,19 @@ try {
     values.length === 6 &&
     values.filter((v) => v.title === original).length === 1 &&
     values.every((v) => v.radius === (v.title === original ? radius : '0px'))
+  const readPanel = () => worker.evaluate(async origin => {
+    const [tab]=await chrome.tabs.query({url:origin+'/__inspector-flow/*'})
+    const [{result}]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>{
+      const root=chrome.dom.openOrClosedShadowRoot(document.querySelector('#localhost-inspector'))
+      return {busy: root.querySelector('[aria-busy]')?.getAttribute('aria-busy'),
+        status: root.querySelector('.li-status')?.textContent, scope:root.querySelector('#authored-edit-scope')?.value,
+        input: root.querySelector('#control-border-radius')?.value, focused:root.activeElement?.id}
+    }})
+    return result
+  },version.origin)
   const verify = async (step, radius) => {
-    await until(async () => matches(await rows(), radius), step)
+    try { await until(async () => matches(await rows(), radius), step) }
+    catch (error) { trace.push({step,rows:await rows(),panel:await readPanel(),handoff:candidateHandoff(version.directory).operations});throw error }
     trace.push({ step, rows: await rows() })
   }
   async function choose() {
@@ -55,6 +66,12 @@ try {
     await page.keyboard.press('Control+a')
     await page.keyboard.type(String(px))
     await page.keyboard.press('Enter')
+    await until(async () => (await readPanel()).busy !== 'true' &&
+      candidateHandoff(version.directory).operations.some(op => op.changes.some(c=>c.requested === px+'px')),
+      'Save receipt '+px+'px').catch(async error=> {
+        trace.push({step:'save receipt',requested:px,rows:await rows(),panel:await readPanel(),handoff:candidateHandoff(version.directory).operations})
+        throw error
+      })
   }
   await verify('original', before)
   await choose()
