@@ -198,6 +198,9 @@
         revisionOf(node) === c.revision
       ) {
         if (c.surface) c.styles = c.styles.filter(property => surfacePart(node,c,property))
+        if (node.matches('[data-li-local-ordinary~="align-items"]') &&
+            !['flex', 'inline-flex'].includes(getComputedStyle(node).display))
+          c.styles = c.styles.filter(property => property !== 'align-items')
         if (c.styleInputs) c.styles = c.styles.filter(property => {
           const input = c.styleInputs[property]
           return !input || (node.localName === input.tag && node.style.getPropertyValue(property) === input.expression)
@@ -262,7 +265,8 @@
           }
           continue
         }
-        if (['height', 'border-radius', 'background-color', 'font-size'].includes(edit.property)) {
+        if (['height', 'border-radius', 'background-color', 'font-size', 'align-items'].includes(edit.property) ||
+            /^padding-(top|right|bottom|left)$/.test(edit.property)) {
           // Add a source-local default only while a value exists. A more specific
           // app rule in the same layer keeps its conditional ownership.
           for (const layer of ['ordinary', 'utilities']) {

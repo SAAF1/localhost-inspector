@@ -195,7 +195,14 @@ function analyze(code, file, config) {
         const styles = eligible.filter((s) => eligible.filter((x) => s.property === x.property).length === 1)
         if (config.panelBindings && !(moduleUse && attr('className')?.expression?.type === 'CallExpression') && (!attr('style') || (/^[a-z]/.test(name) && literalColorAttribute(opening))) && !config.css.indexError &&
             !opening.attributes.some(a => a.name?.name?.startsWith('data-li-'))) {
-          for (const property of (moduleUse ? ['background-color', 'border-radius', 'font-size'] : ['background-color', 'border-radius', 'font-size', 'height'])) {
+          const defaults = ['background-color', 'border-radius', 'font-size']
+          if (!moduleUse) defaults.push('height')
+          if (moduleUse && !config.tailwind && !attr('style') && /^[a-z][a-z0-9-]*$/.test(name)) {
+            // A direct native CSS Module use can get a weak physical inset or
+            // cross-axis default while existing selectors retain control.
+            defaults.push('padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'align-items')
+          }
+          for (const property of defaults) {
             if (!eligible.some(style => style.property === property))
               styles.push({ property, local: config.tailwind ? 'utilities' : 'ordinary' })
           }
