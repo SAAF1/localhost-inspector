@@ -270,9 +270,13 @@ if (mode === 'handoff' || mode === 'proposal-readiness') {
     try { verifySelectedUse(binding.source, op.changes[0].selectedUse) }
     catch { op.status='blocked'; op.reason='selected-source-changed' }
   }
-  for (const op of handoff.operations.filter(op => op.scope === 'selected-record' && op.changes[0].recordScope.resource)) {
+  for (const op of handoff.operations.filter(op => op.scope === 'selected-record' && (op.changes[0].recordScope.resource || op.changes[0].recordScope.catalog))) {
     const { verifyRecordSource } = await import('./scripts/flow/record-scope.mjs')
-    try { verifyRecordSource(binding.source, op.changes[0].recordScope) }
+    try {
+      const proof = op.changes[0].recordScope
+      const catalog = proof.catalog && (await read(join(binding.authoredUse.directory,'prepared.json'),null))?.recordCatalog
+      verifyRecordSource(binding.source, proof, catalog)
+    }
     catch { op.status = 'blocked'; op.reason = 'record-source-changed' }
   }
   if (journal.textStyleDefinitions?.length) {
@@ -451,7 +455,9 @@ async function handle(message) {
   if (message.type === 'save' && message.record?.recordScope !== undefined) {
     if (!binding.authoredUse) throw Error('Selected-record source preview requires opt-in.')
     const { verifyRecordSource } = await import('./scripts/flow/record-scope.mjs')
-    verifyRecordSource(binding.source, message.record.recordScope)
+    const proof = message.record.recordScope
+    const catalog = proof.catalog && (await read(join(binding.authoredUse.directory,'prepared.json'),null))?.recordCatalog
+    verifyRecordSource(binding.source, proof, catalog)
   }
   const { changed, removed, value } = await applyJournalOperation(message, journal, { validators, journalRoute,
     readCatalog: kind => readCatalog(binding, kind), readButtonSize: () => readButtonSize(binding) })

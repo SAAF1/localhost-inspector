@@ -46,9 +46,48 @@ function publicRecordKeys(proof, records, field, backing, entries) {
   return keys
 }
 
+const activeCatalogs = new Map()
+export function registerRecordCatalog(catalog, rows, hot) {
+  const key = JSON.stringify(catalog)
+  activeCatalogs.set(key,rows)
+  hot?.dispose(() => {
+    if (activeCatalogs.get(key) === rows) activeCatalogs.delete(key)
+  })
+}
+
+function catalogRecordKeys(proof,records,field,backing,entries) {
+  const keys = new Map()
+  const domain = activeCatalogs.get(JSON.stringify(proof.catalog))
+  if (!Array.isArray(domain) || domain.length !== entries.length || !Array.isArray(records) ||
+      !Array.isArray(backing) || records.length > backing.length || backing.length > domain.length) return keys
+  try {
+    const table = new Map(entries.map(entry => [entry.value,entry]))
+    const owner = new Map()
+    for (const row of domain) {
+      const value = row[field]
+      if (owner.has(value) || table.get(value)?.json !== JSON.stringify(row)) return keys
+      owner.set(value,row)
+    }
+    const members = new Map()
+    for (const item of backing) {
+      const value = item[field], row = owner.get(value)
+      if (!row || members.has(value) || !Object.keys(row).every(key => Object.hasOwn(item,key) &&
+          JSON.stringify(item[key]) === JSON.stringify(row[key]))) return keys
+      members.set(value,item)
+    }
+    if (new Set(records).size !== records.length || !records.every(item => members.get(item[field]) === item)) return keys
+    for (const item of records) {
+      const entry = table.get(item[field])
+      keys.set(item,{...proof,value:entry.value,rowRevision:entry.revision,key:'record:'+proof.id+':'+entry.revision})
+    }
+  } catch { keys.clear() }
+  return keys
+}
+
 export function recordIdentity(proof, records, field, render, backing = records, entries) {
-  if (proof.resource) {
-    const keys = publicRecordKeys(proof, records, field, backing, entries)
+  if (proof.resource || proof.catalog) {
+    const keys = proof.catalog ? catalogRecordKeys(proof,records,field,backing,entries) :
+      publicRecordKeys(proof, records, field, backing, entries)
     return render(record => JSON.stringify(keys.get(record) ?? proof))
   }
   const counts = recordCounts(records, field)

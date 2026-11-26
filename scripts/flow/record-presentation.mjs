@@ -10,7 +10,11 @@ export function presentationInput(root, params) {
   const styles = root.attributes.filter((a) => a.name?.name === 'style')
   if (!styles.length) return { prop: null }
   const object = styles[0].value?.expression
-  if (styles.length !== 1 || object?.type !== 'ObjectExpression' || object.properties.length !== 1) return
+  if (styles.length !== 1 || object?.type !== 'ObjectExpression') return
+  const disjoint = object.properties.every(p=>p.type === 'ObjectProperty' && !p.computed &&
+    p.key.type === 'Identifier' && !/^(?:all|cssText)$|radius/i.test(p.key.name))
+  if (disjoint) return {prop:null, assisted:true}
+  if (object.properties.length !== 1) return
   const [declaration] = object.properties
   if (
     declaration.type !== 'ObjectProperty' ||

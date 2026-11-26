@@ -57,7 +57,10 @@ export function publicRecordCollection(tree, scope, collection, locals) {
 export function publicRows(root, url, field, watchFile) {
   const pathname = new URL(url, 'http://localhost/').pathname
   if (!/^\/(?:[\w-]+\/)*[\w.-]+\.json$/.test(pathname)) return
-  const file = join(root, 'public', pathname)
+  return recordRows(join(root, 'public', pathname),field,watchFile)
+}
+
+export function recordRows(file,field,watchFile) {
   try {
     if (realpathSync(dirname(file)) !== dirname(file)) return
     const stat = statSync(file,{throwIfNoEntry:false})
@@ -79,6 +82,6 @@ export function publicRows(root, url, field, watchFile) {
       const revision = createHash('sha256').update(json).digest('hex').slice(0, 24)
       entries.push({value,json,revision})
     }
-    return { file, pathname, entries }
+    return { file, entries }
   } catch { return }
 }

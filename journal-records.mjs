@@ -115,7 +115,7 @@ export function journalValidators(journalRoute) {
         ...Object.fromEntries(['id','file','owner','callerDigest','component','componentDigest','field'].map(k=>[k,selectedUse[k]])),
         dependencies:selectedUse.dependencies.map(({file,revision})=>({file,revision})),
       }} : {}),
-      ...(recordScope ? {recordScope: Object.fromEntries(['id','value','key','caller','file','owner','prop','field','collection','backing','resource','rowRevision'].map(k => [k,recordScope[k]]))} : {}),
+      ...(recordScope ? {recordScope: Object.fromEntries(['id','value','key','caller','file','owner','prop','field','collection','backing','resource','rowRevision','catalog'].map(k => [k,recordScope[k]]))} : {}),
       target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,
       templateSourceFingerprint: record.templateSourceFingerprint,
       colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,

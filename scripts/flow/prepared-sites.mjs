@@ -1,3 +1,4 @@
+import { registerCatalogImport } from './record-catalog.mjs'
 import { renderOwnerFunction } from './record-render-path.mjs'
 import { markRecordCallers, markRecordHost } from './record-scope.mjs'
 import { componentFingerprint } from './component-proof.mjs'
@@ -24,8 +25,8 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
   if (!manifest) return
   root = realpathSync(root)
   const read = () => JSON.parse(readFileSync(manifest, 'utf8'))
-  const runtimeKey = ({ sites, retiredSites, utilityEntry, buttonAdapter, preparation }) =>
-    JSON.stringify([sites, retiredSites, utilityEntry, buttonAdapter, preparation?.preparedStyles])
+  const runtimeKey = ({ sites, retiredSites, utilityEntry, buttonAdapter, preparation, recordCatalog }) =>
+    JSON.stringify([sites, retiredSites, utilityEntry, buttonAdapter, preparation?.preparedStyles, recordCatalog])
   let publicRecordData = false
   let manifestData = read()
   // Watch the inputs directly. Making generated CSS an import of every
@@ -217,6 +218,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
         }
         const openings = preparedOpenings(tree)
         const out = new MagicString(code)
+        const registeredCatalog = manifestData.panelBindings && !code.includes('__liRegisterCatalog') && registerCatalogImport(out,file,manifestData.recordCatalog)
         const revisions = {}
         const registrationsForModule = new Set()
         const dependencies = new Map()
@@ -411,7 +413,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             }
           }
           if (recordRoots.size) out.prepend('import { recordAttributes as __liRecordAttrs } from "virtual:inspector-prepared-registry";\n')
-          const records = manifestData.panelBindings && await markRecordCallers({ root, file, code, tree, out, allowPublic:publicRecordData, watchFile:path => this.addWatchFile(path),
+          const records = manifestData.panelBindings && await markRecordCallers({ root, file, code, tree, out, allowPublic:publicRecordData, catalog:manifestData.recordCatalog, watchFile:path => this.addWatchFile(path),
             resolveImport: async specifier => (await this.resolve(specifier, id))?.id })
           const calls = manifestData.panelBindings && await markSelectedCalls(root,file,code,tree,out,
             async spec => (await this.resolve(spec,id))?.id)
@@ -420,7 +422,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             root, file, code, tree, out, reserved, preparedAtOpening, schema: authoredUseSchema,
             resolveImport: async (specifier) => (await this.resolve(specifier, id))?.id,
           })
-          if (!recipes.length) return (recordRoots.size || records || selected || marked || calls) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
+          if (!recipes.length) return (registeredCatalog || recordRoots.size || records || selected || marked || calls) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
         }
         // Report known-but-stale sites separately from an absent scene. The registry
         // contains only mappings for modules loaded in this page.

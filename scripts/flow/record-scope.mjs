@@ -8,6 +8,7 @@ import {
   lookupCorroboration,
   backingCollection,
 } from './record-render-path.mjs'
+import { recordCatalog, recordCatalogRows } from './record-catalog.mjs'
 import { onlyElement } from './component-surface.mjs'
 import { publicRecordCollection, publicRows } from './public-records.mjs'
 import { createHash } from 'node:crypto'
@@ -21,7 +22,7 @@ const digest = (value) => createHash('sha256').update(value).digest('hex').slice
 const markerProp = '__inspectorRecordScope'
 const scalar = /^[^\x00-\x1F\x7F]{1,70}$/u
 const names = /^[A-Za-z_$][\w$]*$/
-function mappedUses(tree, allowPublic) {
+function mappedUses(tree, allowPublic, catalog) {
   const imports = authoredImports(tree)
   const locals = localBindingNames(tree)
   const uses = []
@@ -38,7 +39,7 @@ function mappedUses(tree, allowPublic) {
       return
     const opening = returnedValue(fn).openingElement
     const name = opening.name.name
-    const local = allowPublic && scope && name && componentFunction(tree, name, true) &&
+    const local = (allowPublic || catalog) && scope && name && componentFunction(tree, name, true) &&
       !localBindingNames({ program: scope }).has(name) && { local: true, exported: name }
     const imported = local || imports.get(name)
     if (
@@ -70,10 +71,12 @@ function mappedUses(tree, allowPublic) {
     const proof = !corroborated && lookupCorroboration(tree, scope, fn, opening, item, field, locals)
     const backing = backingCollection(scope, node.callee.object.name)
     const authority = allowPublic && (!backing || !(corroborated || proof)) && publicRecordCollection(tree, scope, node.callee.object.name, locals)
-    if ((backing && (corroborated || proof)) || authority)
+    const structural = catalog && backing && !authority && !(corroborated || proof)
+    if ((backing && (corroborated || proof)) || authority || structural)
       uses.push({
         proof: authority ? authority.spans : [...(proof || []), ...(backing.source ? [backing.source] : [])],
         resource: authority?.url,
+        catalog: structural ? catalog : undefined,
         backing: authority?.name ?? backing.name,
         fn,
         opening,
@@ -137,16 +140,17 @@ function useIdentity(caller, file, code, use, ownerSource, root) {
       use.prop,
       code.slice(use.opening.start, use.opening.end),
       ownerSource.slice(root.start, root.end),
+      ...(use.catalog ? [use.catalog] : []),
       ...(use.proof ? use.proof.map((span) => code.slice(span.start, span.end)) : []),
     ]),
   )
 }
 
 // Source-derived identity is a hint for selection; source handoff rechecks it independently.
-export async function markRecordCallers({ root, file, code, tree, out, resolveImport, allowPublic = false, watchFile }) {
+export async function markRecordCallers({ root, file, code, tree, out, resolveImport, allowPublic = false, catalog, watchFile }) {
   if (code.includes('__liRecordIdentity') || code.includes('__liScope') || code.includes('__liRecordRows')) return false
   const candidates = []
-  for (const use of mappedUses(tree, allowPublic)) {
+  for (const use of mappedUses(tree, allowPublic, catalog)) {
     const resolved = use.imported.local ? resolve(root,file) : await resolveImport(use.imported.specifier)
     if (!resolved) continue
     const ownerFile = relative(root, resolved)
@@ -157,10 +161,11 @@ export async function markRecordCallers({ root, file, code, tree, out, resolveIm
     } catch {
       continue
     }
-    if (!host || !recordBranches(use, host.presentation.prop)) continue
+    if (!host || (host.presentation.assisted && !use.catalog) || !recordBranches(use, host.presentation.prop)) continue
     const id = useIdentity(file, ownerFile, code, use, ownerCode, host.root)
-    const dataset = use.resource && publicRows(root,use.resource,use.field,watchFile)
-    if (use.resource && !dataset) continue
+    const dataset = use.catalog ? recordCatalogRows(root,use.catalog,use.field,watchFile) :
+      use.resource && publicRows(root,use.resource,use.field,watchFile)
+    if ((use.resource || use.catalog) && !dataset) continue
     candidates.push({ use, ownerFile, id, dataset })
   }
   let marked = false
@@ -171,7 +176,8 @@ export async function markRecordCallers({ root, file, code, tree, out, resolveIm
     const proof = JSON.stringify({
       id,
       caller: file,
-      ...(dataset ? {resource:use.resource} : {}),
+      ...(use.resource ? {resource:use.resource} : {}),
+      ...(use.catalog ? {catalog:use.catalog} : {}),
       file: ownerFile,
       owner: use.imported.exported,
       prop: use.prop,
@@ -189,7 +195,7 @@ export async function markRecordCallers({ root, file, code, tree, out, resolveIm
         JSON.stringify(use.field) +
         ', __liScope => (',
     )
-    out.appendLeft(use.fn.end, use.backing === use.collection ? '))' : '), ' + use.backing + (dataset ? ', ' + table : '') + ')')
+    out.appendLeft(use.fn.end, use.backing === use.collection && !dataset ? '))' : '), ' + use.backing + (dataset ? ', ' + table : '') + ')')
     out.appendLeft(use.opening.name.end, ' ' + markerProp + '={__liScope(' + use.item + ')}')
     marked = true
   }
@@ -203,7 +209,7 @@ export function markRecordHost(tree, node, owner, file, out, requireInput = fals
   if (props?.type !== 'ObjectPattern') return
   for (const p of props.properties) {
     const host = p.key && componentRoot(tree, owner.id.name, p.key.name, true)
-    if (host?.root !== node || (requireInput && !host.presentation.prop)) continue
+    if (host?.root !== node || (requireInput && !host.presentation.prop && !host.presentation.assisted)) continue
     const proof = '__liRecordProof'
     out.appendLeft(props.start + 1, markerProp + ': ' + proof + ', ')
     out.appendLeft(
@@ -214,24 +220,27 @@ export function markRecordHost(tree, node, owner, file, out, requireInput = fals
   }
 }
 
-export function verifyRecordSource(root, proof) {
+export function verifyRecordSource(root, proof, catalog) {
   if (
     !proof ||
     !scalar.test(proof.value) ||
     !String(proof.value).trim() ||
-    !(typeof proof.value === 'string' || (proof.resource && Number.isSafeInteger(proof.value))) ||
+    !(typeof proof.value === 'string' || ((proof.resource || proof.catalog) && Number.isSafeInteger(proof.value))) ||
     !/^[a-f0-9]{24}$/.test(proof.id) ||
     !names.test(proof.owner) ||
     !names.test(proof.prop) ||
-    proof.key !== 'record:' + proof.id + ':' + (proof.resource ? proof.rowRevision : proof.value)
+    proof.key !== 'record:' + proof.id + ':' + ((proof.resource || proof.catalog) ? proof.rowRevision : proof.value)
   )
     throw Error('Invalid record identity.')
+  if (proof.catalog && (!catalog || JSON.stringify(proof.catalog) !== JSON.stringify(catalog) ||
+      JSON.stringify(recordCatalog(root,[catalog])) !== JSON.stringify(catalog)))
+    throw Error('The application data source no longer resolves uniquely.')
   const code = checkedSource(root, proof.caller),
     ownerCode = checkedSource(root, proof.file)
   const tree = parseAuthoredJsx(ownerCode)
   const host = componentRoot(tree, proof.owner, proof.prop, proof.caller === proof.file)
   if (!host) throw Error('The selected component no longer has a unique native root.')
-  const matches = mappedUses(parseAuthoredJsx(code), Boolean(proof.resource) || proof.caller === proof.file).filter((use) => {
+  const matches = mappedUses(parseAuthoredJsx(code), Boolean(proof.resource) || proof.caller === proof.file, proof.catalog && catalog).filter((use) => {
     const base = use.imported.local ? resolve(root,proof.caller) : resolve(root, proof.caller, '..', use.imported.specifier)
     // Resolve exactly one conventional local JSX module; ambiguous candidates are unsupported.
     const options = [base, base + '.tsx', base + '.jsx', resolve(base, 'index.tsx'), resolve(base, 'index.jsx')]
@@ -244,7 +253,9 @@ export function verifyRecordSource(root, proof) {
       }
     })
     return (
-      use.resource === proof.resource &&
+      use.resource === proof.resource && JSON.stringify(use.catalog) === JSON.stringify(proof.catalog) &&
+      (!host.presentation.assisted || use.catalog) &&
+      (!use.catalog || recordCatalogRows(root,use.catalog,use.field)?.entries.some(entry=>entry.value === proof.value && entry.revision === proof.rowRevision)) &&
       (!use.resource || publicRows(root,use.resource,use.field)?.entries.some(entry => entry.value === proof.value && entry.revision === proof.rowRevision)) &&
       paths.length === 1 &&
       relative(root, paths[0]) === proof.file &&

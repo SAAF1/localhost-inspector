@@ -1,3 +1,4 @@
+import { recordCatalog } from './record-catalog.mjs'
 import { renderOwnerFunction } from './record-render-path.mjs'
 // Prepare literal Tailwind uses and a verified CVA/Lucide button adapter in a
 // declared source boundary. Persist rejected sites next to the manifest.
@@ -380,7 +381,9 @@ export async function prepareProject(project, destination, namespace, boundary =
   const resolved = new Map()
   const classJoins = new Set()
   const libraries = new Set()
+  const dataImports = new Map()
   const graph = await stylesheetGraph(root, server, panelBindings ? (file, spec, path) => {
+    if (path.endsWith('.json')) dataImports.set(JSON.stringify([file,spec,path]),{importer:file,specifier:spec,file:path})
     if (/\.[jt]sx?$|\.module\.css$/.test(path)) resolved.set(JSON.stringify([file, spec]), path)
   } : undefined, panelBindings ? (file, spec) => classJoins.add(JSON.stringify([file, spec])) : undefined,
     panelBindings ? (file,spec) => libraries.add(JSON.stringify([file,spec])) : undefined)
@@ -466,7 +469,7 @@ export async function prepareProject(project, destination, namespace, boundary =
     unresolved,
     sites,
     retiredSites,
-    ...(panelBindings ? { panelBindings: true } : {}),
+    ...(panelBindings ? { panelBindings: true, recordCatalog:recordCatalog(root,[...dataImports.values()]) } : {}),
     spacingSources: css.spacingSources,
     variableSources: css.variableSources,
     ...(css.indexError ? { preparation: { preparedStyles: 'unavailable', diagnostics: [css.indexError] } } : {}),
