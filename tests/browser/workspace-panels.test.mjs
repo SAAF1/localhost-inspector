@@ -127,7 +127,7 @@ test('canvas Command-click reserves tab buttons and links even before Inspector 
 })
 
 test('both panel controls stay reachable after the browser magnifies the canvas', async () => {
-  const h = await createHarness({ canvas: true, dock: true })
+  const h = await createHarness({ canvas: true, dock: true, hasTouch: true })
   try {
     await h.page.locator('#flow-toggle').click()
     await h.page.locator('#inspector-toggle').click()
@@ -139,6 +139,10 @@ test('both panel controls stay reachable after the browser magnifies the canvas'
     await client.send('Input.synthesizePinchGesture', {
       x: width / 2, y: height / 2, scaleFactor: 1.6, gestureSourceType: 'touch',
     })
+    // The synthetic input reply can precede the visual viewport's resize event.
+    await h.page.waitForFunction(() => visualViewport.scale > 1.4 &&
+      Math.abs(parseFloat(document.documentElement.style.getPropertyValue('--chrome-scale')) * visualViewport.scale - 1) < 0.001,
+    null, { timeout: 3000 })
     const withinView = async locator => locator.evaluate(node => {
       const r = node.getBoundingClientRect(), v = visualViewport
       return v.scale > 1.4 && r.left >= v.offsetLeft - 1 && r.right <= v.offsetLeft + v.width + 1 &&
@@ -146,7 +150,9 @@ test('both panel controls stay reachable after the browser magnifies the canvas'
     })
     for (const [index, id] of controls.entries()) {
       const control = h.page.locator('#' + id)
-      assert.ok(await withinView(control), id)
+      assert.ok(await withinView(control), id + ' outside magnified viewport: ' + JSON.stringify(await control.evaluate(node => ({
+        bounds: node.getBoundingClientRect().toJSON(), viewport: [visualViewport.offsetLeft, visualViewport.offsetTop, visualViewport.width, visualViewport.height],
+      }))))
       assert.ok(Math.abs(await physicalWidth(control) - before[index]) < 1, id + ' keeps its screen size')
     }
     await h.page.locator('#inspector-toggle').click()
