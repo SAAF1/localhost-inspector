@@ -76,7 +76,7 @@ export function trackContext(frame, read) {
     const context = read()
     const address = contextAddress(location.origin, context)
     const route = !context.expanded && !context.frame && context.unmapped
-      ? lastAppRoute({inspectorAppRoute: context.route}, location.origin) : null
+      ? lastAppRoute({inspectorAppRoute: win.location.pathname + win.location.search + win.location.hash}, location.origin) : null
     const next = address || (location.hash.startsWith('#context=') ? canvasAddress(location.origin) : location)
     if (next.href !== location.href || (history.state?.inspectorAppRoute ?? null) !== route) {
       const state = { ...history.state }

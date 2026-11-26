@@ -77,6 +77,8 @@ test('linked proposals share one canvas while retaining app content, filters and
   assert.equal(immediateReturn, '/records')
   await page.reload()
   assert.equal(await records.evaluate(node => node.ownerDocument.location.search), '')
+  await records.evaluate(node => node.ownerDocument.defaultView.history.replaceState(null, '', '/unmapped-app/?tab=files'))
+  await page.waitForFunction(() => history.state?.inspectorAppRoute === '/unmapped-app/?tab=files')
   await records.evaluate(node => node.ownerDocument.defaultView.history.replaceState(null, '', '/records?state=open'))
   await frame.getByRole('button', { name: 'Details' }).click()
   await page.waitForURL(url => new URLSearchParams(url.hash.slice(1)).get('frame') === 'details')
