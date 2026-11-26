@@ -1,3 +1,4 @@
+import { preparedStyleProperties, validValue } from '../../journal-values.mjs'
 // Inspect the actual stylesheet Vite delivered after its configured CSS pipeline.
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -33,6 +34,18 @@ export function cssFields(decl) {
   return values.length === 1 && /^(gap|width|height|font-size|border-radius|padding-(?:top|right|bottom|left))$/.test(decl.prop)
     ? [decl.prop]
     : []
+}
+// Opt-in panel preparation can reuse the existing declaration as the input.
+// Shorthands still need their own demonstrated physical mapping.
+export function panelCssFields(decl) {
+  const existing = cssFields(decl)
+  if (existing.length || !preparedStyleProperties.has(decl.prop)) return existing
+  const value = decl.value.trim()
+  const dimension = /^(?:(?:min|max)-(?:width|height)|line-height|letter-spacing|border-width)$/.test(decl.prop)
+  const literal = validValue(decl.prop,value) || (dimension && scalar.test(value)) || /^var\(--[\w-]+\)$/.test(value) ||
+    (decl.prop === 'line-height' && /^(?:normal|\d+(?:\.\d+)?)$/.test(value)) ||
+    (decl.prop === 'letter-spacing' && value === 'normal')
+  return literal ? [decl.prop] : []
 }
 export function baseRule(rule) {
   for (let parent = rule.parent; parent?.type !== 'root'; parent = parent?.parent) {

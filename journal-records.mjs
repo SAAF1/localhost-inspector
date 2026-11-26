@@ -1,7 +1,7 @@
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { featureTemplateScope, sourceContextFrom } from './source-handoff.mjs'
-import { colors, declaresVariable, journalTarget, targetFingerprint, templateFingerprint, textStyleProperties,
+import { preparedStyleProperties, colors, declaresVariable, journalTarget, targetFingerprint, templateFingerprint, textStyleProperties,
   validRoute, validScopedTarget, validTargetKey, validTextStyleValue, validValue, variableName } from './journal-values.mjs'
 
 const buttonSizes = ['default', 'sm', 'lg', 'icon']
@@ -30,7 +30,7 @@ export function journalValidators(journalRoute) {
         typeof prepared.revision === 'string' && /^[a-f0-9]{64}$/.test(prepared.revision) &&
         typeof prepared.file === 'string' && prepared.file.length <= 240 && /\.[jt]sx$/.test(prepared.file) &&
         !prepared.file.startsWith('/') && !prepared.file.split('/').includes('..')
-      const validControl = field === undefined ? ['padding-left','padding-right','padding-top','padding-bottom','gap','width','height','min-width','min-height','max-width','max-height','font-weight','font-size','border-radius','color','background-color'].includes(record.property) :
+      const validControl = field === undefined ? preparedStyleProperties.has(record.property) :
         typeof field === 'string' && /^[a-zA-Z][a-zA-Z0-9-]{0,59}$/.test(field) && record.property === 'component-' + field &&
         typeof record.requested === 'string' && /^[a-zA-Z0-9_-]{1,60}$/.test(record.requested) &&
         record.observed === record.requested && !reference
@@ -93,6 +93,8 @@ export function journalValidators(journalRoute) {
     const first = edits[0]
     if(edits.some(edit=>edit.prepared) && (shared || edits.some(edit=>edit.prepared?.site!==first.prepared?.site || edit.prepared?.revision!==first.prepared?.revision || edit.prepared?.file!==first.prepared?.file)))throw Error('Padding sides must have the same prepared source.')
     const name = records[0].sharedPadding
+    const groupIntent = !shared && !first.prepared && !first.template && first.intent === 'selected occurrence only'
+      ? 'selected occurrence only' : featureTemplateScope
     const horizontal = !shared && first.property === 'padding-left'
     const [firstSide, secondSide] = horizontal ? ['padding-left', 'padding-right'] : ['padding-top', 'padding-bottom']
     const keys = new Set()
@@ -108,7 +110,7 @@ export function journalValidators(journalRoute) {
         bottom.property !== secondSide || JSON.stringify(top.target) !== JSON.stringify(bottom.target) ||
         [top, bottom].some((entry, offset) => entry.template !== first.template || entry.route !== first.route || entry.requested !== first.requested ||
           Boolean(entry.spacingToken) !== Boolean(first.spacingToken) ||
-          (shared && entry.restore !== 'unique') || entry.intent !== featureTemplateScope || records[index + offset].sharedPadding !== name)) {
+          (shared && entry.restore !== 'unique') || entry.intent !== groupIntent || records[index + offset].sharedPadding !== name)) {
         throw Error('Invalid grouped padding operation')
       }
       keys.add(key)

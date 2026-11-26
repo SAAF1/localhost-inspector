@@ -56,7 +56,12 @@
     }
     if (spacingToken) return ui.spacingVariableMatches(node, property, spacingToken.name, observed)
     if (colorToken) return observed === ui.resolveColorVariable(node, colorToken.name)
-    if (['color', 'background-color'].includes(property)) return observed === ui.normalizeSolidColor(requested)
+    if (property === 'font-weight' && ['bold','normal'].includes(requested))
+      return observed === (requested === 'bold' ? '700' : '400')
+    if (['border-color','border-width'].includes(property) &&
+        !['Top','Right','Bottom','Left'].some(side => parseFloat(getComputedStyle(node)['border'+side+'Width']) > 0))
+      return false
+    if (['color', 'background-color','border-color'].includes(property)) return observed === ui.normalizeSolidColor(requested)
     return observed === requested
   }
   let sheet

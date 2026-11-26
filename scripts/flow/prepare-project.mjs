@@ -5,7 +5,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, renameSync, writeF
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from '@babel/parser'
-import { baseRule, cssFields, cssParser } from './prepared-css.mjs'
+import { baseRule, cssFields, panelCssFields, cssParser } from './prepared-css.mjs'
 import { moduleReference, literalColorAttribute, panelOpening } from './prepared-site-qualification.mjs'
 import { localBindingNames } from './authored-use.mjs'
 import { sourceUseId } from './selection-provenance.mjs'
@@ -271,7 +271,7 @@ function analyze(code, file, config) {
   return { sites, rejected }
 }
 const trees = new Map()
-function ordinaryCSS(root, graph, classify) {
+function ordinaryCSS(root, graph, classify, panelBindings) {
   const moduleClasses = new Map()
   const descendants = new Map()
   const classes = new Map(),
@@ -312,7 +312,7 @@ function ordinaryCSS(root, graph, classify) {
         if (d.type !== 'decl') continue
         try {
           for (const property of classify(d)) {
-            if (module && !['background-color', 'border-radius', 'font-size'].includes(property)) continue
+            if (module && !panelBindings && !['background-color', 'border-radius', 'font-size'].includes(property)) continue
             const list = index.get(key) ?? []
             list.push({
               attribute: 'className',
@@ -341,7 +341,7 @@ function ordinaryCSS(root, graph, classify) {
   return { classes, moduleClasses, descendants, tokenFiles, spacingSources, variableSources, indexError }
 }
 export async function prepareProject(project, destination, namespace, boundary = 'src', server, {
-  classifyCSS = cssFields, panelBindings = false,
+  classifyCSS, panelBindings = false,
 } = {}) {
   const root = realpathSync(project),
     source = realpathSync(join(root, boundary))
@@ -380,7 +380,7 @@ export async function prepareProject(project, destination, namespace, boundary =
     .filter((sheet) => sheet.served.includes(graph.utilityEntries[0]))
     .map(({ file }) => readFileSync(join(root, file), 'utf8'))
     .join('\n')
-  const css = ordinaryCSS(root, graph, classifyCSS)
+  const css = ordinaryCSS(root, graph, classifyCSS ?? (panelBindings ? panelCssFields : cssFields), panelBindings)
   const tailwind = !css.indexError && graph.utilityEntries.length === 1
   const button =
     existsSync(join(root, buttonSource)) && hash(readFileSync(join(root, buttonSource))) === buttonRevision

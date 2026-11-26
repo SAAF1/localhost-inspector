@@ -5,24 +5,8 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const styleProperties = new Set([
-  'gap',
-  'padding-left',
-  'padding-right',
-  'padding-top',
-  'padding-bottom',
-  'width',
-  'height',
-  'min-width',
-  'max-width',
-  'min-height',
-  'max-height',
-  'font-weight',
-  'font-size',
-  'border-radius',
-  'color',
-  'background-color',
-])
+import { preparedStyleProperties as styleProperties } from '../../journal-values.mjs'
+
 function walk(node, visit, owner) {
   if (!node?.type) return
   if (node.type === 'FunctionDeclaration' && /^[A-Z]/.test(node.id?.name)) owner = node

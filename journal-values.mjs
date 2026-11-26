@@ -1,3 +1,30 @@
+export const preparedStyleProperties = new Set([
+  'gap',
+  'padding-left',
+  'padding-right',
+  'padding-top',
+  'padding-bottom',
+  'width',
+  'height',
+  'min-width',
+  'max-width',
+  'min-height',
+  'max-height',
+  'font-weight',
+  'font-size',
+  'border-radius',
+  'color',
+  'background-color',
+  'line-height',
+  'letter-spacing',
+  'text-align',
+  'flex-direction',
+  'align-items',
+  'justify-content',
+  'border-width',
+  'border-color',
+])
+
 const pixelProperties = new Set(['font-size','line-height','letter-spacing','gap','width','height','min-width','max-width',
   'min-height','max-height','padding','padding-top','padding-right','padding-bottom','padding-left','border-radius','border-width'])
 const keywords = {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { cssFields } from '../scripts/flow/prepared-css.mjs'
+import { cssFields, panelCssFields } from '../scripts/flow/prepared-css.mjs'
 
 test('ordinary logical padding passes through discovery without a physical edit recipe', () => {
   const declarations = [
@@ -26,4 +26,14 @@ test('literal paint preserves prepared part identity without admitting opaque st
     assert.equal(panelOpening(code, node) === '<p>', compatible)
     assert.equal(Boolean(preparedStyleTargets(site, node, code)), compatible)
   }
+})
+
+
+test('panel declarations preserve a typed input and exclude a mismatched property or unqualified shorthand', () => {
+  for (const [prop,value] of [
+    ['align-items','center'],['font-weight','700'],['line-height','1.5'],['letter-spacing','-0.2px'],
+    ['border-color','var(--edge)'],['border-width','0.125rem'],['max-width','60rem'],
+  ]) assert.deepEqual(panelCssFields({prop,value}),[prop])
+  for(const [prop,value] of [['justify-content','12px'],['padding-inline','2rem 3rem'],['border','1px solid red']])
+    assert.deepEqual(panelCssFields({prop,value}),[])
 })

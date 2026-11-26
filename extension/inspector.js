@@ -1013,16 +1013,15 @@
       return
     }
     const prepared = ui.preparedPreview.contract(node)
+    if (authoredUse && get('authored-edit-scope').value === 'selected') selectionOnly = true
     const qualifiedPrepared = (prepared?.style === property || prepared?.styles?.includes(property)) && !tokenOptions?.pendingColor
     const family = property === 'color' ? 'paint' : ['gap', 'justify-content'].includes(property) ? 'spacing' : null
     const panelProperty = ['background-color', 'border-radius', 'font-size', 'height'].includes(property)
     if (authoredUse && panelProperty) {
-      selectionOnly ||= get('authored-edit-scope').value === 'selected'
       if (!selectionOnly && !qualifiedPrepared)
         throw Error('Shared source is unavailable for this control. Selected element only previews one occurrence.')
     }
     if (authoredUse && family) {
-      selectionOnly ||= get('authored-edit-scope').value === 'selected'
       const marker = authored.binding(node)
       if (!selectionOnly) {
         const use = marker && (marker.actions ?? [marker.family]).includes(family) && { ...marker, family }
@@ -1042,6 +1041,8 @@
     const marker = !selectionOnly && templatePreviews && !tokenOptions?.pendingColor ? ui.templatePreview.of(node) : undefined
     const source = marker ? recovery.templateSource(node, property) : undefined
     const template = source !== null && (source === undefined || templateSourcePreviews) ? marker : undefined
+    if (authoredUse && !selectionOnly && !template)
+      throw Error('Shared source is unavailable for this control. Choose Selected element only to preview one occurrence.')
     const sourceContext = ui.describeSourceContext(node)
     const selected = selection.current
     const evidence = ++evidenceVersion
@@ -1129,11 +1130,15 @@
     if (!isCurrent() || comparing || !selected.isConnected || journalRevision === null) {
       throw Error('Selection changed. Try the edit again.')
     }
+    const selectedOnly = authoredUse && get('authored-edit-scope').value === 'selected'
+    if (selectedOnly) scope = { members: [] }
     const contract=ui.preparedPreview.contract(selected)
-    if(contract && paddingProperties(axis).every(key=>contract.styles?.includes(key) && canEdit(selected,key)))
+    if(!selectedOnly && contract && paddingProperties(axis).every(key=>contract.styles?.includes(key) && canEdit(selected,key)))
       return commitPrepared(selected,contract,paddingProperties(axis),requested,options)
     const { template, members: sharedMembers } = scope
     const shared = !template && axis === 'vertical' && sharedMembers.length > 0
+    if (authoredUse && !selectedOnly && !template && !shared)
+      throw Error('Shared padding source is unavailable. Choose Selected element only to preview one occurrence.')
     const members = template || shared ? sharedMembers : [selected]
     const properties = paddingProperties(axis)
     const sharedPadding = shared ? selected.getAttribute(ui.sharedPadding.attribute) : undefined
@@ -1144,6 +1149,7 @@
     }
     const pending = new Map()
     function sameMembers() {
+      if (selectedOnly) return true
       if (template) {
         const current = paddingScope(selected, axis, pending)
         return current.template === template && !current.blocked &&
@@ -1189,6 +1195,7 @@
           templateSourceFingerprint: template
             ? await ui.templateSourceFingerprint(scope.sources[properties.indexOf(entry.property)]) : undefined,
         }),
+        ...(selectedOnly ? { intent: 'selected occurrence only' } : {}),
         sharedPadding,
       })))
       if (!isCurrent() || !sameMembers() || !entries.every(entry => ui.ownsPreviewDeclaration(entry) &&
