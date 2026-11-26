@@ -35,10 +35,16 @@ function compatiblePage(route, page, origin = location.origin) {
     includesQuery(new URLSearchParams(targetQuery), new URLSearchParams(baseQuery))
 }
 
+function canvasAddress(origin) {
+  const destination = new URL(location.pathname, origin)
+  if (origin === location.origin && new URLSearchParams(location.search).get('editor') === 'extension')
+    destination.searchParams.set('editor', 'extension')
+  return destination
+}
+
 function contextAddress(origin, { frame, route, expanded, variant }) {
   if (!frame || !compatiblePage(frame.route, route)) return null
-  const destination = new URL(location.pathname, origin)
-  if (origin === location.origin && new URLSearchParams(location.search).get('editor') === 'extension') destination.searchParams.set('editor','extension')
+  const destination = canvasAddress(origin)
   // Keep app filters in the fragment so a workspace request does not log them.
   const context = new URLSearchParams({ context: '1', frame: frame.id, page: route })
   if (expanded) context.set('view', 'canvas')
@@ -58,7 +64,7 @@ export function trackContext(frame, read) {
     if (!frame.isConnected || frame.contentDocument !== doc) return
     const address = contextAddress(location.origin, read())
     if (address && address.href !== location.href) history.replaceState(history.state, '', address)
-    else if (!address && location.hash.startsWith('#context=')) history.replaceState(history.state, '', location.pathname)
+    else if (!address && location.hash.startsWith('#context=')) history.replaceState(history.state, '', canvasAddress(location.origin))
   }
   const update = () => {
     clearTimeout(timer)

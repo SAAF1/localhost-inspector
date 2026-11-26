@@ -42,54 +42,59 @@ async function inject(target) {
   if (!mounted) {await chrome.scripting.executeScript({ target, files: inspectorModules })}
 }
 
+// Chrome matches the complete loopback origin, including the candidate port.
+const returnScriptId = tabId => 'inspector-return-' + tabId
+
 async function attach(tabId, origin) {
-  await call({ type: 'check', origin })
+  const { id: binding } = await call({ type: 'check', origin })
   const tab = await chrome.tabs.get(tabId)
   if (localOrigin(tab.url) !== origin) return
-  await chrome.storage.session.set({ ['tab:' + tabId]: origin })
-  await mountInspector(tabId, origin)
+  const id = returnScriptId(tabId)
+  const script = { id, matches: [origin + '/*'], js: ['return-attachment.js'], persistAcrossSessions: false }
+  const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [id] })
+  if (existing.length) await chrome.scripting.updateContentScripts([script])
+  else await chrome.scripting.registerContentScripts([script])
+  await chrome.storage.session.set({ ['tab:' + tabId]: { origin, binding } })
+  // Registration covers subsequent documents; the current page is already loaded.
+  await chrome.scripting.executeScript({ target: { tabId }, files: script.js })
 }
 
-async function mountInspector(tabId, origin) {
-  const tab = await chrome.tabs.get(tabId)
-  if (localOrigin(tab.url) !== origin) return
+async function mountInspector(sender, grant) {
+  const tabId = sender.tab.id
+  await call({ type: 'check', origin: grant.origin, expectedBindingId: grant.binding })
+  const target = { tabId, documentIds: [sender.documentId] }
   pendingCaptures.delete(tabId)
-  if (new URL(tab.url).pathname === flowPath) {
-    await chrome.scripting.executeScript({ target: { tabId }, func: watchFlowFrame })
+  if (new URL(sender.url).pathname === flowPath) {
+    await chrome.scripting.executeScript({ target, func: watchFlowFrame })
   } else {
     await chrome.storage.session.remove('flow:' + tabId)
-    await inject({ tabId })
+    await inject(target)
   }
   await chrome.action.setBadgeText({ tabId, text: '' })
   await chrome.action.setTitle({ tabId, title: 'Attach Localhost Inspector' })
 }
 
-function queueFlowAttachment(tabId, origin) {
+function queueFlowAttachment(tabId, origin, documentId) {
   const previous = flowAttachments.get(tabId) ?? Promise.resolve()
-  const active = previous.catch(() => {}).then(() => attachFlowFrame(tabId, origin))
+  const active = previous.catch(() => {}).then(() => attachFlowFrame(tabId, origin, documentId))
   flowAttachments.set(tabId, active)
   return active.finally(() => {
     if (flowAttachments.get(tabId) === active) flowAttachments.delete(tabId)
   })
 }
 
-async function attachFlowFrame(tabId, origin) {
+async function attachFlowFrame(tabId, origin, documentId) {
   const tab = await chrome.tabs.get(tabId)
   if (localOrigin(tab.url) !== origin || new URL(tab.url).pathname !== flowPath) return
   const key = 'flow:' + tabId
-  const frames = await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true }, func: isFlowChild, args: [flowPath],
-  })
-  const child = frames.find(frame => frame.result && frame.documentId)
-  if (!child) return
-  const target = { tabId, documentIds: [child.documentId] }
-  const [{ result: childOrigin }] = await chrome.scripting.executeScript({ target, func: () => location.origin })
-  if (childOrigin !== origin) return
-  await chrome.storage.session.set({ [key]: child.documentId })
+  const target = { tabId, documentIds: [documentId] }
+  const [{ result: selected }] = await chrome.scripting.executeScript({ target, func: isFlowChild, args: [flowPath] })
+  if (!selected) return
+  await chrome.storage.session.set({ [key]: documentId })
   await chrome.scripting.executeScript({ target, func: dockFlowInspector })
   await inject(target)
   await chrome.scripting.executeScript({ target, func: async () => { await window.phaseAInspectorReady } })
-  return child.documentId
+  return documentId
 }
 
 async function failed(tabId, error) {
@@ -101,23 +106,16 @@ chrome.action.onClicked.addListener(tab => {
   const origin = localOrigin(tab.url)
   if (origin) void attach(tab.id, origin).catch(error => failed(tab.id, error))
 })
-chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
-  if (change.status !== 'complete') return
-  void (async () => {
-    const key = 'tab:' + tabId
-    const saved = (await chrome.storage.session.get(key))[key]
-    if (!saved) return
-    if (localOrigin(tab.url) !== saved) {
-      pendingCaptures.delete(tabId)
-      await chrome.storage.session.remove([key, 'flow:' + tabId])
-      return
-    }
-    await mountInspector(tabId, saved)
-  })().catch(error => failed(tabId, error))
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.status === 'loading') pendingCaptures.delete(tabId)
 })
 chrome.tabs.onRemoved.addListener(tabId => {
   pendingCaptures.delete(tabId)
   void chrome.storage.session.remove(['tab:' + tabId, 'flow:' + tabId])
+  const id = returnScriptId(tabId)
+  void chrome.scripting.getRegisteredContentScripts({ ids: [id] }).then(scripts => {
+    if (scripts.length) return chrome.scripting.unregisterContentScripts({ ids: [id] })
+  })
 })
 
 async function handle(message, sender) {
@@ -132,10 +130,16 @@ async function handle(message, sender) {
   const key = 'tab:' + tabId
   const flowKey = 'flow:' + tabId
   const paired = await chrome.storage.session.get([key, flowKey])
-  if (!origin || origin !== paired[key]) throw Error('Tab is not attached')
+  const grant = paired[key]
+  if (!origin || origin !== grant?.origin || !grant.binding ||
+      localOrigin(sender.tab?.url) !== origin || sender.documentLifecycle !== 'active') throw Error('Tab is not attached')
+  if (message.type === 'resumeAttachment' && sender.frameId === 0 && sender.documentId) {
+    return mountInspector(sender, grant).catch(async error => { await failed(tabId, error); throw error })
+  }
   const shell = new URL(sender.url).pathname === flowPath
-  if (message.type === 'attachFlowFrame' && sender.frameId === 0 && shell) {
-    return queueFlowAttachment(tabId, origin)
+  if (message.type === 'attachFlowFrame' && sender.frameId > 0 && sender.documentId &&
+      new URL(sender.tab.url).pathname === flowPath) {
+    return queueFlowAttachment(tabId, origin, sender.documentId)
   }
   const authorizedChild = sender.documentId && sender.documentId === paired[flowKey] &&
     sender.documentLifecycle === 'active' && sender.tab.url && new URL(sender.tab.url).pathname === flowPath
@@ -151,7 +155,7 @@ async function handle(message, sender) {
         authorization.id !== id || authorization.route !== route) return
     pendingCaptures.delete(tabId)
     const image = await captureEditEvidence(sender, id)
-    if (image) await call({ type: 'saveEvidence', origin, id, route, image })
+    if (image) await call({ type: 'saveEvidence', origin, expectedBindingId: grant.binding, id, route, image })
     return
   }
   if (message.type === 'inspectComponent' || message.type === 'previewComponentSlot') {
@@ -179,7 +183,7 @@ async function handle(message, sender) {
     })
     return result === true
   }
-  const result = await call({ ...message, origin })
+  const result = await call({ ...message, origin, expectedBindingId: grant.binding })
   if (['save', 'saveTextStyle', 'saveSharedPadding', 'savePairedPadding'].includes(message.type)) {
     pendingCaptures.delete(tabId)
     if (result?.visualEvidence === true && sender.documentId) {

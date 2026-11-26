@@ -16,7 +16,14 @@ export function watchFlowFrame() {
     if (!selected) return
     delete selected.dataset.inspectorDocument
     const current = ++sequence
-    chrome.runtime.sendMessage({ type: 'attachFlowFrame' }).then(result => {
+    let runtime
+    try {
+      if (selected.contentWindow.location.origin !== location.origin) return
+      runtime = selected.contentWindow.chrome?.runtime
+      if (!runtime?.id || runtime.id !== chrome.runtime.id) return
+    } catch { return }
+    // Send from the chosen child’s isolated world so Chrome identifies its document.
+    runtime.sendMessage({ type: 'attachFlowFrame' }).then(result => {
       if (current === sequence && selected === frame && result?.ok && result.value) {
         selected.dataset.inspectorDocument = result.value
       }

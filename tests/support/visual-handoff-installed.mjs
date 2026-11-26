@@ -70,15 +70,16 @@ async function attach(page, worker) {
 }
 
 async function reattachWithoutCapturePermission(page, worker) {
+  await attach(page, worker)
+  await page.goto('about:blank')
+  await page.goBack()
+  await page.locator('#localhost-inspector').waitFor({ state: 'attached' })
   const captureError = await worker.evaluate(async origin => {
     const [tab] = (await chrome.tabs.query({ active: true })).filter(tab => tab.url?.startsWith(origin))
     if (!tab) throw Error('No active fixture tab')
-    await chrome.storage.session.set({ ['tab:' + tab.id]: origin })
     return chrome.tabs.captureVisibleTab(tab.windowId).then(() => null, error => error.message)
   }, origin)
-  assert.match(captureError ?? '', /activeTab|permission/i, 'Chrome denies capture absent its action grant')
-  await page.reload()
-  await page.locator('#localhost-inspector').waitFor({ state: 'attached' })
+  assert.match(captureError ?? '', /activeTab|permission/i, 'Chrome denies capture after leaving its action grant')
 }
 
 const position = (page, worker, selector) => worker.evaluate(async ({ origin, selector }) => {
@@ -124,7 +125,8 @@ async function editGap(page, worker, value, section = 'Identity') {
 }
 
 async function undo(page, worker) {
-  await wait(() => position(page, worker, '[aria-label="Undo last preview"]'), 'Undo')
+  await position(page, worker, '#edits-tab')
+  await wait(() => position(page, worker, '#undo'), 'Undo')
   await wait(async () => (await handoff()).operations.length === 0, 'saved Undo')
 }
 
@@ -196,6 +198,7 @@ try {
   const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker')
   const settings = await context.newPage()
   await settings.goto('chrome-extension://' + new URL(worker.url()).host + '/settings.html')
+  if (process.env.INSPECTOR_HELPER_PORT) await settings.locator('#port').fill(process.env.INSPECTOR_HELPER_PORT)
   await settings.locator('#key').fill((await readFile(join(state, 'pairing-key'), 'utf8')).trim())
   await settings.locator('#connect').click()
   await settings.locator('#result').filter({ hasText: 'Connected' }).waitFor()
