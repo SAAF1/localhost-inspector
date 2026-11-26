@@ -13,35 +13,47 @@ function uniqueStyleUse(site, code, openings) {
   return matches[0]
 }
 
-// A saved rendered-part receipt includes the revision of its authored envelope.
-// Recheck that envelope before a coding agent is offered the old part relationship.
+// Recheck the original component and the component that paints its selected part.
 export async function recheckRenderedPartOwners(binding, operations, read) {
   const pending = operations.filter(op => op.status === 'pending' && op.changes.some(edit => edit.prepared?.part))
   if (!pending.length) return
   const manifest = binding.authoredUse && await read(join(binding.authoredUse.directory, 'prepared.json'), null)
+  const sites = manifest?.namespace && Array.isArray(manifest.sites) ? manifest.sites : []
+  const files = new Map()
   const revisions = new Map()
   const dependencies = new Map()
+  async function currentRevision(site) {
+    if (revisions.has(site)) return revisions.get(site)
+    let revision = null
+    try {
+      if (!files.has(site.file)) {
+        const { text } = await source(binding.source, site.file)
+        const tree = parseAuthoredJsx(text)
+        files.set(site.file, { text, tree, openings: preparedOpenings(tree) })
+      }
+      const { text, tree, openings } = files.get(site.file)
+      const { owner } = uniqueStyleUse(site, text, openings)
+      revision = preparedRevision(binding.source, manifest.namespace, site, text, tree, owner, dependencies)
+    } catch {
+      // An unreadable, ambiguous or unparsable owner cannot support a current receipt.
+    }
+    revisions.set(site, revision)
+    return revision
+  }
+  async function matches(id, file, revision) {
+    const candidates = sites.filter(s => (!id || s.id === id) && (!file || s.file === file))
+    if (id && candidates.length !== 1) return false
+    // Older receipts stored only the child's revision. Its digest includes the
+    // unique source site. Resolve it once per export using the existing manifest.
+    for (const site of candidates) if (await currentRevision(site) === revision) return true
+    return false
+  }
   for (const op of pending) {
     for (const { prepared } of op.changes) {
-      if (!prepared?.part) continue
-      const key = JSON.stringify([prepared.file, prepared.site])
-      if (!revisions.has(key)) {
-        let revision = null
-        try {
-          const sites = manifest?.sites?.filter(s => s.id === prepared.site && s.file === prepared.file)
-          if (manifest?.namespace && sites?.length === 1) {
-            const site = sites[0]
-            const { text } = await source(binding.source, site.file)
-            const tree = parseAuthoredJsx(text)
-            const { owner } = uniqueStyleUse(site, text, preparedOpenings(tree))
-            revision = preparedRevision(binding.source, manifest.namespace, site, text, tree, owner, dependencies)
-          }
-        } catch {
-          // An unreadable, ambiguous or unparsable owner cannot support a current receipt.
-        }
-        revisions.set(key, revision)
-      }
-      if (revisions.get(key) !== prepared.revision) {
+      const part = prepared?.part
+      if (!part) continue
+      if (!await matches(prepared.site, prepared.file, prepared.revision) ||
+          (part.depth && !await matches(part.site, null, part.revision))) {
         op.status = 'blocked'
         op.reason = 'prepared-part-owner-changed'
         break

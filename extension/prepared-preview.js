@@ -122,7 +122,9 @@
     if (part !== node && !binding) return false
     const revision = revisionOf(part)
     if (!binding || !/^[a-f0-9]{64}$/.test(revision ?? '')) return
-    return { ...binding, depth, revision }
+    const owner = JSON.parse(part.getAttribute('data-li-contract') ?? part.getAttribute('data-li-render-contract'))
+    if (owner?.revision !== revision || revisions[owner.site] !== revision) return false
+    return { ...binding, depth, revision, site: owner.site }
   }
   function samePart(a,b) {
     return a?.id === b?.id && a?.revision === b?.revision && a?.depth === b?.depth
