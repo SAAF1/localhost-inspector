@@ -99,6 +99,12 @@ test('both panel controls stay reachable after the browser magnifies the canvas'
     await client.send('Input.synthesizePinchGesture', {
       x: width / 2, y: height / 2, scaleFactor: 1.6, gestureSourceType: 'touch',
     })
+    // Some desktop headless builds acknowledge the touch gesture without
+    // magnifying the page. Exercise the same visual viewport in that case.
+    if (await h.page.evaluate(() => visualViewport.scale === 1))
+      await client.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1.6 })
+    await h.page.waitForFunction(() => visualViewport.scale > 1.4 &&
+      document.documentElement.hasAttribute('data-magnified'), undefined, { timeout: 3000 })
     const withinView = async locator => locator.evaluate(node => {
       const r = node.getBoundingClientRect(), v = visualViewport
       return v.scale > 1.4 && r.left >= v.offsetLeft - 1 && r.right <= v.offsetLeft + v.width + 1 &&
