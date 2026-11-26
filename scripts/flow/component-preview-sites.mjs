@@ -12,7 +12,7 @@ const runtime = 'virtual:localhost-inspector/component-props'
 export function componentPreviewSites(project, {conditionalHosts=false} = {}) {
   const root = realpathSync(project)
   const resolveType = createComponentTypeResolver(root)
-  return {
+  const plugin = {
     name: 'inspector-component-instances',
     enforce: 'pre',
     resolveId(id) { if (id === runtime) return '\0' + runtime },
@@ -84,4 +84,8 @@ export function componentPreviewSites(project, {conditionalHosts=false} = {}) {
       return { code: output.toString(), map: output.generateMap({ hires: true, source: id }) }
     },
   }
+  // Read the authored JSX before React refresh rewrites a forwarded component's
+  // initializer. The prepared caller transform runs first in the same phase.
+  if (conditionalHosts) plugin.transform = {order:'pre', handler:plugin.transform}
+  return plugin
 }

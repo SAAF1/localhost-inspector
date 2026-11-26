@@ -39,8 +39,11 @@ test('conditional host markers require the opt-in and an actual intrinsic branch
       const Tag = asChild ? Slot : 'button'
       return <Tag className={tone}/>
     }`
-  const compile = (input, optIn) => componentPreviewSites(root,{conditionalHosts:optIn})
-    .transform.call({addWatchFile(){}},input,join(root,'Chip.tsx'))?.code
+  const compile = (input, optIn) => {
+    const {transform}=componentPreviewSites(root,{conditionalHosts:optIn})
+    if (optIn) assert.equal(transform.order,'pre')
+    return (transform.handler ?? transform).call({addWatchFile(){}},input,join(root,'Chip.tsx'))?.code
+  }
   assert.equal(compile(code,false),undefined)
   const prepared = compile(code,true)
   assert.match(prepared,/typeof Tag === "string" \? \{"data-inspector-source"/)
