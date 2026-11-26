@@ -4,16 +4,16 @@ export function installedControls(page, worker) {
     let result
     do {
       result = await worker.evaluate(
-        async ({ origin, selector, label, keyboard }) => {
+        async ({ origin, selector, label, keyboard, activate }) => {
           const [tab] = await chrome.tabs.query({ url: origin + '/__inspector-flow/*' })
           const [{ result }] = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            func: (selector, label, keyboard) => {
+            func: (selector, label, keyboard, activate) => {
               const host = document.querySelector('#localhost-inspector')
               const root = host && chrome.dom.openOrClosedShadowRoot(host)
               const node = [...(root?.querySelectorAll(selector) ?? [])].find(
                 (n) =>
-                  !n.disabled &&
+                  !n.disabled && (!activate || (!n.readOnly && n.getAttribute('aria-disabled') !== 'true')) &&
                   !n.hidden &&
                   n.getClientRects().length &&
                   n.textContent.toLowerCase().includes(label.toLowerCase()),
@@ -30,11 +30,11 @@ export function installedControls(page, worker) {
               const r = node.getBoundingClientRect()
               return { x: r.x + r.width / 2, y: r.y + r.height / 2, text: node.textContent }
             },
-            args: [selector, label, keyboard],
+            args: [selector, label, keyboard, activate],
           })
           return result
         },
-        { origin: new URL(page.url()).origin, selector, label, keyboard: click === 'keyboard' },
+        { origin: new URL(page.url()).origin, selector, label, keyboard: click === 'keyboard', activate: Boolean(click) },
       )
       if (result?.x !== undefined) {
         if (click === 'keyboard') await page.keyboard.press('Enter')
