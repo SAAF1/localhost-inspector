@@ -44,3 +44,26 @@ test('selected component invocation survives a value repeat and rejects changed 
   const report={projectId:binding.id,verified:[{id:'last',summary:'ordinary caller and protected peers verified'}]}
   assert.deepEqual(completeHandoff(binding,journal,report,Date.now()).retired,['first','last'])
 })
+
+test('a moved component can load independently of its original route module', async () => {
+  const code = 'function Details() { "use strict"; return 7 }'
+  const out = new MagicString(code)
+  await markSelectedCalls('.', 'Route.jsx', code, parseAuthoredJsx(code), out, async () => null)
+  const result = out.toString()
+  const tree = parseAuthoredJsx(result)
+  const route = tree.program.body.find(node => node.type === 'FunctionDeclaration')
+  assert.equal(route.body.directives[0].value.value, 'use strict')
+
+  // A route splitter extracts the component declaration into another module.
+  const shell = tree.program.body
+    .filter(node => node !== route && node.type !== 'ImportDeclaration')
+    .map(node => result.slice(node.start, node.end))
+    .join('\n').replaceAll('import.meta.url', JSON.stringify('file:///route.js'))
+  const seen = []
+  const register = (file, owner, component) => seen.push([file, owner, component])
+  Function('__liSelectedModule', '__liRenderOwners', shell)(() => {}, register)
+  assert.equal(seen.length, 0)
+  const details = Function('__liRenderOwners', result.slice(route.start, route.end) + ';return Details')(register)
+  assert.equal(details(), 7)
+  assert.deepEqual(seen, [['Route.jsx', 'Details', details]])
+})
