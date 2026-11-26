@@ -1,8 +1,8 @@
 // Follow literal frontend imports using the installed application's Vite resolver.
-import { readFileSync } from 'node:fs'
+import { realpathSync, readFileSync } from 'node:fs'
 import { classJoinPackages, resolvedClassJoin, resolvedPackageEntry } from './class-composition.mjs'
 import { projectVite } from './project-vite.mjs'
-import { join, relative, resolve } from 'node:path'
+import { join, relative } from 'node:path'
 import { parse } from '@babel/parser'
 import { cssParser } from './prepared-css.mjs'
 
@@ -25,12 +25,15 @@ function scriptImports(source) {
   return imports
 }
 export async function stylesheetGraph(root, running, onProjectImport, onClassJoin, onMotion) {
+  if (!running && realpathSync(process.cwd()) !== realpathSync(root)) {
+    const { discoverProjectStyles } = await import('./project-stylesheet-graph.mjs')
+    return discoverProjectStyles(root,onProjectImport,onClassJoin,onMotion)
+  }
   const { createServer } = await projectVite(root)
   const server =
     running ??
     (await createServer({
-      root,
-      server: { middlewareMode: true, hmr: false, watch: null },
+      server: { middlewareMode: true, hmr: false, watch: null, open: false },
       optimizeDeps: { noDiscovery: true, include: [] },
       logLevel: 'silent',
     }))
@@ -95,20 +98,23 @@ export async function stylesheetGraph(root, running, onProjectImport, onClassJoi
     }
   }
   try {
-    const html = readFileSync(join(root, 'index.html'), 'utf8')
+    const entry = join(realpathSync(server.config.root),'index.html')
+    if (!entry.startsWith(root + '/')) throw Error('Configured Vite HTML root is outside the candidate project.')
+    const html = readFileSync(entry, 'utf8')
     for (const link of html.matchAll(/<link\b[^>]*>/gi)) {
       if (/\brel\s*=\s*["']stylesheet["']/i.test(link[0])) unresolved.add('HTML stylesheet ' + link[0])
     }
     for (const tag of html.matchAll(/<script\b[^>]*>/gi)) {
       if (!/\btype\s*=\s*["']module["']/i.test(tag[0])) continue
       const src = /\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag[0])?.[1]
-      if (src) await follow(src, resolve(root, 'index.html'), false)
+      if (src) await follow(src, entry, false)
       else unresolved.add('inline HTML module')
     }
     const configuration = server.config.configFileDependencies
       .filter((p) => p.startsWith(root + '/') && !p.includes('/node_modules/'))
       .map((p) => relative(root, p))
     return {
+      entry:relative(root,entry),
       configuration,
       sheets: [...sheets.values()],
       utilityEntries: [...utilityEntries],

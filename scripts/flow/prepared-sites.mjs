@@ -94,7 +94,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           if (
             !['add', 'unlink', 'change'].includes(event) ||
             (!config &&
-              path !== 'index.html' &&
+              path !== (manifestData.stylesheetGraph?.entry ?? 'index.html') &&
               !manifestData.stylesheetGraph?.sheets.some((s) => s.file === path) &&
               !(path.startsWith(manifestData.boundary + '/') && /\.(?:[cm]?[jt]sx?|css)$/.test(path)))
           )

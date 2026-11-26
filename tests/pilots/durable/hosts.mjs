@@ -22,6 +22,7 @@ export async function host(app, map, manifest, number, clean = false, state = ''
     cwd: app,
     env: {
       ...process.env,
+      BROWSER: 'none',
       INSPECTOR_PREPARED_SITES: manifest,
       INSPECTOR_CANVAS_HELPER_STATE: state,
       INSPECTOR_CANVAS_HOME: map,

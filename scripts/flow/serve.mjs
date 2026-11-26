@@ -7,7 +7,7 @@ import { watch } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
-import { extname, join, resolve } from 'node:path'
+import { extname, join, relative, resolve } from 'node:path'
 import { projectVite } from './project-vite.mjs'
 import { serveWorkspaceAsset, servePreviewAsset } from './workspace-assets.mjs'
 import { flowPath } from '../../extension/flow-attachment.js'
@@ -190,7 +190,7 @@ if (sourceMode) {
     },
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
-        if (authoredUseSchema && routeAuthoredModule(request, response, server.config.base, next)) return
+        if (authoredUseSchema && routeAuthoredModule(request, response, server.config.base, next, relative(appRoot,server.config.root))) return
         if (request.url?.split('?')[0].startsWith(flowPath)) handleRequest(request, response)
         else next()
       })
@@ -198,7 +198,6 @@ if (sourceMode) {
   }
   const manifest = process.env.INSPECTOR_PREPARED_SITES
   const server = await createViteServer({
-    root: appRoot,
     ...(comparison?.role === 'proposal' ? { cacheDir: resolve(appRoot, '../vite-cache') } : {}),
     ...(process.env.INSPECTOR_VITE_CACHE ? {cacheDir: resolve(process.env.INSPECTOR_VITE_CACHE)} : {}),
     plugins: [workspace, preparedStyles(appRoot, process.env.INSPECTOR_PREPARED_SITES), preparedSites(appRoot, manifest, { authoredUseSchema }), !manifest && authoredUseSchema && authoredUseSites(appRoot, authoredUseSchema), componentPreviewSites(appRoot), tableRenderSites(appRoot)],

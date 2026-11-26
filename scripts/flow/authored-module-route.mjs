@@ -6,7 +6,7 @@ export const authoredModulePath = file => prefix + encodeFile(file)
 
 // Let the live Vite server handle its real base, transforms and middleware.
 // This route accepts only a normal source-module request and its cache timestamp.
-export function routeAuthoredModule(request, response, base, next) {
+export function routeAuthoredModule(request, response, base, next, webRoot = '') {
   if (!request.url?.startsWith(prefix)) return false
   const [rawPath, query] = request.url.split('?', 2)
   let segments
@@ -22,8 +22,13 @@ export function routeAuthoredModule(request, response, base, next) {
     response.writeHead(404).end()
     return true
   }
+  if (webRoot && !file.startsWith(webRoot + '/')) {
+    response.writeHead(404).end()
+    return true
+  }
+  const module = webRoot ? file.slice(webRoot.length+1) : file
   const timestamp = new URLSearchParams(query).get('t')
-  request.url = base.replace(/\/?$/, '/') + encodeFile(file) + (/^\d{13}$/.test(timestamp ?? '') ? '?t=' + timestamp : '')
+  request.url = base.replace(/\/?$/, '/') + encodeFile(module) + (/^\d{13}$/.test(timestamp ?? '') ? '?t=' + timestamp : '')
   next()
   return true
 }
