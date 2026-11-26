@@ -23,9 +23,28 @@ function unconditional(rule) {
   return true
 }
 
+// A part receipt covers the ordered cascade for its property, including rules
+// that cannot themselves be edited. Formatting and unrelated declarations
+// have no bearing on which declaration wins.
+export const cascadeSheet = file => createHash('sha256').update(file).digest('hex').slice(0,24)
+function cascadeStamp(sheet, file, property, originalValues) {
+  const rows = []
+  sheet.walk(node => {
+    if (node.type === 'atrule' && ['layer','scope','import'].includes(node.name)) rows.push([node.name,node.params])
+    if (node.type !== 'decl' || !affects(node.prop,property)) return
+    const ancestry = []
+    for (let p = node.parent; p && p.type !== 'root'; p = p.parent)
+      ancestry.push(p.type === 'rule' ? p.selector : [p.name,p.params])
+    rows.push([ancestry,node.prop,originalValues?.get(node) ?? node.value,!!node.important])
+  })
+  const digest = createHash('sha256').update(JSON.stringify(rows)).digest('hex')
+  return '--li-cascade-' + property + '-' + cascadeSheet(file) + ':' + digest
+}
+
 export function bindRenderedDeclarations(sheet, file, originalValues, finiteChoices = false) {
   const fields = finiteChoices ? [...partProperties,'color','height','width'] : partProperties
   if (!file || file.startsWith('/') || file.split('/').includes('..') || file.length > 240) return false
+  const stamps = partProperties.map(property => cascadeStamp(sheet,file,property,originalValues))
   const registered = new Set()
   const candidates = new Map()
   const basisFor = decl => {
@@ -64,5 +83,6 @@ export function bindRenderedDeclarations(sheet, file, originalValues, finiteChoi
   if (inputs.length) sheet.append(':root{' + inputs.map(n => '--li-known-' + n.slice('--li-render-'.length) + ':1').join(';') + '}')
   if (registered.size) sheet.append([...registered].map(name =>
     '@property ' + name + '{syntax:"*";inherits:false;}').join('\n'))
-  return registered.size > 0
+  sheet.append(':root{' + stamps.join(';') + '}')
+  return true
 }

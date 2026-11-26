@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { cascadeSheet } from './scripts/flow/rendered-declarations.mjs'
 import { effectivePreparedEdit } from './journal-edits.mjs'
 import { conflict, source } from './authored-source-file.mjs'
 import { parseAuthoredJsx } from './scripts/flow/authored-forwarding.mjs'
@@ -48,14 +49,42 @@ export async function recheckRenderedPartOwners(binding, operations, read) {
     for (const site of candidates) if (await currentRevision(site) === revision) return true
     return false
   }
+  const emitted = new Map()
+  async function cascadeMatches(part, property) {
+    const graph = manifest?.stylesheetGraph
+    if (!part.cascade || !Array.isArray(graph?.sheets) || !graph.sheets.length) return false
+    const expected = []
+    for (const file of new Set(graph.sheets.flatMap(sheet => sheet.served))) {
+      if (typeof file !== 'string' || !file.endsWith('.css') || /[?#\\]/.test(file) ||
+          file.split('/').some(segment => !segment || segment === '..' || segment === '.')) return false
+      if (!emitted.has(file)) {
+        const url = new URL('/' + file.split('/').map(encodeURIComponent).join('/') + '?direct',binding.origin)
+        try {
+          const response = await fetch(url,{redirect:'error',signal:AbortSignal.timeout(3000)})
+          emitted.set(file,response.ok ? await response.text() : '')
+        } catch { emitted.set(file,'') }
+      }
+      const key = cascadeSheet(file)
+      const pattern = new RegExp('--li-cascade-' + property + '-' + key + ':\\s*([a-f0-9]{64})(?=[;}]|\\s)')
+      const stamp = emitted.get(file).match(pattern)?.[1]
+      if (!stamp) return false
+      expected.push(key + ':' + stamp)
+    }
+    return expected.sort().join(',') === part.cascade
+  }
   for (const op of pending) {
-    for (const { prepared } of op.changes) {
+    for (const { prepared, property } of op.changes) {
       const part = prepared?.part
       if (!part) continue
       if (!await matches(prepared.site, prepared.file, prepared.revision) ||
           (part.depth && !await matches(part.site, null, part.revision))) {
         op.status = 'blocked'
         op.reason = 'prepared-part-owner-changed'
+        break
+      }
+      if (!await cascadeMatches(part,property)) {
+        op.status = 'blocked'
+        op.reason = 'prepared-part-cascade-unverified'
         break
       }
     }

@@ -38,6 +38,8 @@ export function journalValidators(journalRoute) {
       const validPart = part === undefined || (!field && ['background-color','border-radius','font-size'].includes(record.property) &&
         /^[a-f0-9]{32}$/.test(part?.id) && /^[a-f0-9]{64}$/.test(part.revision) &&
         (part.site === undefined || (typeof part.site === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(part.site))) &&
+        (part.cascade === undefined || (typeof part.cascade === 'string' && part.cascade.length <= 12000 &&
+          /^[a-f0-9]{24}:[a-f0-9]{64}(?:,[a-f0-9]{24}:[a-f0-9]{64})*$/.test(part.cascade))) &&
         Number.isInteger(part.depth) && part.depth >= 0 && part.depth <= 4 &&
         (part.depth || part.revision === prepared.revision) &&
         typeof part.file === 'string' && part.file.length <= 240 && part.file.endsWith('.css') &&
@@ -111,7 +113,7 @@ export function journalValidators(journalRoute) {
       ...(prepared ? { prepared: { site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}),
         ...(prepared.effect ? {effect:{property:prepared.effect.property,value:prepared.effect.value,
           ...(prepared.effect.withdrawn ? {withdrawn:prepared.effect.withdrawn} : {})}} : {}),
-        ...(prepared.part ? {part:{...Object.fromEntries(['id','revision','depth','file','selector'].map(k=>[k,prepared.part[k]])), ...(prepared.part.site ? {site:prepared.part.site} : {})}} : {}) } } : {}),
+        ...(prepared.part ? {part:{...Object.fromEntries(['id','revision','depth','file','selector'].map(k=>[k,prepared.part[k]])), ...(prepared.part.cascade ? {cascade:prepared.part.cascade} : {}), ...(prepared.part.site ? {site:prepared.part.site} : {})}} : {}) } } : {}),
       ...(selectedUse ? {selectedUse: {
         ...Object.fromEntries(['id','file','owner','callerDigest','component','componentDigest','field'].map(k=>[k,selectedUse[k]])),
         dependencies:selectedUse.dependencies.map(({file,revision})=>({file,revision})),

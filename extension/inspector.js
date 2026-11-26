@@ -887,7 +887,7 @@
         revision: contract.revision,
         ...(field ? { field } : {}),
         ...(sharedUse && key === 'gap' ? { effect: { property: 'gap', value: requested } } : {}),
-        ...(contract.parts?.[key] ? { part:contract.parts[key] } : {}),
+        ...(contract.parts?.[key] ? { part:{...contract.parts[key],cascade:ui.preparedPreview.cascadeReceipt(key)} } : {}),
       },
       sourceContext: ui.describeSourceContext(node),
       viewport: { width: innerWidth, height: innerHeight },

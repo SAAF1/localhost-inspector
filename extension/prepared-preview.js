@@ -127,6 +127,12 @@
     if (owner?.revision !== revision || revisions[owner.site] !== revision) return false
     return { ...binding, depth, revision, site: owner.site }
   }
+  function cascadeReceipt(property) {
+    const root = getComputedStyle(document.documentElement)
+    const prefix = '--li-cascade-' + property + '-'
+    return Array.from(root).filter(key => key.startsWith(prefix))
+      .map(key => key.slice(prefix.length) + ':' + root.getPropertyValue(key).trim()).sort().join(',')
+  }
   function samePart(a,b) {
     return a?.id === b?.id && a?.revision === b?.revision && a?.depth === b?.depth
   }
@@ -363,6 +369,8 @@
     if (hidden) return { state: 'hidden', node }
     if (edit.prepared.part && getComputedStyle(document.documentElement)
         .getPropertyValue('--li-known-' + edit.prepared.part.id).trim() !== '1') return {state:'stale',node}
+    if (edit.prepared.part && (!edit.prepared.part.cascade ||
+        edit.prepared.part.cascade !== cascadeReceipt(edit.property))) return {state:'stale',node}
     const contracts = members.map(member=>contract(member, Boolean(field)))
     if (contracts.some(c => !c || c.site !== site)) return { state: 'stale' }
     if (!field && !supportedDeclaration(edit)) return { state: 'failed', node }
@@ -379,5 +387,5 @@
     const edit = revision && declarations.get(revision + ':' + property)
     return edit?.property === property ? edit.requested : undefined
   }
-  ui.preparedPreview = { choiceBackgroundToken, withdrawnBackground, receivesChoice, choiceFields, choiceValues, membersOf, samePart, contract, project, locate, waitForMember, authored, shows, read, showsEffect, observe }
+  ui.preparedPreview = { cascadeReceipt, choiceBackgroundToken, withdrawnBackground, receivesChoice, choiceFields, choiceValues, membersOf, samePart, contract, project, locate, waitForMember, authored, shows, read, showsEffect, observe }
 })()
