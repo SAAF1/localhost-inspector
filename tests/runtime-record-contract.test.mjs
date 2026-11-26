@@ -24,6 +24,19 @@ test('state-record handoff rechecks the real hook, rendered part, key and curren
     anchor:site('<li key={row.uid}>'),field:'uid',value:'oak',authority,witness:'[["title","Oak"]]',members:2,renderPath:[],statePath:[]}
   proof.key=recordContractKey(proof)
   assert.doesNotThrow(()=>verifyRuntimeRecord(root,proof))
+  const fill={...proof,operation:'background-color'}
+  assert.doesNotThrow(()=>verifyRuntimeRecord(root,fill))
+  assert.equal(recordContractKey(fill),proof.key)
+  const mixed=[
+    {id:'radius',property:'border-radius',recordScope:proof},
+    {id:'fill',property:'background-color',recordScope:fill},
+    {id:'new-fill',property:'background-color',recordScope:fill},
+  ]
+  const winners=sourceWinners({edits:mixed})
+  assert.equal(winners.get('radius').member,'radius')
+  assert.equal(winners.get('fill').member,'new-fill')
+  assert.throws(()=>verifyRuntimeRecord(root,{...proof,operation:'gap'}))
+
   writeFileSync(join(root,'Board.jsx'),code+'\n// harmless')
   assert.doesNotThrow(()=>verifyRuntimeRecord(root,proof))
   for(const changed of [code.replace('row.uid','row.index'),code.replace('<article>','<article hidden>'),code.replace('useRows(reduce,initial)','useRows(other,initial)')]){
