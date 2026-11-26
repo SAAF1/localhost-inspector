@@ -345,10 +345,17 @@
     catch { return }
     if (destination?.route !== savedRoute) return
     sessionStorage.removeItem(editDestinationKey)
-    if (!pendingRows.some(edit => edit.id === destination.id)) return
+    const edit = pendingRows.find(row => row.id === destination.id)
+    if (!edit) return
     if (panel.hidden) setOpen(true)
     editsUI.showEdits()
     const navigation = ++editNavigation
+    if (edit.prepared && !comparing && !edit.previewHidden) {
+      const current = () => navigation === editNavigation && destination.route === savedRoute && route() === currentRoute
+      await ui.preparedPreview.waitForMember(edit, current)
+      if (!current()) return
+      syncPending()
+    }
     if (await selectEditTarget(destination.id, navigation)) editsUI.markSelected(destination.id)
     else if (navigation === editNavigation && destination.route === savedRoute) {
       if (recovery.hasPreparedOperation(destination.id))

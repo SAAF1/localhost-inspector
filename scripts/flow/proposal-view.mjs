@@ -53,6 +53,17 @@ function contextAddress(origin, { frame, route, expanded, variant }) {
   return destination
 }
 
+// An app can navigate beyond its captured frames. Keep that live route in
+// this history entry so refreshing the workspace can reopen it without
+// assigning a made-up frame or publishing it as a shareable comparison.
+export function lastAppRoute(state, origin) {
+  const path = state?.inspectorAppRoute
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return null
+  const url = new URL(path, origin)
+  if (url.origin !== origin || url.pathname.startsWith('/__inspector')) return null
+  return url.pathname + url.search + url.hash
+}
+
 // Keep the address usable by the coding agent, including when normal in-app
 // navigation or a same-route dialog changes the active scenario.
 export function trackContext(frame, read) {
@@ -62,9 +73,17 @@ export function trackContext(frame, read) {
   let timer
   const syncAddress = () => {
     if (!frame.isConnected || frame.contentDocument !== doc) return
-    const address = contextAddress(location.origin, read())
-    if (address && address.href !== location.href) history.replaceState(history.state, '', address)
-    else if (!address && location.hash.startsWith('#context=')) history.replaceState(history.state, '', canvasAddress(location.origin))
+    const context = read()
+    const address = contextAddress(location.origin, context)
+    const route = !context.expanded && !context.frame &&
+      lastAppRoute({inspectorAppRoute: context.route}, location.origin) || null
+    const next = address || (location.hash.startsWith('#context=') ? canvasAddress(location.origin) : location)
+    if (next.href !== location.href || (history.state?.inspectorAppRoute ?? null) !== route) {
+      const state = { ...history.state }
+      if (route) state.inspectorAppRoute = route
+      else delete state.inspectorAppRoute
+      history.replaceState(state, '', next.href)
+    }
   }
   const update = () => {
     clearTimeout(timer)

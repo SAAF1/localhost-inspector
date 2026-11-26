@@ -323,6 +323,25 @@
   function locate(edit) {
     return document.querySelector(revisionSelector(edit.prepared.revision))
   }
+  // A saved destination may mount its members after the application fetches
+  // its data. Observe this revision only while the requested page is open.
+  function waitForMember(edit, current) {
+    const present = () => locate(edit)?.isConnected
+    if (!current() || present()) return
+    return new Promise(resolve => {
+      const finish = () => {
+        clearTimeout(timer)
+        observer.disconnect()
+        resolve()
+      }
+      const observer = new MutationObserver(() => {
+        if (!current() || present()) finish()
+      })
+      const timer = setTimeout(finish, 4500)
+      observer.observe(document.body, {childList: true, subtree: true, attributes: true,
+        attributeFilter: ['data-li-revision', 'data-li-render-revision']})
+    })
+  }
   function observe(edit, visible, hidden) {
     if (!hidden && stale(edit)) return { state: 'stale' }
     const { revision, site, field } = edit.prepared
@@ -349,5 +368,5 @@
     const edit = revision && declarations.get(revision + ':' + property)
     return edit?.property === property ? edit.requested : undefined
   }
-  ui.preparedPreview = { choiceBackgroundToken, withdrawnBackground, receivesChoice, choiceFields, choiceValues, membersOf, samePart, contract, project, locate, authored, shows, read, showsEffect, observe }
+  ui.preparedPreview = { choiceBackgroundToken, withdrawnBackground, receivesChoice, choiceFields, choiceValues, membersOf, samePart, contract, project, locate, waitForMember, authored, shows, read, showsEffect, observe }
 })()

@@ -2,7 +2,7 @@ import { mountEditionSwitcher } from './edition-switcher.mjs'
 import './tooltip.js'
 import { prepareWorkspaceInspector } from './inspector-request.mjs'
 import { mountVariantSections } from './variant-sections.mjs'
-import { addLinkedFrame, addVariantFrame, proposalEntry, resolveProposalFrame, trackContext } from './proposal-view.mjs'
+import { addLinkedFrame, addVariantFrame, lastAppRoute, proposalEntry, resolveProposalFrame, trackContext } from './proposal-view.mjs'
 import { connectSidebar } from './workspace-sidebar.mjs'
 import { frameGap, flowHeadingSpace, groupFlowFrames, renderFrames } from './render-frames.mjs'
 import { flowRoute, observeSurfaces } from './page-state.mjs'
@@ -1291,7 +1291,7 @@ function requestedVariant() {
 }
 const comparisonEntry = proposalEntry(data, location.search)
 if (comparisonEntry) await openContext(comparisonEntry, requestedVariant())
-else preview.src = data.frames.some(frame => frame.route === entry) ? entry : '/'
+else preview.src = lastAppRoute(history.state, location.origin) ?? (data.frames.some(frame => frame.route === entry) ? entry : '/')
 window.addEventListener('hashchange', () => {
   const link = proposalEntry(data, location.search)
   if (link) void openContext(link, requestedVariant())
