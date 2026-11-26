@@ -25,6 +25,13 @@ export async function linkedCanvas(project) {
   return record?.directory
 }
 
+export async function projectAuthoringStyles(project, binding = project) {
+  const { authoringStyles } = await import('../../variables-catalog.mjs')
+  const canvas = await linkedCanvas(binding)
+  const state = canvas && await json(join(canvas, 'inspector-state.json')).catch(missing)
+  return authoringStyles(project, state?.registrations)
+}
+
 export async function canvasProject(directory) {
   if (!directory) return null
   const record = await json(join(directory, marker)).catch(missing)
@@ -74,7 +81,7 @@ async function register(path, record) {
   } finally { await rm(staging, { force: true }) }
 }
 
-async function add(directory, id, anchor, label, preview, route, source, section, note) {
+async function add(directory, id, anchor, label, preview, route, source, section, note, steps) {
   if (!(await canvasProject(directory))) throw Error('Expected an initialized canvas')
   if (!validId.test(id) || !label.trim() || !route.startsWith('/') || new URL(route, 'http://localhost').origin !== 'http://localhost') throw Error('Invalid variant ID, label or route')
   const map = await json(join(directory, 'map.json'))
@@ -85,21 +92,43 @@ async function add(directory, id, anchor, label, preview, route, source, section
   if (!(await stat(join(root, 'index.html'))).isFile()) throw Error('Expected a built preview with index.html')
   const stage = await mkdtemp(join(variants, '.adding-'))
   try {
+    if (steps) for (const step of steps) await mkdir(join(stage, 'steps', step.key), { recursive: true })
     await cp(root, join(stage, 'preview'), { recursive: true, filter: async source => {
       const item = await lstat(source)
       if (!item.isDirectory() && !item.isFile()) throw Error('Preview contains a link or special file: ' + basename(source))
       return true
     } })
     if (source) await register(join(stage, 'source.json'), { path: relative(await realpath(directory), await realpath(source)) })
-    await writeFile(join(stage, 'frame.json'), JSON.stringify({ id, anchor, label, route, section, note, created: Date.now() }))
+    await writeFile(join(stage, 'frame.json'), JSON.stringify({ id, anchor, label, route, section, note, steps, created: Date.now() }))
     await rename(stage, join(variants, id))
   } finally { await rm(stage, { recursive: true, force: true }) }
 }
 
+async function addFlow(directory, id, anchor, preview, manifest, source) {
+  const { section, steps } = await json(manifest)
+  if (typeof section !== 'string' || !section.trim() || !Array.isArray(steps) || !steps.length)
+    throw Error('A flow needs a section name and an ordered list of steps')
+  const keys = new Set()
+  const entries = steps.map(({ key, label, route, note, reviewNote, sectionPath }) => {
+    if (typeof key !== 'string' || !validId.test(key) || keys.has(key.toLowerCase()) ||
+        typeof label !== 'string' || !label.trim() || typeof route !== 'string' ||
+        !route.startsWith('/') || new URL(route, 'http://localhost').origin !== 'http://localhost' ||
+        (reviewNote !== undefined && typeof reviewNote !== 'string') ||
+        (note !== undefined && typeof note !== 'string')) throw Error('Invalid or duplicate flow step: ' + key)
+    if (sectionPath !== undefined && (!Array.isArray(sectionPath) || sectionPath.length > 8 ||
+        sectionPath.some(name => typeof name !== 'string' || !name.trim()))) throw Error('Invalid section path for ' + key)
+    keys.add(key.toLowerCase())
+    return { key, label, route, note, reviewNote, sectionPath }
+  })
+  await add(directory, id, anchor, section, preview, entries[0].route, source, section, undefined, entries)
+}
+
 async function attachSource(directory, id, source) {
-  if (!validId.test(id) || !(await canvasProject(directory))) throw Error('Expected a saved canvas frame')
-  const frame = join(directory, 'variants', id)
-  if ((await json(join(frame, 'frame.json'))).id !== id) throw Error('Unknown saved frame')
+  const [owner, step, extra] = id.split('~')
+  if (!validId.test(owner) || (step !== undefined && !validId.test(step)) || extra !== undefined || !(await canvasProject(directory))) throw Error('Expected a saved canvas frame')
+  const frame = join(directory, 'variants', owner)
+  const record = await json(join(frame, 'frame.json'))
+  if (record.id !== owner || (step && !record.steps?.some(entry => entry.key === step))) throw Error('Unknown saved frame')
   await register(join(frame, 'source.json'), { path: relative(await realpath(directory), await realpath(source)) })
 }
 
@@ -110,7 +139,14 @@ export async function canvasVariants(directory) {
     if (frame.id !== item.name) throw Error('Mismatched saved frame ID')
     return frame
   }))
-  return frames.sort((a, b) => a.created - b.created || a.id.localeCompare(b.id))
+  return frames.sort((a, b) => a.created - b.created || a.id.localeCompare(b.id)).flatMap(frame => {
+    if (!frame.steps) return [frame]
+    return frame.steps.map(({ key, label, route, note, reviewNote, sectionPath, respondedAt }) => {
+      if (typeof key !== 'string' || !validId.test(key)) throw Error('Invalid saved flow step')
+      return { id: frame.id + '~' + key, anchor: frame.anchor, section: frame.section, created: frame.created,
+        label, route, note, reviewNote, sectionPath, respondedAt }
+    })
+  })
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
@@ -118,7 +154,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   if (command === 'components' && args.length === 3) {
     const { lookupComponents } = await import('./component-lookup.mjs')
     const { authoringGuidance } = await import('./authoring-guidance.mjs')
-    console.log(JSON.stringify({ ...await lookupComponents(...args), authoringGuidance }, null, 2))
+    const [components, styles] = await Promise.all([lookupComponents(...args), projectAuthoringStyles(args[0])])
+    console.log(JSON.stringify({ ...components, styles, authoringGuidance }, null, 2))
   }
   else if ((command === 'activity' && args.length === 1) || (command === 'respond' && args.length >= 2)) {
     const [path, ...ids] = args
@@ -140,6 +177,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   else if (command === 'init' && (args.length === 2 || args.length === 3)) await initCanvas(...args)
   else if (command === 'bind' && args.length === 2) await bindCanvas(...args)
   else if (command === 'attach-source' && args.length === 3) await attachSource(...args)
+  else if (command === 'add-flow' && (args.length === 5 || args.length === 6)) await addFlow(...args)
   else if (command === 'add') {
     const options = new Map()
     while (args.at(-2) === '--section' || args.at(-2) === '--note') {
@@ -151,5 +189,5 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     if (args.length !== 6 && args.length !== 7) throw Error('Expected ID, anchor, label, preview and route')
     await add(...args.slice(0, 6), args[6], options.get('--section'), options.get('--note'))
   }
-  else throw Error('Usage: canvas.mjs activity CANVAS_OR_APP | respond CANVAS_OR_APP ID [ID ...] | components PROJECT (--used-in SOURCE_FILE | --find COMPONENT_NAME) | export CANVAS ZIP BUILT_ORIGINAL [PORTABLE_INSPECTOR_STATE_JSON] | import ZIP NEW_CANVAS | init CANVAS MAP [APP_DIRECTORY] | bind CANVAS APP_DIRECTORY | attach-source CANVAS ID EDITABLE_SOURCE | add CANVAS ID ANCHOR LABEL BUILT_PREVIEW ROUTE [EDITABLE_SOURCE] [--section NAME] [--note TEXT]')
+  else throw Error('Usage: canvas.mjs activity CANVAS_OR_APP | respond CANVAS_OR_APP ID [ID ...] | components PROJECT (--used-in SOURCE_FILE | --find COMPONENT_NAME) | export CANVAS ZIP BUILT_ORIGINAL [PORTABLE_INSPECTOR_STATE_JSON] | import ZIP NEW_CANVAS | init CANVAS MAP [APP_DIRECTORY] | bind CANVAS APP_DIRECTORY | attach-source CANVAS ID EDITABLE_SOURCE | add-flow CANVAS ID ANCHOR BUILT_PREVIEW MANIFEST_JSON [EDITABLE_SOURCE] | add CANVAS ID ANCHOR LABEL BUILT_PREVIEW ROUTE [EDITABLE_SOURCE] [--section NAME] [--note TEXT]')
 }

@@ -41,6 +41,12 @@ test('Variables audits live page values, preserves named roles, and rejects ambi
     }
     const collect = (id = '/first') => ui.scanVariablesPage(doc, { id, label: id }, catalogs)
     const first = collect()
+    const shorthand = doc.createElement('div')
+    shorthand.style.cssText = 'display:grid; gap: var(--pad) 9px; padding: var(--pad) 9px; border:1px solid var(--ink)'
+    doc.querySelector('#group').append(shorthand)
+    const bindings = collect().entries.flatMap(entry => entry.occurrences
+      .filter(hit => hit.node === shorthand && entry.name).map(hit => [entry.name, hit.property, hit.edges]))
+    shorthand.remove()
     const by = (scan, category, name) => scan.entries.find(entry => entry.category === category && entry.name === name)
     const body = by(first, 'typography', 'Body')
     const repeat = body.occurrences.find(hit => hit.label === 'Repeat')
@@ -54,7 +60,7 @@ test('Variables audits live page values, preserves named roles, and rejects ambi
     ] }
     const combined = ui.variablesInventory([first, legacy])
     return {
-      rawWhite: white.occurrences.length,
+      bindings, rawWhite: white.occurrences.length,
       withSavedScreen: combined.entries.find(item => item.id === white.id).occurrences.length,
       bodyCount: body.occurrences.length, literalNames: first.entries.filter(e => e.category === 'typography' && !e.name).flatMap(e => e.occurrences.map(hit => hit.label)).sort(),
       linkedInk: first.entries.filter(e => e.name === 'ink' && e.value === 'rgb(68, 85, 102)').flatMap(e => e.occurrences).length, unused: by(first, 'color', 'other-ink').occurrences.length,
@@ -68,6 +74,7 @@ test('Variables audits live page values, preserves named roles, and rejects ambi
     }
   })
   assert.deepEqual(results, {
+    bindings: [['ink', 'border-color', ['top', 'right', 'bottom', 'left']], ['pad', 'padding', ['top', 'bottom']], ['pad', 'gap', ['row']]],
     rawWhite: 2, withSavedScreen: 3,
     bodyCount: 3, literalNames: ['Italic', 'Same measurements'], linkedInk: 2, unused: 0,
     fixedLiteral: '6px', autoMargins: 0,

@@ -110,7 +110,7 @@ export function renderFrames(map, data, groups, activate, viewOf, previews, swit
     return [{ from, to, wire, path }]
   })
 
-  function layout(extraColumns) {
+  function layout(placeExtras) {
     let y = 0
     for (const group of groups) {
       const heading = headings.get(group)
@@ -154,8 +154,9 @@ export function renderFrames(map, data, groups, activate, viewOf, previews, swit
         card.updatePreviewState()
         card.unavailable.style.height = cardHeight + 'px'
         card.button.style.minHeight = cardHeight + card.labelHeight + 'px'
-        x += (width + frameGap) * (1 + (extraColumns?.get(card.id) || 0))
-        rowHeight = Math.max(rowHeight, cardHeight + card.labelHeight)
+        const occupied = placeExtras?.(card)
+        x += width + frameGap + ((occupied?.slotWidth ?? width) + frameGap) * (occupied?.columns ?? 0)
+        rowHeight = Math.max(rowHeight, cardHeight + card.labelHeight + (occupied?.extraHeight ?? 0))
       }
       y += rowHeight + 320
     }

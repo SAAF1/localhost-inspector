@@ -58,3 +58,30 @@ node local-helper.mjs "$state" serve
 In `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select `extension/`. Open the extension's options and enter the pairing key from the state directory's `pairing-key` file. Open the bound app URL and invoke **Attach Localhost Inspector** from Chrome's Extensions menu.
 
 In a separate terminal at the repository root, run `node local-helper.mjs "$HOME/.localhost-inspector" status` to find the journal. Use the same state directory you chose during setup.
+
+### Publish a multi-step canvas flow
+
+Run `node scripts/flow/canvas.mjs add-flow CANVAS FLOW_ID ANCHOR BUILT_PREVIEW MANIFEST_JSON [EDITABLE_SOURCE]`. Use an initialized canvas, an existing anchor frame, and a build that can reopen each step directly. The manifest supplies the section title and the steps in reading order.
+
+```json
+{
+  "section": "Swap a ticket",
+  "steps": [
+    { "key": "draft", "label": "Original attachment", "route": "/chats?demo=draft" },
+    { "key": "choose", "label": "Choose a replacement", "route": "/chats?demo=choose" },
+    { "key": "updated", "label": "Updated attachment", "route": "/chats?demo=updated" }
+  ]
+}
+```
+
+Each step can include a short `note`. All steps share one saved build and editable source. Each has its own preview origin, Inspector edits, and activity ID (`FLOW_ID~key`). The command publishes the section after all steps are ready. For a single-screen variant, use `canvas.mjs add`.
+
+To review a saved flow, run `npm run review:flow -- CANVAS_URL FLOW_ID OUTPUT_DIRECTORY` against the running Inspector. A separate headless Chromium session opens each saved step, captures its preview, and switches through Components, Text styles, Colors, Spacing, and Layers. The output directory receives numbered PNGs and a `review.json` with each step’s route, rendered-text hash, inventory samples, and browser errors. This checks the published states. Testing the actions between states requires an interaction test.
+
+A step can include a `sectionPath` such as `["Components", "Ticket attachment"]`. Each name creates a nested section below the flow; steps sharing the same path share a section. A component review frame can import the actual component and render its supported states together. Put the source name and the comparison to make in the step’s `note`. The headless report includes this note, the section path, and a direct canvas link.
+
+Proposal creation and component lookup include the project's typography utilities and named color and spacing variables with their CSS source paths. Linked projects prefer the canvas registrations for each registered category. Unregistered categories use exported theme declarations. The lookup reports a typography class only when its utility binds the full recipe.
+
+A flow step can add a plain-text `reviewNote` beneath its preview for a comparison or interaction to try. The shorter `note` remains the caption. Nested sections alternate surface colors automatically in light and dark themes.
+
+Select a section title or a mockup frame title to change its fill in Design. The picker, opacity, and visibility controls work like Canvas fill. Both surfaces support a uniform corner radius and a single stroke color and weight. Width and height resize the mockup viewport. Section dimensions follow the frames inside. These workspace appearance settings are saved in the current browser for that localhost origin. Clicking the preview still opens the mockup for interaction.

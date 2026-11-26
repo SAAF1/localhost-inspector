@@ -125,14 +125,14 @@
     return result
   }
 
-  function declaration(style, names, ignoreExpandedShorthands) {
+  function declaration(style, names, ignoreExpandedShorthands, projectValue) {
     const values = names.flatMap(name => {
       if (ignoreExpandedShorthands &&
           ((name === 'padding' && style.getPropertyValue(names[0])) ||
           ((name === 'padding-block' || name === 'padding-inline') &&
             names.some(side => side.startsWith(name + '-') && style.getPropertyValue(side))))) return []
       const value = style.getPropertyValue(name).trim()
-      return value ? [{ value, important: style.getPropertyPriority(name) === 'important' }] : []
+      return value ? [{ value: projectValue ? projectValue(name, value) : value, important: style.getPropertyPriority(name) === 'important' }] : []
     })
     if (style.getPropertyValue('all')) return { value: '', important: style.getPropertyPriority('all') === 'important', uncertain: true }
     if (!values.length) return null
@@ -172,20 +172,20 @@
     return winners[winner]
   }
 
-  function localDeclaration(node, property, forTemplate = false, originalInline, positional = false) {
-    const names = declarationNames(node, property)
+  function localDeclaration(node, property, forTemplate = false, originalInline, positional = false, audit) {
+    const names = audit?.names ?? declarationNames(node, property)
     const shorthand = /^(?:font-|line-height$)/.test(property) ? 'font'
       : property === 'background-color' ? 'background' : property === 'border-color' ? 'border' : null
     const inline = originalInline
       ? originalInline.value && { value: originalInline.value, important: originalInline.priority === 'important' }
-      : declaration(node.style, names, forTemplate)
+      : declaration(node.style, names, forTemplate, audit?.project)
     // A renderer can write equal inline values from independent component settings.
     const inlineValue = () => forTemplate || inline?.uncertain ? null : inline?.value
     if (inline?.important) return inlineValue()
     const entries = candidates(node)
     if (!entries || entries.some(({ rule }) => rule.cssRules?.length)) return !forTemplate && inline && !inline.uncertain ? inline.value : null
     const values = entries.flatMap(({ rule, layer, uncertain, source, rulePath, ownerPath }) => {
-      const entry = declaration(rule.style, names, forTemplate)
+      const entry = declaration(rule.style, names, forTemplate, audit?.project)
       if (!entry && (!shorthand || !rule.style.getPropertyValue(shorthand))) return []
       if (!entry) return [{ important: rule.style.getPropertyPriority(shorthand) === 'important', uncertain: true }]
       const rank = layer ?? Number.POSITIVE_INFINITY
@@ -225,6 +225,34 @@
 
   ui.authoredProperty = (node, property) => node.getRootNode() === node.ownerDocument
     ? propertySource(node, property) : node.style.getPropertyValue(property) || null
+  // CSSOM can retain a var() only on the shorthand. Project the winning
+  // declaration onto the audited edge. Complex substitutions stay unnamed.
+  ui.auditDeclaration = (node, property) => {
+    if (node.getRootNode() !== node.ownerDocument) return ui.authoredProperty(node, property)
+    const axis = ['row-gap', 'column-gap'].indexOf(property)
+    const paddingSide = ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'].indexOf(property)
+    const borderSide = /^border-(top|right|bottom|left)-color$/.exec(property)?.[1]
+    const names = axis >= 0 ? [property, 'gap'] : declarationNames(node, property)
+    if (property === 'background-color') names.push('background')
+    if (borderSide) names.push('border-' + borderSide, 'border-color', 'border')
+    if (names.length === 1) return ui.authoredProperty(node, property)
+    function project(name, value) {
+      if (name === property) return value
+      const parts = value.trim().split(/\s+/)
+      if (name === 'gap' && parts.length <= 2) return parts[axis] ?? parts[0]
+      if (name === 'padding' && parts.length <= 4 && paddingSide >= 0) {
+        const [top, right = top, bottom = top, left = right] = parts
+        return [top, right, bottom, left][paddingSide]
+      }
+      // Only a single explicit color token in a simple solid border qualifies.
+      if (/^border(?:-(?:top|right|bottom|left))?$/.test(name) &&
+          parts.length === 3 && parts.includes('solid') && parts.some(part => /^(?:[\d.]+px|thin|medium|thick)$/.test(part))) {
+        return parts.find(part => /^var\(--[\w-]+\)$/.test(part)) ?? value
+      }
+      return value
+    }
+    return localDeclaration(node, property, false, undefined, false, { names, project })
+  }
   ui.authoredTemplateSource = (node, property, originalInline, positional) => {
     if (node.getRootNode() !== node.ownerDocument) return null
     // Only a declaration owned by this template part establishes a shared edit scope.

@@ -99,14 +99,14 @@ function localPreviewUrl(route, origin) {
       ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) return url
 }
 
-export function addVariantFrame(map, variant, gap, inspect) {
+export function addVariantFrame(map, variant, gap, inspect, relayout) {
   if (!variant.id || !variant.label) return
   const url = localPreviewUrl(variant.route, variant.origin)
   if (!url) return
-  return previewFrame(map, variant.anchor, variant.label, variant.label, url, gap, variant.id, inspect, variant)
+  return previewFrame(map, variant.anchor, variant.label, variant.label, url, gap, variant.id, inspect, variant, null, relayout)
 }
 
-function previewFrame(map, anchor, label, name, url, gap, variant, inspect, definition, selectComparison) {
+function previewFrame(map, anchor, label, name, url, gap, variant, inspect, definition, selectComparison, relayout) {
   const wrapper = document.createElement('section')
   if (variant) wrapper.dataset.variant = variant
   wrapper.className = 'linked-frame'
@@ -137,6 +137,14 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
   cover.type = 'button'
   cover.setAttribute('aria-label', 'Interact with ' + name)
   wrapper.append(caption, app, cover)
+  let review
+  if (typeof definition?.reviewNote === 'string' && definition.reviewNote.trim()) {
+    review = document.createElement('aside')
+    review.className = 'frame-review'
+    review.setAttribute('aria-label', 'Review note for ' + name)
+    review.textContent = definition.reviewNote
+    wrapper.append(review)
+  }
   map.append(wrapper)
 
   function stop(focus) {
@@ -166,11 +174,42 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
     app.focus({ preventScroll: true })
   }
   cover.onclick = open
-  if (variant) caption.addEventListener('click', () => open())
+  let frameFill = null
+  let defaultFill = 'white'
+  let customWidth
+  let customHeight
+  const paintSurface = variant && {
+    element: app,
+    resize(width, height) {
+      customWidth = width ?? customWidth
+      customHeight = height ?? customHeight
+      relayout?.()
+    },
+    key: 'frame:' + variant, kind: 'Frame', color: () => defaultFill,
+    render(color) {
+      frameFill = color
+      app.style.backgroundColor = color ?? ''
+      if (ready) app.contentWindow.postMessage({ type: 'canvas-frame-backdrop', active: color !== null }, url.origin)
+    },
+  }
+  if (variant) {
+    const select = document.createElement('button')
+    select.type = 'button'
+    select.textContent = label
+    select.setAttribute('aria-label', 'Select ' + label + ' frame')
+    select.onclick = () => inspect?.(inspection, 'surface')
+    title.replaceChildren(select)
+  }
   function exit(event) {
     if (event.origin !== url.origin || event.source !== app.contentWindow) return
+    if (variant && event.data?.type === 'canvas-frame-default') {
+      const color = event.data.color
+      if (typeof color === 'string' && CSS.supports('color', color)) defaultFill = color
+      return
+    }
     if (variant && event.data === 'variant-inspection-ready') {
       ready = true
+      if (frameFill !== null) paintSurface.render(frameFill)
       if (inspection.editable) inspect?.(inspection, definition.hasEdits ? 'restore' : 'ready')
       if (!app.inert) {
         inspect?.(inspection, 'reload')
@@ -211,12 +250,15 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
 
   return {
     id: anchor,
-    variant, label, open,
+    variant, label, open, paintSurface,
+    get customWidth() { return customWidth },
+    markSurface(selected) { wrapper.toggleAttribute('data-paint-selected', selected) },
     get section() { return wrapper.closest('.variant-section') },
     placeIn(parent) {
       if (wrapper.parentElement !== parent) parent.moveBefore(wrapper, null)
     },
     bounds: null,
+    get reviewHeight() { return review?.offsetHeight ?? 0 },
     get captionHeight() { return caption.offsetHeight },
     setPreviewOrigin(origin) {
       const next = localPreviewUrl(url.pathname + url.search + url.hash, origin)
@@ -228,11 +270,14 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
       inspection.origin = next.origin
       app.src = next.href
     },
-    place(card, column) {
-      const x = card.x + (card.width + gap) * column
-      this.bounds = { ...card, x }
+    get hidden() { return wrapper.hidden },
+    place(card, column, rowOffset = 0, hidden = false, slotWidth = card.width) {
+      wrapper.hidden = hidden
+      const x = card.x + card.width + gap + (slotWidth + gap) * (column - 1)
+      const y = card.y + rowOffset
+      this.bounds = { ...card, x, y, width: customWidth ?? card.width, height: customHeight ?? card.height }
       Object.assign(wrapper.style, { left: x + 'px',
-        top: card.y + card.labelHeight + 'px', width: card.width + 'px', height: card.height + 'px' })
+        top: y + card.labelHeight + 'px', width: this.bounds.width + 'px', height: this.bounds.height + 'px' })
     },
     remove() {
       if (inspection) inspect?.(inspection, 'dispose')

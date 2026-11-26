@@ -6,11 +6,17 @@ import { createHarness } from './harness.mjs'
 
 test('Command-click and Layers inspect the rendered content of a cross-origin canvas variant', async t => {
   const server = createServer(async (request, response) => {
+    if (request.url.endsWith('/variant-inspector')) {
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, value: {
+        componentCatalog: { definitions: [{ source: 'draft.jsx', name: 'DraftLink', markers: ['draft-link'], fields: [] }] },
+      } }))
+      return
+    }
     if (await serveWorkspaceAsset(request.url, response)) return
     response.writeHead(200, { 'content-type': 'text/html' }).end(`<!doctype html>
       <script type="module" src="/__inspector-flow/preview-wheel.mjs"></script>
       <main style="padding:40px"><h1>Saved draft heading</h1>
-      <a href="/destination" target="_blank">Open draft report</a><p>Saved draft body</p>${Array.from({ length: 40 }, (_, i) => '<p>Detail ' + i + '</p>').join('')}</main>`)
+      <a data-slot="draft-link" href="/destination" target="_blank">Open draft report</a><p>Saved draft body</p>${Array.from({ length: 40 }, (_, i) => '<p>Detail ' + i + '</p>').join('')}</main>`)
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   t.after(() => new Promise(resolve => server.close(resolve)))
@@ -34,7 +40,7 @@ test('Command-click and Layers inspect the rendered content of a cross-origin ca
     finally { await page.keyboard.up('Meta') }
     const tree = page.frameLocator('iframe[title="Variant layers"]').getByRole('tree', { name: 'Layers' })
     await tree.getByRole('treeitem', { name: 'Saved draft heading', exact: true, selected: true }).waitFor({ timeout: 5000 })
-    const hoveredLink = tree.locator('[data-hovered][aria-label="Open draft report"]')
+    const hoveredLink = tree.locator('[data-hovered][aria-label="DraftLink"]')
     const link = app.getByRole('link', { name: 'Open draft report' })
     await link.hover()
     await page.keyboard.down('Meta')
@@ -44,7 +50,7 @@ test('Command-click and Layers inspect the rendered content of a cross-origin ca
     } finally { await page.keyboard.up('Meta') }
     await hoveredLink.waitFor({ state: 'hidden' })
     await link.click({ modifiers: ['Meta'] })
-    await tree.getByRole('treeitem', { name: 'Open draft report', exact: true, selected: true }).waitFor({ timeout: 5000 })
+    await tree.getByRole('treeitem', { name: 'DraftLink', exact: true, selected: true }).waitFor({ timeout: 5000 })
     assert.equal(page.context().pages().length, 1)
     const bodyRow = tree.getByRole('treeitem', { name: 'Saved draft body', exact: true })
     await bodyRow.press('Enter')
@@ -52,9 +58,14 @@ test('Command-click and Layers inspect the rendered content of a cross-origin ca
     assert.equal(await bodyRow.getAttribute('aria-selected'), 'true')
     await app.locator('p[data-localhost-inspector-selected]').waitFor()
     const layers = page.frameLocator('iframe[title="Variant layers"]')
+    await layers.getByRole('button', { name: 'Layers', exact: true }).click()
+    await layers.getByRole('menuitemradio', { name: 'Components' }).click()
+    await layers.getByText('DraftLink', { exact: true }).waitFor()
+    await layers.getByRole('button', { name: 'Components', exact: true }).click()
+    await layers.getByRole('menuitemradio', { name: 'Layers' }).click()
     const collapse = layers.getByRole('button', { name: 'Collapse layers' })
     const beforeScroll = await collapse.boundingBox()
-    const scrolled = await layers.locator('main').evaluate(list => {
+    const scrolled = await layers.locator('.li-variables-layers').evaluate(list => {
       list.scrollTop = list.scrollHeight
       return list.scrollTop
     })
@@ -129,7 +140,7 @@ test('the outside flow menu previews a folded frame and restores the deep varian
     const ellipsis = layers.getByRole('button', { name: 'Expand skipped ancestors' })
     await ellipsis.click()
     await layers.getByRole('button', { name: 'Collapse skipped ancestors' }).click()
-    const pane = layers.locator('main')
+    const pane = layers.locator('.li-variables-layers')
     const section = layers.locator('[aria-roledescription="flow"][aria-label="Flow 13"]')
     await section.locator(':scope > .workspace-layer-line .workspace-layer-caret').click()
     await pane.evaluate(node => { node.scrollTop = 0 })
@@ -158,7 +169,7 @@ test('the outside flow menu previews a folded frame and restores the deep varian
       const hovered = layers.locator('[data-outline-key="frame:child-13"][data-hovered] > .workspace-layer-line')
       await hovered.waitFor()
       assert.ok(await hovered.evaluate(row => {
-        const view = row.closest('main')
+        const view = row.closest('.li-variables-layers')
         const bounds = view.getBoundingClientRect()
         const box = row.getBoundingClientRect()
         const centered = Math.abs(bounds.y + bounds.height / 2 - box.y - box.height / 2) < 2
@@ -210,5 +221,35 @@ test('the outside flow menu previews a folded frame and restores the deep varian
     await sectionRow.waitFor()
     assert.equal(await sectionRow.getAttribute('aria-expanded'), 'true')
     await sectionRow.getByRole('treeitem', { name: 'Draft', exact: true }).waitFor()
+  } finally { await h.close() }
+})
+
+test('a canvas section wraps its mockups and discloses later rows without remounting them', async () => {
+  const flowVariants = Array.from({ length: 5 }, (_, i) => ({
+    id: 'step-' + i, label: 'Step ' + i, section: 'Review', sectionPath: i === 4 ? ['Components', 'Button'] : [], route: '/', anchor: 'first', origin: 'http://127.0.0.1:1',
+  }))
+  const h = await createHarness({ canvas: true, dock: true, flowVariants })
+  try {
+    await h.open()
+    const page = h.page
+    await page.goto(page.url().split('#')[0] + '#context=1&frame=first&page=%2F&view=canvas&variant=*')
+    const section = page.locator('.variant-section[aria-label="Review"]')
+    const frames = section.locator('[data-variant]')
+    const last = frames.last()
+    await last.waitFor()
+    const positions = await frames.evaluateAll(items => items.map(el => [el.offsetLeft, el.offsetTop]))
+    assert.equal(positions[0][1], positions[2][1])
+    assert.equal(positions[0][0], positions[3][0])
+    assert.ok(positions[3][1] > positions[2][1])
+    await section.locator('.variant-section[aria-label="Components"] > .variant-section[aria-label="Button"] [data-variant="step-4"]').waitFor()
+    const surface = section.locator(':scope > .variant-section-surface')
+    const height = await surface.evaluate(el => el.offsetHeight)
+    const iframe = await last.locator('iframe').elementHandle()
+    await section.getByRole('button', { name: 'Collapse Review rows' }).press('Enter')
+    assert.equal(await frames.locator('visible=true').count(), 3)
+    assert.ok(await surface.evaluate(el => el.offsetHeight) < height)
+    await section.getByRole('button', { name: 'Expand Review rows' }).press('Enter')
+    assert.equal(await frames.locator('visible=true').count(), 5)
+    assert.equal(await last.locator('iframe').evaluate((node, original) => node === original, iframe), true)
   } finally { await h.close() }
 })

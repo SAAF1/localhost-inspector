@@ -27,6 +27,7 @@ const assets = new Map([
   ['color-preview.mjs', ['color-preview.mjs', 'text/javascript']],
   ['spacing-preview.mjs', ['spacing-preview.mjs', 'text/javascript']],
   ['workspace-activity.mjs', ['workspace-activity.mjs', 'text/javascript']],
+  ['inventory-ui.mjs', ['inventory-ui.mjs', 'text/javascript']],
   ['workspace-sidebar.mjs', ['workspace-sidebar.mjs', 'text/javascript']],
   ['workspace-layers.mjs', ['workspace-layers.mjs', 'text/javascript']],
   ['workspace-layer-flows.mjs', ['workspace-layer-flows.mjs', 'text/javascript']],
@@ -60,7 +61,9 @@ export function serveWorkspaceAsset(path, response, canvasEditor = false) {
   return true
 }
 
-const previewAssets = new Set(['inspector-request.mjs', 'variant-editor.html', 'variant-editor.mjs', 'variant-runtime.mjs', 'component-preview.js',
+const previewAssets = new Set(['inventory-ui.mjs', 'panel-styles.js', 'menu.js', 'variables-styles.js', 'variables-typography.js',
+  'variables-panel.js', 'policy.js', 'authored-styles.js', 'text-style-values.js', 'color-bindings.js', 'solid-color-picker.js',
+  'spacing-gap.js', 'variables-audit.js', 'sidebar.css', 'color-preview.mjs', 'spacing-preview.mjs', 'inspector-request.mjs', 'variant-editor.html', 'variant-editor.mjs', 'variant-runtime.mjs', 'component-preview.js',
   'inter-latin.woff2', 'preview-wheel.mjs', 'variant-inspection.mjs', 'variant-layers.mjs',
   'variant-layers.html', 'workspace-layers.mjs', 'workspace-layer-row.mjs', 'workspace-layer-hover.mjs', 'workspace-layer-flows.mjs', 'workspace-layer-details.mjs', 'workspace-layers.css', 'tokens.js', 'styles.js',
   'icons.js', 'dom.js', 'tooltip.js'].map(name => flowPath + name))

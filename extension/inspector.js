@@ -476,7 +476,7 @@
     }
     if (!hasSelection) {
       const section = groupCount ? ui.selectionColors(roots, palette) : canvasSection
-      ui.updateInspectorFields(fields, section ? [section] : [])
+      ui.updateInspectorFields(fields, section ? [].concat(section) : [])
       return
     }
     if (overlayFor(node)) {
@@ -669,7 +669,7 @@
   closeInspector.onclick = toggleInspector
   if (host.hasAttribute('data-workspace-toolbar')) {
     new MutationObserver(() => renderFields()).observe(host.parentElement, {
-      attributes: true, attributeFilter: ['data-canvas-page'],
+      attributes: true, attributeFilter: ['data-canvas-page', 'data-canvas-paint-target', 'data-surface-geometry'],
     })
     host.addEventListener('request-variables-catalog', async event => {
       if (loadingRoute) return

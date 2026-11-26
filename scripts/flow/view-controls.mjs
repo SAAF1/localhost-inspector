@@ -159,6 +159,9 @@ const variablePattern = /^--[a-zA-Z_][a-zA-Z0-9_-]{0,79}$/
 export function connectCanvasBackground(dock, viewport) {
   const fallback = getComputedStyle(document.documentElement).backgroundColor
   const defaults = { color: fallback, opacity: 100, visible: true }
+  let target
+  const overrides = new Map()
+  let canvasPaint = defaults
   let paint = defaults
 
   function valid(value) {
@@ -169,8 +172,17 @@ export function connectCanvasBackground(dock, viewport) {
       (value.variable === undefined || (typeof value.variable === 'string' && variablePattern.test(value.variable)))
   }
 
-  function apply() {
-    dock.dataset.canvasBackground = JSON.stringify(paint)
+  function surfaceColor(paint) {
+    if (!paint) return null
+    if (!paint.visible) return 'transparent'
+    return 'color-mix(in srgb, ' + paint.color + ' ' + paint.opacity + '%, transparent)'
+  }
+
+  function render(paint) {
+    if (target) {
+      target.render(surfaceColor(paint))
+      return
+    }
     const background = paint.visible
       ? 'color-mix(in srgb, ' + paint.color + ' ' + paint.opacity + '%, ' + fallback + ')'
       : fallback
@@ -181,9 +193,21 @@ export function connectCanvasBackground(dock, viewport) {
 
   try {
     const stored = JSON.parse(localStorage.getItem(preferenceKey))
-    if (valid(stored)) paint = stored
+    if (valid(stored)) canvasPaint = paint = stored
   } catch { /* A blocked or invalid preference leaves the default usable. */ }
+  function apply() {
+    dock.dataset.canvasBackground = JSON.stringify(paint)
+    render(target ? overrides.get(target.key) : paint)
+  }
   apply()
+  dock.addEventListener('preview-inspector-canvas-color', event => {
+    if (event.target !== dock.firstElementChild) return
+    if (event.detail === null) render(target ? overrides.get(target.key) : paint)
+    else {
+      const preview = { ...paint, color: event.detail }
+      if (valid(preview)) render(preview)
+    }
+  }, true)
 
   dock.addEventListener('set-inspector-canvas-background', event => {
     if (event.target !== dock.firstElementChild || typeof event.detail !== 'string') return
@@ -193,8 +217,69 @@ export function connectCanvasBackground(dock, viewport) {
     if (!valid(candidate)) return
     const { color, opacity, visible, variable } = candidate
     paint = { color, opacity, visible, variable }
+    if (target) overrides.set(target.key, paint)
+    else canvasPaint = paint
     apply()
-    try { localStorage.setItem(preferenceKey, JSON.stringify(paint)) }
+    try { localStorage.setItem(target ? preferenceKey + '/' + target.key : preferenceKey, JSON.stringify(paint)) }
     catch { /* Keep the current workspace color when storage is unavailable. */ }
   }, true)
+  function restore(surface) {
+    if (!surface.loadedGeometry) {
+      surface.loadedGeometry = true
+      try {
+        surface.savedGeometry = JSON.parse(localStorage.getItem(preferenceKey + '/geometry/' + surface.key)) ?? {}
+        updateGeometry(surface, surface.savedGeometry)
+      } catch { /* Preserve the fitted geometry without storage. */ }
+    }
+    if (!overrides.has(surface.key)) {
+      try {
+        const stored = JSON.parse(localStorage.getItem(preferenceKey + '/' + surface.key))
+        if (valid(stored)) overrides.set(surface.key, stored)
+      } catch { /* The original fill remains usable without storage. */ }
+    }
+    const saved = overrides.get(surface.key)
+    if (saved && target?.key !== surface.key) surface.render(surfaceColor(saved))
+  }
+  function syncGeometry() {
+    if (!target) { delete dock.dataset.surfaceGeometry; return }
+    const style = getComputedStyle(target.element)
+    const geometry = { width: target.element.offsetWidth, height: target.element.offsetHeight,
+      radius: parseFloat(style.borderTopLeftRadius), stroke: style.borderTopColor, weight: parseFloat(style.borderTopWidth) }
+    const encoded = JSON.stringify(geometry)
+    if (dock.dataset.surfaceGeometry !== encoded) dock.dataset.surfaceGeometry = encoded
+  }
+  function updateGeometry(surface, values) {
+    const { radius, stroke, weight, width, height } = values ?? {}
+    const size = value => Number.isFinite(value) && value >= 0 && value <= 8192
+    if (size(radius)) surface.element.style.borderRadius = radius + 'px'
+    if (size(weight)) surface.element.style.borderWidth = weight + 'px'
+    if (typeof stroke === 'string' && valid({ ...defaults, color: stroke })) surface.element.style.borderColor = stroke
+    if (surface.resize && ((size(width) && width >= 1) || (size(height) && height >= 1))) {
+      surface.resize(size(width) && width >= 1 ? width : undefined, size(height) && height >= 1 ? height : undefined)
+    }
+  }
+  dock.addEventListener('set-inspector-surface-geometry', event => {
+    if (!target || event.target !== dock.firstElementChild) return
+    const request = JSON.parse(event.detail)
+    if (request.key !== target.key) return
+    const values = { ...target.savedGeometry, ...request.changes }
+    updateGeometry(target, request.changes)
+    target.savedGeometry = values
+    try { localStorage.setItem(preferenceKey + '/geometry/' + target.key, JSON.stringify(values)) } catch { /* session only */ }
+    syncGeometry()
+  }, true)
+  const observer = new ResizeObserver(syncGeometry)
+  function select(surface) {
+    if (target?.key === surface?.key) return
+    render(target ? overrides.get(target.key) : canvasPaint)
+    observer.disconnect()
+    target = surface
+    if (surface) observer.observe(surface.element)
+    syncGeometry()
+    paint = surface ? overrides.get(surface.key) ?? { ...defaults, color: surface.color() } : canvasPaint
+    dock.dataset.canvasPaintKind = surface?.kind ?? 'Canvas'
+    dock.dataset.canvasPaintTarget = surface?.key ?? ''
+    apply()
+  }
+  return { restore, select }
 }

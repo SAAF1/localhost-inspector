@@ -182,7 +182,11 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const [command, ...args] = process.argv.slice(2)
   try {
     let record
-    if (command === 'create' && args.length === 2) record = { ...createProposal(...args), authoringGuidance }
+    if (command === 'create' && args.length === 2) {
+      const { projectAuthoringStyles } = await import('./flow/canvas.mjs')
+      const proposal = createProposal(...args)
+      record = { ...proposal, styles: await projectAuthoringStyles(proposal.appRoot, proposal.sourceRoot), authoringGuidance }
+    }
     else if (command === 'status' && args.length === 1) record = proposalStatus(...args)
     else if (command === 'refresh' && args.length === 2) record = await refreshProposal(...args)
     else if (command === 'accept' && args.length === 1) record = await acceptProposal(...args)

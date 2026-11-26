@@ -1,9 +1,11 @@
 // Returned to the authoring agent before it writes a canvas variant.
 export const authoringGuidance = [
   'Start with the user’s goal. Decide what idea each variant explores and which interactions matter.',
-  'Identify the smallest useful pieces for each idea. Look for existing app components and usage examples where they fit. The canvas components command supports --used-in and --find.',
+  'Identify the smallest useful pieces for each idea. Look for existing app components and usage examples where they fit. The source lookup returns component imports and project styles together. Reach for the supplied typography class and semantic color or spacing variable where they fit (for example gap: var(--space-2) when that token exists).',
   'Build any missing reusable pieces in the variant’s editable source. Give them names that describe their purpose and implement the states the design actually uses.',
+  'For newly authored reusable components, publish a Components subsection inside the flow. Import the real component into a review frame and show each meaningful supported state together. Use a step sectionPath such as ["Components"]. Register configurable component roots with the existing component integration so their instances are identifiable in Layers and Components. Use its note to identify the source component, what changed, and what to compare. Reused unchanged primitives need no gallery.',
   'Compose those pieces into larger patterns and then the screen. Share a pattern across variants when the prompt calls for consistency. Let different directions use different pieces.',
+  'For a multi-step flow, publish each meaningful step as a named frame in reading order. Use canvas add-flow with one build and a manifest containing section and ordered steps (key, label, route, optional note). Use an optional reviewNote for a write-up beneath a preview when someone needs context to evaluate it. Give each step its own starting state in the same implementation. Check the canvas overview and reopen each step before handoff.',
   'When adding each variant to the canvas, use --note to give it one or two short sentences in everyday language. Say what it explores and why you made the main design choice.',
   'When the user responds to existing variants, list canvas activity for their canvas or linked app, then use canvas respond with each referenced variant ID. Opening, inspecting, and creating other variants leave existing items in Inbox.',
 ]

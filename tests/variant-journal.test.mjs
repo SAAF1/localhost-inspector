@@ -102,3 +102,36 @@ test('a different preview, opaque origin or ordinary HTML form cannot write a va
     await handleVariantInspector({ method, headers: { origin, 'content-type': contentType } }, response, address, forbidden)
   }
 })
+
+test('a flow publishes ordered states together and transfers one preview with independent journals', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'canvas-flow-states-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const [capture, canvas, app, manifest, zip, imported] = ['capture', 'canvas', 'build', 'flow.json', 'trial.zip', 'imported'].map(name => join(root, name))
+  await Promise.all([mkdir(capture), mkdir(app)])
+  await writeFile(join(capture, 'map.json'), JSON.stringify({ frames: [{ id: 'inbox', route: '/' }] }))
+  await writeFile(join(app, 'index.html'), '<main>Inbox</main>')
+  const cli = (...args) => execute(process.execPath, ['scripts/flow/canvas.mjs', ...args])
+  const step = key => ({ key, label: key, route: '/inbox?state=' + key })
+  await cli('init', canvas, capture)
+  const publish = () => cli('add-flow', canvas, 'swap', 'inbox', app, manifest)
+  await writeFile(manifest, JSON.stringify({ section: 'Swap', steps: [step('start'), step('start')] }))
+  await assert.rejects(publish)
+  const list = async dir => JSON.parse((await cli('activity', dir)).stdout)
+  assert.deepEqual(await list(canvas), [])
+  await writeFile(manifest, JSON.stringify({ section: 'Swap', steps: [step('start'), step('choose'), step('finish')] }))
+  await publish()
+  const ids = ['swap~start', 'swap~choose', 'swap~finish']
+  assert.deepEqual((await list(canvas)).map(entry => entry.id), ids)
+  await cli('respond', canvas, ids[1])
+  const journal = { version: 1, revision: 2, edits: [] }
+  await writeFile(join(canvas, 'variants/swap/steps/choose/edits.json'), JSON.stringify(journal))
+  await cli('export', canvas, zip, app)
+  const listing = (await execute('python3', ['-m', 'zipfile', '-l', zip])).stdout
+  assert.equal(listing.match(/variants\/.*?preview\/index\.html/g)?.length, 1)
+  await cli('import', zip, imported)
+  assert.deepEqual(await list(imported), await list(canvas))
+  for (const key of ['start', 'choose', 'finish']) {
+    const store = variantJournal(join(imported, 'variants/swap/steps', key), 'swap~' + key)
+    assert.equal((await store.handle({ type: 'load', route: '/' })).revision, key === 'choose' ? 2 : 0)
+  }
+})

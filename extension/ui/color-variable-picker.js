@@ -123,7 +123,7 @@
       await custom.onChange(value)
       current = null
       updateSelection()
-    }) : null
+    }, custom.onPreview) : null
     tabButtons[0].hidden = !solid
     tabButtons[1].hidden = !showLibraries
     if (!spacing) popup.append(header)

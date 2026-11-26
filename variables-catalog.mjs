@@ -1,5 +1,6 @@
 // The audit reads exported design values. Registration remains authoritative for editing.
 import { opendir, readFile, stat } from 'node:fs/promises'
+import { declaresVariable, variableName } from './journal-values.mjs'
 import { discoverComponentCatalog } from './component-catalog.mjs'
 import { join, relative } from 'node:path'
 
@@ -43,6 +44,38 @@ export function declaredVariables(css) {
     }
   }
   return { colorCatalog: [...colors], spacingCatalog: [...spacing], textStyleCatalog: [...styles] }
+}
+
+// Supply the exact CSS names the project already exports at authoring time.
+export async function authoringStyles(root, registrations = {}) {
+  const typography = new Map(), spacing = new Map(), colors = new Map(), utilities = new Map()
+  for await (const { source, css } of styleSheets(root)) {
+    const { colorCatalog, spacingCatalog, textStyleCatalog } = declaredVariables(css)
+    for (const [names, target, registration] of [
+      [colorCatalog, colors, registrations.colors], [spacingCatalog, spacing, registrations.spacing],
+      [textStyleCatalog, typography, registrations['text-styles']],
+    ]) {
+      if (registration && registration.source !== source) continue
+      const available = registration ? registration.names.filter(name => variableName.test(name) &&
+        (target === typography ? fields.every(field => declaresVariable(css, name + '-' + field)) : declaresVariable(css, name))) : names
+      for (const name of available) if (!target.has(name)) target.set(name, source)
+    }
+    for (const [, name, body] of css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/@utility\s+([\w-]+)\s*\{([^{}]*)\}/g)) {
+      const declarations = new Map([...body.matchAll(/(?:^|;)\s*([\w-]+)\s*:\s*var\(\s*(--[\w-]+)\s*\)\s*(?=;|$)/g)]
+        .map(([, property, variable]) => [property, variable]))
+      const family = declarations.get('font-family')
+      if (!family?.endsWith('-font-family')) continue
+      const token = family.slice(0, -'-font-family'.length)
+      if (fields.every(field => declarations.get(field) === token + '-' + field)) utilities.set(token, { className: name, source })
+    }
+  }
+  function byFile(tokens) {
+    return [...Map.groupBy(tokens, ([, source]) => source)].map(([source, entries]) => ({ source, tokens: entries.map(([token]) => token).sort() }))
+  }
+  return {
+    typography: [...typography].map(([token, source]) => ({ token, source, utility: utilities.get(token) })),
+    spacing: byFile(spacing), colors: byFile(colors),
+  }
 }
 
 export async function discoverVariablesCatalog(root, registered = {}) {

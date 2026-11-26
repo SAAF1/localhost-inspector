@@ -48,7 +48,7 @@
 
   const clamp = value => Math.min(1, Math.max(0, value))
 
-  ui.solidColorPicker = (initialValue, onChange) => {
+  ui.solidColorPicker = (initialValue, onChange, onPreview) => {
     const panel = ui.element('div', 'li-solid-color')
     panel.setAttribute('role', 'tabpanel')
     panel.setAttribute('aria-label', 'Custom')
@@ -114,13 +114,20 @@
       state = { ...hsv(red, green, blue), alpha: alpha / 255 }
       display()
     }
+    let previewing = false
+    function clearPreview() {
+      if (previewing) onPreview?.(null)
+      previewing = false
+    }
     function reset(value) {
+      clearPreview()
       acceptedValue = value
       showValue(value)
     }
     function updateValue() {
       const { hue: angle, saturation, brightness, alpha } = state
       currentValue = 'rgb(' + rgb(angle, saturation, brightness).join(' ') + ' / ' + alpha + ')'
+      if (onPreview) { previewing = true; onPreview(currentValue) }
       display()
     }
     async function commit(value = currentValue) {
@@ -201,7 +208,14 @@
       void commit(input.value)
     }
 
-    function stopSampling() { sampler?.abort() }
+    function stopSampling() {
+      sampler?.abort()
+      if (previewing) {
+        pointer = null
+        reset(acceptedValue)
+      }
+    }
+    hue.onpointercancel = opacity.onpointercancel = () => reset(acceptedValue)
     async function sampleColor() {
       if (!browser || sampler || pending) return
       const controller = new AbortController()

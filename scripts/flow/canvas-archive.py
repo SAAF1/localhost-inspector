@@ -98,6 +98,22 @@ def add_source(z, canvas, folder):
             copy_tree(z, source, ref_path, source=True)
     z.writestr('variants/' + folder.name + '/source.json', json.dumps({'path': ref_path}))
 
+def frame_stores(folder, frame):
+    if 'steps' not in frame:
+        return [(frame['id'], frame, folder)]
+    steps = frame['steps']
+    if not isinstance(steps, list) or not steps:
+        raise ValueError('Expected an ordered list of flow steps')
+    stores = []
+    keys = set()
+    for step in steps:
+        key = step['key']
+        if not FRAME_ID.fullmatch(key) or key.lower() in keys:
+            raise ValueError('Invalid or duplicate flow step')
+        keys.add(key.lower())
+        stores.append((frame['id'] + '~' + key, step, folder / 'steps' / key))
+    return stores
+
 def saved_edits(folder):
     database = folder / 'edits.sqlite'
     if database.exists():
@@ -164,7 +180,7 @@ def export(directory, output, app, inspector_state=None):
                     raise ValueError('Possible credential in Inspector edits')
                 z.writestr('inspector-state.json', encoded)
             folders = sorted(f for f in (canvas / 'variants').iterdir() if FRAME_ID.fullmatch(f.name))
-            registered = {f.name for f in folders}
+            registered = {id for f in folders for id, _, _ in frame_stores(f, read_json(f / 'frame.json'))}
             mapped = read_json(canvas / 'map.json')
             if any(v['id'] not in registered for v in mapped.get('variants', [])):
                 raise ValueError('Save the preview files for every linked variant before exporting')
@@ -189,17 +205,20 @@ def export(directory, output, app, inspector_state=None):
                 if frame['id'] != folder.name:
                     raise ValueError('Invalid saved frame ID')
                 prefix = 'variants/' + folder.name
-                if frame['id'] in responses:
-                    frame['respondedAt'] = responses[frame['id']]
+                for id, entry, store in frame_stores(folder, frame):
+                    if id in responses:
+                        entry['respondedAt'] = responses[id]
+                    if store.is_symlink() or (folder / 'steps').is_symlink():
+                        raise ValueError('Unexpected journal directory link')
+                    edits = saved_edits(store)
+                    if edits is not None:
+                        z.writestr((store.relative_to(canvas) / 'edits.json').as_posix(), json.dumps(edits))
                 data = json.dumps(frame).encode('utf8')
                 if SENSITIVE.search(data):
                     raise ValueError('Possible credential in frame metadata')
                 z.writestr(prefix + '/frame.json', data)
                 copy_tree(z, folder / 'preview', prefix + '/preview')
                 add_source(z, canvas, folder)
-                edits = saved_edits(folder)
-                if edits is not None:
-                    z.writestr(prefix + '/edits.json', json.dumps(edits))
             copy_tree(z, app, 'original')
         os.link(temp.name, output)  # publish once; keep an existing archive intact
 
@@ -234,21 +253,25 @@ def unpack(archive, destination):
             raise ValueError('Incomplete canvas package')
         variant_dir = root / 'variants'
         variant_dir.mkdir(exist_ok=True)
+        registered = set()
         for frame in variant_dir.iterdir():
             if not FRAME_ID.fullmatch(frame.name) or read_json(frame / 'frame.json')['id'] != frame.name or not (frame / 'preview/index.html').is_file():
                 raise ValueError('Invalid packaged variant')
-            if (frame / 'edits.sqlite').exists():
-                raise ValueError('Expected a portable JSON variant journal')
-            if (frame / 'edits.json').exists():
-                edits = read_json(frame / 'edits.json')
-                if edits.get('version') != 1 or not isinstance(edits.get('edits'), list) or type(edits.get('revision')) is not int or edits['revision'] < 0:
-                    raise ValueError('Unknown variant edit format')
+            for id, _, store in frame_stores(frame, read_json(frame / 'frame.json')):
+                registered.add(id)
+                store.mkdir(parents=True, exist_ok=True)
+                if (store / 'edits.sqlite').exists():
+                    raise ValueError('Expected a portable JSON variant journal')
+                if (store / 'edits.json').exists():
+                    edits = read_json(store / 'edits.json')
+                    if edits.get('version') != 1 or not isinstance(edits.get('edits'), list) or type(edits.get('revision')) is not int or edits['revision'] < 0:
+                        raise ValueError('Unknown variant edit format')
             if (frame / 'source.json').exists():
                 source = safe_name(read_json(frame / 'source.json')['path'])
                 if not (root / source).exists():
                     raise ValueError('Missing packaged editable source')
         mapped = read_json(root / 'map.json')
-        if not isinstance(mapped['frames'], list) or any(not FRAME_ID.fullmatch(v['id']) or not (variant_dir / v['id']).is_dir() for v in mapped.get('variants', [])):
+        if not isinstance(mapped['frames'], list) or any(v['id'] not in registered for v in mapped.get('variants', [])):
             raise ValueError('Missing packaged canvas frame')
         root.rename(target)
 

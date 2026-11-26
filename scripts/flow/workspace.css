@@ -11,8 +11,10 @@ body { margin: 0; }
 .linked-frame { position: absolute; }
 .frame-caption { position: absolute; inset: auto 0 100%; padding-bottom: 12px; overflow-wrap: anywhere; }
 .frame-caption h2 { margin: 0; font: 500 27px/1.2 system-ui; }
+.frame-caption h2 button { font: inherit; color: inherit; text-align: left; background: transparent; border: 0; padding: 0; cursor: pointer; }
+.linked-frame[data-paint-selected] iframe { outline: 2px solid #007be5; }
 .frame-caption p { margin: 4px 0 0; font: 400 20px/1.35 system-ui; }
-.linked-frame iframe { display: block; width: 100%; height: 100%; border: 0; background: white; outline: 2px solid #d5d8d1; }
+.linked-frame iframe { display: block; width: 100%; height: 100%; box-sizing: border-box; border: 2px solid #d5d8d1; background: white; }
 .linked-frame > button { position: absolute; inset: 0; width: 100%; background: transparent; border: 0; cursor: pointer; }
 .linked-frame > button:focus-visible, .linked-frame:focus-within iframe { outline: 3px solid #2563c9; }
 #workspace-toolbar button { font: inherit; color: inherit; cursor: pointer; }
@@ -212,6 +214,7 @@ iframe#variant-properties { display:block; height:100%; padding:0; border:0; }
 }
 @media (prefers-color-scheme: dark) {
   .variant-section-surface { background: #323433; border-color: #545753; }
+  .variant-section .frame-caption { color: #f1f2ef; }
 }
 
 .variant-section-surface h2 button {
@@ -219,3 +222,22 @@ iframe#variant-properties { display:block; height:100%; padding:0; border:0; }
 }
 .variant-section[data-selected] > .variant-section-surface { outline: 2px solid #007be5; }
 .variant-section[data-selected] > .variant-section-surface h2 { color: #007be5; }
+
+.variant-section-surface .section-disclosure {
+  margin-inline-start: 12px; min-width: 1.15em; border-radius: 4px;
+}
+.section-disclosure:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+
+.variant-section[data-fill="inset"] > .variant-section-surface {
+  background: #f2f4f1; border-color: #c1c8bf;
+}
+.frame-review {
+  position: absolute; top: 100%; left: 0; right: 0; box-sizing: border-box;
+  padding: 18px 0 0; max-width: 72ch; white-space: pre-line; overflow-wrap: anywhere;
+  color: #384039; font: 400 20px/1.45 system-ui;
+}
+@media (prefers-color-scheme: dark) {
+  .variant-section[data-fill="inset"] > .variant-section-surface { background: #414742; border-color: #626a62; }
+  .variant-section .variant-section > .variant-section-surface h2,
+  .variant-section .frame-review { color: #f1f2ef; }
+}

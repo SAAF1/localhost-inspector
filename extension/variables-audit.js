@@ -69,7 +69,7 @@
 
   // Scan an already-rendered app document. Never acquire focus, change a route,
   // mount application controls, or count screenshots as inspected documents.
-  ui.scanVariablesPage = (doc, page, catalogs = {}, observeRoot) => {
+  ui.scanVariablesPage = (doc, page, catalogs = {}, observeRoot, matchSourceSlots = false) => {
     const entries = new Map()
     if (!doc?.body || !doc.defaultView) return { page, entries: [] }
     const win = doc.defaultView
@@ -82,8 +82,10 @@
     }
 
     const sourceById = new Map()
+    const sourceBySlot = new Map()
     for (const def of catalogs.componentCatalog?.definitions ?? []) {
       const item = entry('component', def.source, def.name, def.name)
+      if (matchSourceSlots) for (const marker of def.markers ?? []) sourceBySlot.set(marker, item)
       item.source = def.source
       item.fields = def.fields
       item.unmapped = true
@@ -129,7 +131,7 @@
 
     function measured(category, node, property, value, declaration) {
       if (!tokens[category].size) return entry(category, null, undefined, value)
-      const authored = reference.exec((declaration === undefined ? ui.authoredProperty(node, property) : declaration) || '')?.[1]
+      const authored = reference.exec((declaration === undefined ? ui.auditDeclaration(node, property) : declaration) || '')?.[1]
       const names = tokens[category].get(authored)
       const name = names?.length === 1 && resolvers[category](node, authored) === value ? names[0] : null
       return entry(category, name, name ? simpleLabel(name) : undefined, value)
@@ -138,7 +140,7 @@
     function spacing(node, property, value) {
       const computed = node.computedStyleMap?.().get(property)
       if (computed?.value === 'auto' || String(computed).includes('%')) return null
-      const declaration = ui.authoredProperty(node, property)
+      const declaration = ui.auditDeclaration(node, property)
       // Viewport and container units resolve to px even in Typed OM.
       if (/(?:\d|\.)(?:[sld]?v(?:w|h|min|max|i|b)|cq(?:w|h|min|max|i|b))\b/i.test(declaration || '')) return null
       return measured('spacing', node, property, value, declaration)
@@ -165,7 +167,8 @@
         const add = (item, property, edges) => item.occurrences.push({
           pageId: page.id, label: label.slice(0, 120), property, node, key, ...(edges ? { edges } : {}),
         })
-        const fromSource = node.hasAttribute('data-inspector-instance') && sourceById.get(node.getAttribute('data-inspector-source'))
+        const fromSource = node.hasAttribute('data-inspector-instance')
+          ? sourceById.get(node.getAttribute('data-inspector-source')) : sourceBySlot.get(node.getAttribute('data-slot'))
         if (fromSource) fromSource.unmapped = false
         const definition = registeredDefinition(node)
         if (definition) {

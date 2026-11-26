@@ -1,6 +1,6 @@
 import './tooltip.js'
 import { prepareWorkspaceInspector } from './inspector-request.mjs'
-import { mountVariantSections } from './variant-sections.mjs'
+import { mountVariantSections, sectionColumns } from './variant-sections.mjs'
 import { addLinkedFrame, addVariantFrame, proposalEntry, resolveProposalFrame, trackContext } from './proposal-view.mjs'
 import { connectSidebar } from './workspace-sidebar.mjs'
 import { frameGap, flowHeadingSpace, groupFlowFrames, renderFrames } from './render-frames.mjs'
@@ -27,7 +27,7 @@ const zoom = document.querySelector('#zoom')
 const zoomPreset = document.querySelector('#zoom-preset')
 const notice = document.querySelector('#notice')
 const dock = document.querySelector('#localhost-inspector-dock')
-connectCanvasBackground(dock, viewport)
+const background = connectCanvasBackground(dock, viewport)
 const data = await fetch('./map.json').then(response => response.json())
 if (data.origin !== location.origin) throw Error('This flow map belongs to a different app origin')
 const presets = framePresets(data.viewport)
@@ -53,6 +53,7 @@ let layoutVariantSections
 let focusedVariant
 let outlinesByFlow
 let selectedSection
+let selectedFrameSurface
 let selectedFlow
 let selectedOriginal
 let pendingInspectTarget
@@ -65,13 +66,46 @@ const { cards, headings, layout: layoutFrames } = renderFrames(map, data, groups
   anchor => changeView({ preset: 'desktop', anchor }))
 function layout() {
   const extras = linkedFrame ? [linkedFrame, ...variantFrames.values()] : [...variantFrames.values()]
-  const columns = new Map()
-  for (const extra of extras) {
-    extra.column = (columns.get(extra.id) || 0) + 1
-    columns.set(extra.id, extra.column)
-  }
-  layoutFrames(columns)
-  for (const extra of extras) extra.place(cards.get(extra.id), extra.column)
+  const byAnchor = Map.groupBy(extras, frame => frame.id)
+  layoutFrames(card => {
+    const groups = Map.groupBy(byAnchor.get(card.id) ?? [], frame => frame.section?.closest('#map > .variant-section') ?? frame.section ?? frame)
+    const slotWidth = Math.max(card.width, ...(byAnchor.get(card.id) ?? []).map(frame => frame.customWidth ?? 0))
+    let columns = 0
+    let extraHeight = 0
+    for (const frames of groups.values()) {
+      let width = 1
+      let row = 0
+      let noteOffset = 0
+      const firstRows = new Map()
+      for (const [section, members] of Map.groupBy(frames, frame => frame.section)) {
+        const size = Math.min(members.length, sectionColumns)
+        width = Math.max(width, size)
+        const ancestors = []
+        for (let group = section; group; group = group.parentElement.closest('.variant-section')) {
+          if (!firstRows.has(group)) firstRows.set(group, row)
+          ancestors.push(group)
+        }
+        let visibleRows = 0
+        let rowNoteHeight = 0
+        members.forEach((frame, index) => {
+          if (index && index % size === 0) { noteOffset += rowNoteHeight; rowNoteHeight = 0 }
+          const localRow = Math.floor(index / size)
+          const hidden = ancestors.some(group => group.hasAttribute('data-collapsed') && row + localRow > firstRows.get(group))
+          const offset = (row + localRow) * (card.height + frameGap) + noteOffset
+          frame.place(card, columns + 1 + index % size, offset, hidden, slotWidth)
+          if (!hidden) {
+            visibleRows = localRow + 1
+            rowNoteHeight = Math.max(rowNoteHeight, (frame.reviewHeight ?? 0) + Math.max(0, frame.bounds.height - card.height))
+            extraHeight = Math.max(extraHeight, offset + rowNoteHeight)
+          }
+        })
+        noteOffset += rowNoteHeight
+        row += visibleRows
+      }
+      columns += width
+    }
+    return { columns, extraHeight, slotWidth }
+  })
   layoutVariantSections?.()
 }
 const updateSharpPreviews = createSharpPreviews(cards)
@@ -243,16 +277,18 @@ function getOutline() {
       if (!byAnchor.has(frame.id)) byAnchor.set(frame.id, [])
       const siblings = byAnchor.get(frame.id)
       const row = { kind: 'frame', label: frame.label, key: 'variant:' + frame.variant, children: [] }
-      const section = frame.section
-      if (!section) siblings.push(row)
-      else {
-        let parent = siblings.find(item => item.key === section.dataset.sectionKey)
+      const ancestors = []
+      for (let section = frame.section; section; section = section.parentElement.closest('.variant-section')) ancestors.unshift(section)
+      let children = siblings
+      for (const section of ancestors) {
+        let parent = children.find(item => item.key === section.dataset.sectionKey)
         if (!parent) {
           parent = { kind: 'section', label: section.getAttribute('aria-label'), key: section.dataset.sectionKey, children: [] }
-          siblings.push(parent)
+          children.push(parent)
         }
-        parent.children.push(row)
+        children = parent.children
       }
+      children.push(row)
     }
     outlinesByFlow = new Map(groups.map(group => {
       const items = group.frames.flatMap(({ id }) => {
@@ -263,7 +299,9 @@ function getOutline() {
         if (linkedFrame?.id === id) rows.push({ kind: 'frame', label: linkedFrame.label, key: 'comparison:' + id, children: [] })
         return rows.concat(variants)
       })
-      const keys = new Set(items.flatMap(item => [item.key, ...item.children.map(child => child.key)]))
+      const keys = new Set()
+      function collect(item) { keys.add(item.key); item.children.forEach(collect) }
+      items.forEach(collect)
       return [group.key, { key: group.key, label: group.label, items, keys }]
     }))
   }
@@ -275,6 +313,7 @@ function getOutline() {
   let selectedKey = activeKey
   if (selectedOriginal) selectedKey = 'frame:' + selectedOriginal
   if (selectedComparison && linkedFrame) selectedKey = 'comparison:' + linkedFrame.id
+  if (selectedFrameSurface) selectedKey = 'variant:' + selectedFrameSurface.variant
   if (selectedSection) selectedKey = selectedSection.dataset.sectionKey
   if (selectedFlow) selectedKey = 'flow:' + selectedFlow.key
   const isFlowKey = key => groups.length > 1 && key?.startsWith('flow:') && outlinesByFlow.has(key.slice(5))
@@ -283,13 +322,32 @@ function getOutline() {
     selectedKey: scope?.keys.has(selectedKey) || isFlowKey(selectedKey) ? selectedKey : null }
 }
 
+function revealSectionRow(frame) {
+  for (let section = frame.section; frame.hidden && section; section = section.parentElement.closest('.variant-section')) {
+    if (section.hasAttribute('data-collapsed')) section.querySelector('.section-disclosure')?.click()
+  }
+}
+
 function markFlow(group) {
   headings.get(selectedFlow)?.removeAttribute('data-selected')
   selectedFlow = group
   headings.get(group)?.setAttribute('data-selected', '')
 }
 
+const sectionPaints = new WeakMap()
+function sectionPaint(section) {
+  if (sectionPaints.has(section)) return sectionPaints.get(section)
+  const surface = section.firstElementChild
+  const paint = { element: surface, key: section.dataset.sectionKey, kind: 'Section', color: () => getComputedStyle(surface).backgroundColor,
+    render(color) { surface.style.backgroundColor = color ?? '' } }
+  sectionPaints.set(section, paint)
+  return paint
+}
+
 function markSection(section) {
+  selectedFrameSurface?.markSurface(false)
+  selectedFrameSurface = null
+  background.select(section && sectionPaint(section))
   selectedSection?.removeAttribute('data-selected')
   selectedSection?.querySelector('.variant-section-surface button').setAttribute('aria-pressed', 'false')
   selectedSection = section
@@ -339,6 +397,7 @@ async function onOpenOutline(key, expandedRow) {
   if (key === 'variant:' + id || (key === 'comparison:' + id && linkedFrame?.id === id)) {
     const frame = key.startsWith('variant:') ? variantFrames.get(id) : linkedFrame
     if (!frame || !clearCanvasSelection()) return
+    revealSectionRow(frame)
     frame.open()
     focusSidebarFrame(frame.bounds)
   } else if (key === 'frame:' + id && framesById.has(id)) {
@@ -382,6 +441,15 @@ function setActive(id, keepSelection = false) {
 }
 
 function inspectVariant(frame, action, details) {
+  if (action === 'surface') {
+    if (!clearCanvasSelection()) return
+    selectedFrameSurface = variantFrames.get(frame.variant)
+    flowFrameId = selectedFrameSurface.id
+    selectedFrameSurface.markSurface(true)
+    background.select(selectedFrameSurface.paintSurface)
+    sidebar?.refreshOutline()
+    return
+  }
   if (action === 'focus-layer') {
     const bounds = variantFrames.get(frame.variant)?.bounds
     if (expanded && inspectedVariant === frame.variant && bounds && Number.isFinite(details?.x) && Number.isFinite(details?.y)) {
@@ -720,6 +788,7 @@ function refreshVariants() {
   for (const [id, frame] of variantFrames) {
     if (!ids.has(id)) {
       if (inspectedVariant === id) sidebar?.leaveVariant()
+      if (selectedFrameSurface === frame) markSection(null)
       frame.remove()
       variantFrames.delete(id)
     }
@@ -730,10 +799,15 @@ function refreshVariants() {
       existing.placeIn(parent)
       return existing
     }
-    const frame = addVariantFrame(parent, item, frameGap, inspectVariant)
-    if (frame) variantFrames.set(item.id, frame)
+    const frame = addVariantFrame(parent, item, frameGap, inspectVariant, layout)
+    if (frame) {
+      variantFrames.set(item.id, frame)
+      background.restore(frame.paintSurface)
+    }
     return frame
-  }, selectSection)
+  }, selectSection, layout)
+  if (selectedSection && !selectedSection.isConnected) markSection(null)
+  for (const section of map.querySelectorAll('.variant-section')) background.restore(sectionPaint(section))
   outlinesByFlow = null
   layout()
   sidebar?.refreshOutline()
@@ -848,7 +922,7 @@ zoomPreset.addEventListener('change', () => {
   if (zoomPreset.value === 'fit') {
     const board = [...cards.values()]
     if (linkedFrame) board.push(linkedFrame.bounds)
-    for (const frame of variantFrames.values()) board.push(frame.bounds)
+    for (const frame of variantFrames.values()) if (!frame.hidden) board.push(frame.bounds)
     fitCards(board, width, height)
     return
   }
@@ -987,7 +1061,7 @@ function warmAt(x, y, inspect = false) {
   if (pendingCard || resizing) return
   // A single original document owns the user's live element selection.
   // Keep that document mounted while merely pointing at a different frame.
-  if (inspectedVariant || selectedFlow || selectedSection || selectedComparison ||
+  if (inspectedVariant || selectedFlow || selectedSection || selectedFrameSurface || selectedComparison ||
       preview.contentDocument?.querySelector('#localhost-inspector-outlines #outline:not([hidden])')) {
     clearHover()
     return
@@ -1367,15 +1441,18 @@ async function openContext(link, variantId) {
   if (!opened) return
   if (link.expanded !== expanded) toggleView()
   focusedVariant = expanded ? variantFrames.get(variantId) : null
-  if (expanded && variantId === '*' && !focusedVariant) {
-    const siblings = [...variantFrames.values()].filter(frame => frame.id === active)
+  if (expanded && (variantId === '*' || variantId?.endsWith('~*')) && !focusedVariant) {
+    const prefix = variantId.slice(0, -1)
+    const siblings = [...variantFrames.values()].filter(frame =>
+      frame.id === active && !frame.hidden && frame.variant.startsWith(prefix))
     if (siblings.length) {
-      focusedVariant = { id: active, variant: '*' }
+      focusedVariant = { id: active, variant: variantId }
       fitCards(siblings.map(frame => frame.bounds), viewport.clientWidth - dock.offsetWidth, viewport.clientHeight)
     }
     return
   }
   if (!focusedVariant || focusedVariant.id !== active) return
+  revealSectionRow(focusedVariant)
   const card = focusedVariant.bounds
   const width = viewport.clientWidth - dock.offsetWidth
   camera.scale = Math.max(minZoom, Math.min(1, (width - 80) / card.width,

@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import { extname, join, resolve, sep } from 'node:path'
 import { handleVariantInspector, variantJournal } from './variant-journal.mjs'
+import { variantCatalogs } from './variant-catalogs.mjs'
 import { canvasVariants } from './canvas.mjs'
 import { servePreviewAsset } from './workspace-assets.mjs'
 import { flowPath } from '../../extension/flow-attachment.js'
@@ -49,9 +50,12 @@ export function savedPreviewFrames(directory) {
   const origins = new Map()
   return async function merge(map) {
     const frames = new Map((map.variants ?? []).map(frame => [frame.id, frame]))
-    await Promise.all((await canvasVariants(directory)).map(async ({ id, anchor, label, route, section, note, created, respondedAt }) => {
-      const path = join(directory, 'variants', id)
-      const journal = variantJournal(path, id)
+    await Promise.all((await canvasVariants(directory)).map(async ({ id, anchor, label, route, section, sectionPath, note, reviewNote, created, respondedAt }) => {
+      const [owner, step] = id.split('~')
+      const path = join(directory, 'variants', owner)
+      const journal = step
+        ? variantJournal(join(path, 'steps', step), id, { catalogs: variantCatalogs(path) })
+        : variantJournal(path, id)
       if (!origins.has(id)) {
         const origin = startPreview(join(path, 'preview'), journal).catch(error => {
           origins.delete(id)
@@ -60,7 +64,7 @@ export function savedPreviewFrames(directory) {
         origins.set(id, origin)
       }
       // Keep insertion order independent of listener startup timing.
-      frames.set(id, { id, anchor, label, route, section, note, created, respondedAt, editable: true })
+      frames.set(id, { id, anchor, label, route, section, sectionPath, note, reviewNote, created, respondedAt, editable: true })
       frames.get(id).origin = await origins.get(id)
       frames.get(id).hasEdits = await journal.hasEdits()
     }))

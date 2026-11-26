@@ -210,8 +210,14 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
     const rowContext = { ui, rows, focus, onFocus(node) { focused = node } }
     const roots = source?.body ? renderedChildren(source.body) : []
     const deepPath = activeKey && !hover.hasTemporaryBranches ? selectedPath(roots) : []
-    const activeFrame = deepPath.length - 1 > 5 && outline?.items
-      .flatMap(item => [item, ...(item.children || [])]).find(item => item.key === activeKey && item.kind === 'frame')
+    function findFrame(items) {
+      for (const item of items ?? []) {
+        if (item.key === activeKey && item.kind === 'frame') return item
+        const child = findFrame(item.children)
+        if (child) return child
+      }
+    }
+    const activeFrame = deepPath.length - 1 > 5 && findFrame(outline?.items)
 
     function selectedPath(roots) {
       const path = []
