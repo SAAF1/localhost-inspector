@@ -37,3 +37,24 @@ test('panel declarations preserve a typed input and exclude a mismatched propert
   for(const [prop,value] of [['justify-content','12px'],['padding-inline','2rem 3rem'],['border','1px solid red']])
     assert.deepEqual(panelCssFields({prop,value}),[])
 })
+
+test('shared native font size uses only its explicit unambiguous JSX literal', async () => {
+  const {parse} = await import('@babel/parser')
+  const {literalStyleInput} = await import('../scripts/flow/component-parts.mjs')
+  const {preparedStyleTargets} = await import('../scripts/flow/prepared-site-qualification.mjs')
+  function targets(properties, base, tag='span') {
+    const code = 'const row = <span style={{' + properties + '}}/>'
+    const node = parse(code,{plugins:['jsx']}).program.body[0].declarations[0].init.openingElement
+    const qualified = literalStyleInput(node,'font-size')
+    if (!qualified) return
+    const sites = preparedStyleTargets({styles:[{styleInput:true,property:'font-size',tag,base}]},node,code)
+    return sites && code.slice(sites[0].start,sites[0].end)
+  }
+  assert.equal(targets('fontSize:13.5, color:theme','13.5px'),'13.5')
+  assert.equal(targets('fontSize:"14px"','14px'),'"14px"')
+  for (const props of ['fontSize:size','...style,fontSize:14','fontSize:14,[variable]:12',
+    'fontSize:14,fontSize:15','fontSize:14,font:"inherit"','fontSize:14,all:"revert"'])
+    assert.equal(targets(props,'14px'),undefined)
+  assert.equal(targets('fontSize:14','15px'),undefined)
+  assert.equal(targets('fontSize:14','14px','div'),undefined)
+})
