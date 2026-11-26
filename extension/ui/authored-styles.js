@@ -195,9 +195,11 @@
     const important = values.some(entry => entry.important)
     if (inline && !important) return inlineValue()
     if (!values.length) return undefined
-    if (values.some(entry => entry.uncertain)) return null
+    // An ambiguous reset in a lower-priority cascade layer cannot win.
+    if (values.some(entry => entry.important === important && entry.rank === undefined)) return null
     const rank = Math.max(...values.filter(entry => entry.important === important).map(entry => entry.rank))
     const winners = values.filter(entry => entry.important === important && entry.rank === rank)
+    if (winners.some(entry => entry.uncertain)) return null
     if (forTemplate) {
       const winner = strongestRule(winners)
       if (!winner || /^(?:inherit|unset|revert|revert-layer|currentcolor)$/i.test(winner.value)) return null

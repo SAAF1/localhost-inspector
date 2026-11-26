@@ -26,6 +26,8 @@ test('Variables audits live page values, preserves named roles, and rejects ambi
         line-height: var(--text-body-line-height); font-weight: var(--text-body-font-weight);
         letter-spacing: var(--text-body-letter-spacing);
       }
+      @layer reset { * { border: 0 solid } }
+      .derived { border: 1px solid var(--ink); background: color-mix(in oklab, var(--ink) 45%, transparent) }
       #group { background: white; --ink: #445566; --pad: 9px }
       #named { background: oklch(1 0 0) }
       .chip { color: var(--ink); padding: var(--pad); display: inline-block }
@@ -46,6 +48,12 @@ test('Variables audits live page values, preserves named roles, and rejects ambi
     doc.querySelector('#group').append(shorthand)
     const bindings = collect().entries.flatMap(entry => entry.occurrences
       .filter(hit => hit.node === shorthand && entry.name).map(hit => [entry.name, hit.property, hit.edges]))
+    const derived = doc.createElement('div')
+    derived.className = 'derived'
+    doc.querySelector('#group').append(derived)
+    const derivedProperties = collect().entries.filter(item => item.name === 'ink')
+      .flatMap(item => item.occurrences.filter(hit => hit.node === derived).map(hit => hit.property)).sort()
+    derived.remove()
     shorthand.remove()
     const by = (scan, category, name) => scan.entries.find(entry => entry.category === category && entry.name === name)
     const body = by(first, 'typography', 'Body')
@@ -60,7 +68,7 @@ test('Variables audits live page values, preserves named roles, and rejects ambi
     ] }
     const combined = ui.variablesInventory([first, legacy])
     return {
-      bindings, rawWhite: white.occurrences.length,
+      bindings, derivedProperties, rawWhite: white.occurrences.length,
       withSavedScreen: combined.entries.find(item => item.id === white.id).occurrences.length,
       bodyCount: body.occurrences.length, literalNames: first.entries.filter(e => e.category === 'typography' && !e.name).flatMap(e => e.occurrences.map(hit => hit.label)).sort(),
       linkedInk: first.entries.filter(e => e.name === 'ink' && e.value === 'rgb(68, 85, 102)').flatMap(e => e.occurrences).length, unused: by(first, 'color', 'other-ink').occurrences.length,
@@ -75,7 +83,7 @@ test('Variables audits live page values, preserves named roles, and rejects ambi
   })
   assert.deepEqual(results, {
     bindings: [['ink', 'border-color', ['top', 'right', 'bottom', 'left']], ['pad', 'padding', ['top', 'bottom']], ['pad', 'gap', ['row']]],
-    rawWhite: 2, withSavedScreen: 3,
+    derivedProperties: ['background-color', 'border-color'], rawWhite: 2, withSavedScreen: 3,
     bodyCount: 3, literalNames: ['Italic', 'Same measurements'], linkedInk: 2, unused: 0,
     fixedLiteral: '6px', autoMargins: 0,
     pads: [['top', 'right', 'bottom', 'left'], ['top', 'right', 'bottom', 'left']],

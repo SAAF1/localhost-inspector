@@ -131,7 +131,19 @@
 
     function measured(category, node, property, value, declaration) {
       if (!tokens[category].size) return entry(category, null, undefined, value)
-      const authored = reference.exec((declaration === undefined ? ui.auditDeclaration(node, property) : declaration) || '')?.[1]
+      const expression = (declaration === undefined ? ui.auditDeclaration(node, property) : declaration) || ''
+      // A tint retains its source role even though its rendered RGBA differs.
+      const tint = category === 'color' && /^color-mix\(in (srgb|oklab|oklch),\s*var\(\s*(--[\w-]+)\s*\)\s+([\d.]+)%,\s*transparent\)$/i.exec(expression)
+      if (tint) {
+        const roles = tokens.color.get(tint[2])
+        const base = resolvers.color(node, tint[2])
+        const expected = base && expression.replace(/var\([^)]*\)/, base)
+        if (roles?.length === 1 && expected && CSS.supports('color', expected) &&
+            rawColorId(expected, rawColors) === rawColorId(value, rawColors)) {
+          return entry(category, roles[0], simpleLabel(roles[0]), value)
+        }
+      }
+      const authored = reference.exec(expression)?.[1]
       const names = tokens[category].get(authored)
       const name = names?.length === 1 && resolvers[category](node, authored) === value ? names[0] : null
       return entry(category, name, name ? simpleLabel(name) : undefined, value)
