@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { localBindingNames } from './authored-use.mjs'
 import { identifier, member, reactReference, walk } from './record-render-path.mjs'
 
@@ -54,13 +54,18 @@ export function publicRecordCollection(tree, scope, collection, locals) {
   return matches.length === 1 ? matches[0] : undefined
 }
 
-export function publicRows(root, url, field) {
+export function publicRows(root, url, field, watchFile) {
   const pathname = new URL(url, 'http://localhost/').pathname
   if (!/^\/(?:[\w-]+\/)*[\w.-]+\.json$/.test(pathname)) return
   const file = join(root, 'public', pathname)
   try {
-    const stat = statSync(file)
-    if (!stat.isFile() || stat.size > 65536 || realpathSync(file) !== file) return
+    if (realpathSync(dirname(file)) !== dirname(file)) return
+    const stat = statSync(file,{throwIfNoEntry:false})
+    if (stat && (!stat.isFile() || realpathSync(file) !== file)) return
+    // Keep this edge when an invalid, absent or duplicated row disables the
+    // transform. Otherwise Vite can keep the refused module after repair.
+    watchFile?.(file)
+    if (!stat || stat.size > 65536) return
     const rows = JSON.parse(readFileSync(file, 'utf8'))
     if (!Array.isArray(rows) || !rows.length || rows.length > 256) return
     const seen = new Set()

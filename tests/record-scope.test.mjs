@@ -243,10 +243,11 @@ test('a checked-in complete data source qualifies typed keys across projections 
     }
     function Panel({item}){return <><section>{item.title}</section></>}`
   const file='Catalog.jsx'
+  const watched = new Set()
   const trace = async (code=source) => {
     writeFileSync(join(root,file),code)
     const tree=parseAuthoredJsx(code),out=new MagicString(code)
-    const marked=await markRecordCallers({root,file,code,tree,out,allowPublic:true,resolveImport:()=>null})
+    const marked=await markRecordCallers({root,file,code,tree,out,allowPublic:true,watchFile:path=>watched.add(path),resolveImport:()=>null})
     if (!marked) return
     parseAuthoredJsx(out.toString())
     const proof=JSON.parse(out.toString().match(/map\(__liRecordIdentity\((\{[^}]*\}),/)[1])
@@ -273,6 +274,9 @@ test('a checked-in complete data source qualifies typed keys across projections 
   for (const rows of [[reused,data[1]], [data[1]], [data[0], {...data[1],code:'8'}]]) {
     publish(rows);assert.throws(()=>verifyRecordSource(root,one))
   }
+  watched.clear()
+  assert.equal(await trace(),undefined)
+  assert.ok(watched.has(resource))
   publish(data)
   assert.equal(await trace(source.replace('return <main>', '{const all = null;return <main>').replace('</main>', '</main>}')),undefined)
   assert.equal(await trace(source.replace('all.current=rows','all.current=[]')),undefined)

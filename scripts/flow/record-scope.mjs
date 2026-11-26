@@ -159,9 +159,8 @@ export async function markRecordCallers({ root, file, code, tree, out, resolveIm
     }
     if (!host || !recordBranches(use, host.presentation.prop)) continue
     const id = useIdentity(file, ownerFile, code, use, ownerCode, host.root)
-    const dataset = use.resource && publicRows(root,use.resource,use.field)
+    const dataset = use.resource && publicRows(root,use.resource,use.field,watchFile)
     if (use.resource && !dataset) continue
-    if (dataset) watchFile?.(dataset.file)
     candidates.push({ use, ownerFile, id, dataset })
   }
   let marked = false
