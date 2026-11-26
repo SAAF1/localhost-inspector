@@ -534,3 +534,26 @@ test('Undo after Compare restores the preceding inline height through an app tra
     assert.equal(await h.app.locator('#target').evaluate(node => node.style.height), '45px')
   } finally { await h.close() }
 })
+
+test('fresh recovery preserves a stable changed height when repeated edits are pending', async () => {
+  const h = await createHarness({pendingEdits: true, appStyles: '#target {height:40px; transition:height 160ms ease}'})
+  try {
+    await h.open()
+    await h.select()
+    for (const value of [56, 60]) {
+      await h.enter('Height', value)
+      await h.settled()
+      assert.equal(await h.css('height'), value + 'px')
+    }
+    const fresh = await createHarness({pendingEdits: true, journal: await h.journal(),
+      appStyles: '#target {height:43px; transition:height 160ms ease}'})
+    try {
+      await fresh.open()
+      await fresh.showEdits()
+      await fresh.settled()
+      assert.equal(await fresh.css('height'), '43px')
+      assert.equal(await fresh.app.locator('#target').evaluate(node => node.style.height), '')
+      assert.deepEqual((await fresh.journal()).map(edit => edit.requested), ['56px', '60px'])
+    } finally { await fresh.close() }
+  } finally { await h.close() }
+})
