@@ -6,6 +6,7 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from '@babel/parser'
 import { baseRule, cssFields, cssParser } from './prepared-css.mjs'
+import { literalColorAttribute, panelOpening } from './prepared-site-qualification.mjs'
 import { localBindingNames } from './authored-use.mjs'
 import { forwardedHost } from './authored-forwarding.mjs'
 import { stylesheetGraph } from './stylesheet-graph.mjs'
@@ -144,12 +145,16 @@ function analyze(code, file, config) {
           }
         }
         const styles = eligible.filter((s) => eligible.filter((x) => s.property === x.property).length === 1)
-        if (config.panelBindings && !attr('style') && !config.css.indexError &&
+        if (config.panelBindings && (!attr('style') || (/^[a-z]/.test(name) && literalColorAttribute(opening))) && !config.css.indexError &&
             !opening.attributes.some(a => a.name?.name?.startsWith('data-li-'))) {
           for (const property of ['background-color', 'border-radius', 'font-size', 'height']) {
             if (!eligible.some(style => style.property === property))
               styles.push({ property, local: config.tailwind ? 'utilities' : 'ordinary' })
           }
+        }
+        if (styles.some(style => style.local) && /^[a-z]/.test(name)) {
+          raw.opening = panelOpening(code, opening)
+          raw.id = 'use-' + hash(JSON.stringify([file, entry.owner, raw.opening])).slice(0, 24)
         }
         if (styles.length) {
           found.push({

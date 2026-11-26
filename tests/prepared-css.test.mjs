@@ -13,3 +13,17 @@ test('ordinary logical padding passes through discovery without a physical edit 
     ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'])
   assert.deepEqual(cssFields({ prop: 'padding-left', value: '8px' }), ['padding-left'])
 })
+
+test('literal paint preserves prepared part identity without admitting opaque styles', async () => {
+  const { parseAuthoredJsx } = await import('../scripts/flow/authored-forwarding.mjs')
+  const { panelOpening, preparedOpenings, preparedStyleTargets } = await import('../scripts/flow/prepared-site-qualification.mjs')
+  const site = { styles: [{ local: 'ordinary', property: 'height' }] }
+  for (const [style, compatible] of [['', true], [' style={{ color: "#AB6E2F" }}', true],
+    [' style={props.style}', false], [' style={{ color: shade }}', false],
+    [' style={{ color: "#AB6E2F", height: 24 }}', false]]) {
+    const code = 'function Title(){return <p' + style + '>Example</p>}'
+    const [{ node }] = preparedOpenings(parseAuthoredJsx(code))
+    assert.equal(panelOpening(code, node) === '<p>', compatible)
+    assert.equal(Boolean(preparedStyleTargets(site, node, code)), compatible)
+  }
+})

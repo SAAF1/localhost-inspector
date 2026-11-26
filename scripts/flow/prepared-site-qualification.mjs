@@ -31,6 +31,31 @@ function walk(node, visit, owner) {
   }
 }
 
+// Literal text color cannot own any of the four local panel properties.
+export function literalColorAttribute(node) {
+  const styles = node.attributes.filter(a => a.name?.name === 'style')
+  if (styles.length !== 1) return
+  const expression = styles[0].value?.expression
+  const property = expression?.properties?.[0]
+  if (expression?.type === 'ObjectExpression' && expression.properties.length === 1 &&
+      property.type === 'ObjectProperty' && !property.computed && property.key.name === 'color' &&
+      property.value.type === 'StringLiteral') return styles[0]
+}
+
+export function panelOpening(code, node) {
+  const attr = literalColorAttribute(node)
+  if (!attr) return code.slice(node.start, node.end)
+  let start = attr.start
+  while (start > node.name.end && code[start - 1] === ' ') start--
+  return code.slice(node.start, start) + code.slice(attr.end, node.end)
+}
+
+export function matchesPreparedOpening(site, code, node) {
+  return code.slice(node.start, node.end) === site.opening ||
+    (site.styles?.some(s => s.local) && /^[a-z]/.test(node.name.name) &&
+      panelOpening(code, node) === site.opening)
+}
+
 export function preparedOpenings(tree) {
   const openings = []
   walk(tree.program, (node, owner) => {
@@ -50,7 +75,7 @@ export function preparedStyleTargets(site, node, code) {
       continue
     }
     if (style.local && styleProperties.has(property)) {
-      if (node.attributes.some(a => a.type === 'JSXSpreadAttribute' || a.name?.name === 'style')) return
+      if (node.attributes.some(a => a.type === 'JSXSpreadAttribute' || (a.name?.name === 'style' && a !== literalColorAttribute(node)))) return
       targets.push({ style })
       continue
     }

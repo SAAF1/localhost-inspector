@@ -2,11 +2,11 @@ import { join } from 'node:path'
 import { effectivePreparedEdit } from './journal-edits.mjs'
 import { conflict } from './authored-source-file.mjs'
 import { parseAuthoredJsx } from './scripts/flow/authored-forwarding.mjs'
-import { preparedOpenings, preparedRevision, preparedStyleTargets } from './scripts/flow/prepared-site-qualification.mjs'
+import { matchesPreparedOpening, preparedOpenings, preparedRevision, preparedStyleTargets } from './scripts/flow/prepared-site-qualification.mjs'
 
 function uniqueStyleUse(site, code, openings) {
   const matches = openings.filter(({ node, owner }) =>
-    owner.id.name === site.owner && code.slice(node.start, node.end) === site.opening)
+    owner.id.name === site.owner && matchesPreparedOpening(site, code, node))
   if (matches.length !== 1 || (!site.input && !preparedStyleTargets(site, matches[0].node, code)?.length)) {
     throw conflict('A saved shared edit no longer has a unique qualified source use.')
   }

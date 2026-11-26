@@ -8,7 +8,7 @@ import { parse } from '@babel/parser'
 import { cssInput, cssReady, paddingParts, sides } from './prepared-css.mjs'
 import MagicString from 'magic-string'
 import { addAuthoredUseMarkers } from './authored-use.mjs'
-import { preparedOpenings, preparedStyleTargets, preparedRevision } from './prepared-site-qualification.mjs'
+import { matchesPreparedOpening, preparedOpenings, preparedStyleTargets, preparedRevision } from './prepared-site-qualification.mjs'
 
 const runtime = 'virtual:inspector-prepared'
 const runtimeSource = new URL('../../integrations/prepared-input.mjs', import.meta.url)
@@ -194,7 +194,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           revisions[site.id] = null
           if (sites.filter((s) => s.id === site.id).length !== 1) continue
           const matches = openings.filter(
-            ({ node, owner }) => owner.id.name === site.owner && code.slice(node.start, node.end) === site.opening,
+            ({ node, owner }) => owner.id.name === site.owner && matchesPreparedOpening(site, code, node),
           )
           if (matches.length !== 1) continue
           const adapter = manifestData.buttonAdapter

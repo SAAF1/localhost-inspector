@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export async function openStudio(
   directory,
-  { id = 'a', route = '/tasks', headless = false, profile = join(directory, 'browser-profile') } = {},
+  { id = 'a', route = '/tasks', resume, headless = false, profile = join(directory, 'browser-profile') } = {},
 ) {
   const studio = JSON.parse(await readFile(join(directory, 'studio.json'), 'utf8'))
   const version = studio.versions.find((item) => item.id === id)
@@ -35,7 +35,12 @@ export async function openStudio(
     await settings.locator('#result').filter({ hasText: 'Connected' }).waitFor({ timeout: 7000 })
     await settings.close()
     const page = await context.newPage()
-    await page.goto(version.origin + '/__inspector-flow/?page=' + encodeURIComponent(route) + '&editor=extension')
+    const entry = new URL(resume ?? '/__inspector-flow/', version.origin)
+    if (entry.origin !== version.origin || entry.pathname !== '/__inspector-flow/')
+      throw Error('Resume the saved canvas address from this candidate.')
+    if (!resume) entry.searchParams.set('page', route)
+    entry.searchParams.set('editor', 'extension')
+    await page.goto(entry.href)
     const cdp = await context.browser().newBrowserCDPSession()
     try {
       const { targetInfos } = await cdp.send('Target.getTargets', { filter: [{ type: 'tab' }] })
