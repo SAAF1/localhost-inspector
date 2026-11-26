@@ -49,6 +49,11 @@ export function journalValidators(journalRoute) {
       pending.name === '--' + pending.label.toLowerCase().replace(/ +/g, '-') &&
       pending.source === catalog.source && pending.value === record.requested && pending.value === record.observed &&
       /^(?:rgba?\(|(?:oklch|oklab|lch|lab|color)\()/i.test(pending.value))
+    const recordScope = record?.recordScope
+    if (recordScope !== undefined && (record.property !== 'border-radius' || record.restore !== 'unique' ||
+      record.intent !== 'selected occurrence only' || record.target?.key !== recordScope?.key ||
+      group || prepared || reference || pending || record.template || !/^\d+(?:\.\d+)?px$/.test(record.requested)))
+      throw Error('Invalid selected-record request.')
     const target = record?.target
     if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || !validRoute(record.route) || !validRequest || !validPending ||
         Object.hasOwn(record, 'group') || (!group && Object.hasOwn(record, 'textStyleToken')) ||
@@ -80,6 +85,7 @@ export function journalValidators(journalRoute) {
     return {
       id, route: journalRoute(route), property, requested, observed, before, restore,
       ...(prepared ? { prepared: { site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}) } } : {}),
+      ...(recordScope ? {recordScope: Object.fromEntries(['id','value','key','caller','file','owner','prop','field','collection'].map(k => [k,recordScope[k]]))} : {}),
       target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,
       templateSourceFingerprint: record.templateSourceFingerprint,
       colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,

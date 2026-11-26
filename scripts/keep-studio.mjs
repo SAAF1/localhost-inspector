@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { planRecordRadius } from './flow/record-radius.mjs'
 import { candidateHandoff } from './proposal-journal.mjs'
 import { readProposal } from './proposal.mjs'
 import MagicString from 'magic-string'
@@ -35,13 +36,22 @@ export function keepStudio(dir) {
   const plugin = preparedSites(appRoot, manifest)
   const handoff = candidateHandoff(dir),
     files = new Map()
+  const recordFiles = new Map()
   for (const op of handoff.operations) {
     if (op.status !== 'pending') throw Error('Review blocked operations before retaining this design.')
     for (const change of op.changes) {
+      if (op.scope === 'selected-record') {
+        for (const [file, contents] of planRecordRadius(appRoot, change)) {
+          if (files.has(file) || recordFiles.has(file)) throw Error('Overlapping source edits need a combined handoff.')
+          recordFiles.set(file, contents)
+        }
+        continue
+      }
       const prepared = change.prepared,
         site = sites.find((s) => s.id === prepared?.site)
       if (!site || site.file !== prepared.file || !/^src\/[\w/.$()-]+\.[jt]sx$/.test(site.file))
         throw Error('This operation needs an individual source handoff.')
+      if (recordFiles.has(site.file)) throw Error('Overlapping source edits need a combined handoff.')
       if (!files.has(site.file)) {
         const path = join(appRoot, site.file),
           original = readFileSync(path, 'utf8')
@@ -60,6 +70,7 @@ export function keepStudio(dir) {
   const temp = mkdtempSync(join(tmpdir(), 'inspector-retain-'))
   try {
     let patch = ''
+    for (const [file, {original, updated}] of recordFiles) patch += patchFile(file, original, updated, temp)
     for (const [file, record] of files) {
       const out = new MagicString(record.original)
       const ast = parse(record.original, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
@@ -140,7 +151,7 @@ export function keepStudio(dir) {
     execFileSync('git', ['apply', '--whitespace=nowarn', '-'], { cwd: appRoot, input: patch })
     return {
       revision: handoff.revision,
-      files: [...files.keys()],
+      files: [...files.keys(), ...recordFiles.keys()],
       operations: handoff.operations.map((o) => o.id),
     }
   } finally {

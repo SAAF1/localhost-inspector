@@ -506,7 +506,7 @@
       shared.length && contract.surface && 'Selected envelope and its direct painted surface',
       shared.length && 'Shared source controls · ' + shared.join(', '),
       authoredUse && hasSelection && (editScope.value === 'selected'
-        ? 'Selected occurrence preview · separate from source handoff'
+        ? (node.getAttribute('data-li-record-scope') ? 'One record · source handoff available for corner radius' : 'Selected occurrence preview · separate from source handoff')
         : contract && contract.file + ' · ' + document.querySelectorAll('[data-li-revision="' + contract.revision + '"]').length + ' mounted'),
       hasSelection && preparedStylesUnavailable && 'Shared stylesheet controls are unavailable in this preview.',
     ].filter(Boolean).join(' · ')
@@ -1039,6 +1039,12 @@
     const version = activeRouteVersion
     const isCurrent = () => isCurrentRoute(editRoute, version)
     const target = ui.describePreviewTarget(node)
+    let recordScope
+    if (authoredUse && selectionOnly && property === 'border-radius' && qualifiedPrepared) {
+      try { recordScope = JSON.parse(node.getAttribute('data-li-record-scope')) } catch { /* Unverified source. */ }
+      if (!recordScope || !target.key || recordScope.key !== target.key || ui.findPreviewTarget(target, node) !== node)
+        throw Error('Cannot identify one unique record for this corner radius. No change was saved.')
+    }
     const marker = !selectionOnly && templatePreviews && !tokenOptions?.pendingColor ? ui.templatePreview.of(node) : undefined
     const source = marker ? recovery.templateSource(node, property) : undefined
     const template = source !== null && (source === undefined || templateSourcePreviews) ? marker : undefined
@@ -1058,6 +1064,11 @@
       const templateSourceFingerprint = template ? await ui.templateSourceFingerprint(source) : undefined
       edit = await editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template, templateSourceFingerprint })
       if (selectionOnly) edit.intent = 'selected occurrence only'
+      if (recordScope) {
+        if (ui.findPreviewTarget(target, node) !== node) throw Error('The record is no longer unique.')
+        edit.recordScope = recordScope
+        edit.restore = 'unique'
+      }
       if (!isCurrent() || !sameTarget()) throw Error('Selection changed. Try the edit again.')
       const result = await write({ type: 'save', record: edit }, editRoute, version)
       captureEnabled = result.visualEvidence === true

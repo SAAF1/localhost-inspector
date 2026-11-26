@@ -1,3 +1,4 @@
+import { markRecordCallers, markRecordHost } from './record-scope.mjs'
 import { componentFingerprint } from './component-proof.mjs'
 import { markSourceSelections } from './selection-provenance.mjs'
 import { onlyElement } from './component-surface.mjs'
@@ -214,7 +215,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
         const revisions = {}
         const registrationsForModule = new Set()
         const dependencies = new Map()
-        let usesInput = false
+        let usesInput = false, usesRecords = false
         const reserved = new Set()
         for (const [index, site] of recipes.entries()) {
           if (typeof site.id !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(site.id)) continue
@@ -381,6 +382,8 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
               if (properties.length) markers += ' data-li-local-' + layer + '="' + properties.join(' ') + '"'
             }
           }
+          if (authoredUseSchema && manifestData.panelBindings && fields.styles?.includes('border-radius'))
+            if (!code.includes('__liRecordAttrs') && markRecordHost(tree, node, owner, file, out)) usesRecords = true
           const contract = { site: site.id, revision, file, ...fields }
           let revisionAttribute = ' data-li-revision="' + revision + '"'
           if (site.moduleClass) {
@@ -399,12 +402,14 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           )
         }
         if (authoredUseSchema) {
+          const records = manifestData.panelBindings && await markRecordCallers({ root, file, code, tree, out,
+            resolveImport: async specifier => (await this.resolve(specifier, id))?.id })
           const selected = manifestData.panelBindings && markSourceSelections(file,code,openings,out)
           const marked = await addAuthoredUseMarkers({
             root, file, code, tree, out, reserved, schema: authoredUseSchema,
             resolveImport: async (specifier) => (await this.resolve(specifier, id))?.id,
           })
-          if (!recipes.length) return (selected || marked) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
+          if (!recipes.length) return (records || selected || marked) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
         }
         // Report known-but-stale sites separately from an absent scene. The registry
         // contains only mappings for modules loaded in this page.
@@ -419,6 +424,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           styles.set(moduleId, css)
           out.prepend('import ' + JSON.stringify(moduleId) + ';\n')
         }
+        if (usesRecords) out.prepend('import { recordAttributes as __liRecordAttrs } from "virtual:inspector-prepared-registry";\n')
         if (usesInput) out.prepend('import { usePreparedInput as __liUse } from "' + runtime + '";\n')
         return { code: out.toString(), map: out.generateMap({ hires: true, source: id }) }
       },
