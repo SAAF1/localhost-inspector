@@ -104,7 +104,7 @@ function authoredStyle(opening, family, code) {
   return { start, end: style.end, values }
 }
 
-export function localBindingNames(tree) {
+export function localBindingNames(tree, except) {
   const locals = new Set()
   walkSource(tree.program, (node) => {
     if (
@@ -112,7 +112,7 @@ export function localBindingNames(tree) {
         node.type,
       )
     )
-      markBindings(node.id, locals)
+      if (!except?.has(node)) markBindings(node.id, locals)
     if (node.params) for (const param of node.params) markBindings(param, locals)
     if (node.type === 'CatchClause') markBindings(node.param, locals)
   })

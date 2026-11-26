@@ -274,6 +274,7 @@ test('a checked-in complete data source qualifies typed keys across projections 
     publish(rows);assert.throws(()=>verifyRecordSource(root,one))
   }
   publish(data)
+  assert.equal(await trace(source.replace('return <main>', '{const all = null;return <main>').replace('</main>', '</main>}')),undefined)
   assert.equal(await trace(source.replace('all.current=rows','all.current=[]')),undefined)
   assert.equal(await trace(source.replace('/inventory.json','https://example.org/inventory.json')),undefined)
   assert.equal(await trace(source.replace('</section></>','</section><hr/></>')),undefined)

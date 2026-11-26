@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { localBindingNames } from './authored-use.mjs'
 import { identifier, member, reactReference, walk } from './record-render-path.mjs'
 
 // Resolve a literal same-origin JSON read feeding both the rendered state and a
@@ -32,7 +33,8 @@ export function publicRecordCollection(tree, scope, collection, locals) {
       if (!/^(?:\.{1,2}\/|\/)?[\w./-]+\.json$/.test(url) || url.startsWith('//') || url.includes('\\')) continue
       const axios = member(request.callee, 'get') && client.has(request.callee.object.name) && member(rows.init, 'data') && identifier(rows.init.object, response.id.name)
       const parse = rows.init?.type === 'AwaitExpression' && rows.init.argument
-      const fetch = identifier(request.callee,'fetch') && !locals.has('fetch') && parse?.type === 'CallExpression' &&
+      const fetch = identifier(request.callee,'fetch') && !locals.has('fetch') &&
+        !tree.program.body.some(s => s.specifiers?.some(spec => spec.local?.name === 'fetch')) && parse?.type === 'CallExpression' &&
         member(parse.callee,'json') && identifier(parse.callee.object, response.id.name) && !parse.arguments.length
       if (!axios && !fetch) continue
       const next = list[i + 2]
@@ -43,7 +45,10 @@ export function publicRecordCollection(tree, scope, collection, locals) {
       const write = exprs.find(e => e?.type === 'AssignmentExpression' && e.operator === '=' &&
         member(e.left,'current') && identifier(e.right, rows.id.name))
       const ref = refs.find(d => identifier(write?.left.object,d.id.name))
-      if (save && ref) matches.push({ name: ref.id.name + '.current', url, spans: [states[0],ref,response,rows,save,write] })
+      if (!save || !ref) continue
+      const shadowed = localBindingNames({program:scope}, new Set([states[0],ref,response,rows]))
+      if ([collection,setter,ref.id.name,response.id.name,rows.id.name].some(name => shadowed.has(name))) continue
+      matches.push({ name: ref.id.name + '.current', url, spans: [states[0],ref,response,rows,save,write] })
     }
   })
   return matches.length === 1 ? matches[0] : undefined
