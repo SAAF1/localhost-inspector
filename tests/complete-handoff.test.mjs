@@ -86,3 +86,22 @@ test('handoff exports the current prepared basis and completion retires its tran
   assert.deepEqual(journal.preparedRevisions, {})
   assert.deepEqual(journal.edits, [])
 })
+
+test('partial supersession exports current sides and retires only the verified chains', () => {
+  const prepared = { site: 'card', file: 'Card.jsx', revision: 'current' }
+  const left = edit('left', { group: 'pair', prepared, property: 'padding-left' })
+  const right = edit('right', { group: 'pair', prepared, property: 'padding-right' })
+  const next = edit('next', { prepared, property: left.property, requested: '24px' })
+  const journal = { edits: [left, right, next] }
+  const plan = () => buildSourceHandoff(binding, journal).operations.map(op => op.changes.map(change => change.id))
+  assert.deepEqual(plan(), [['right'], ['next']])
+  next.previewHidden = true
+  assert.deepEqual(plan(), [['right'], ['next']])
+  next.undone = true
+  assert.deepEqual(plan(), [['left', 'right']])
+  next.undone = false
+  completeHandoff(binding, journal, report('pair'), completedAt)
+  assert.deepEqual(journal.edits, [left, next])
+  completeHandoff(binding, journal, report('next'), completedAt)
+  assert.deepEqual(journal.edits, [])
+})

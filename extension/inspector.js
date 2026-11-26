@@ -184,6 +184,7 @@
   let sectionPreviewTargets = false
   let preparedPreviews = false
   let authoredUse = false
+  get('authored-edit-scope').addEventListener('change', () => renderFields())
   let scopeSelection
   let comparingSource = false
   const authored = ui.authoredUsePreview
@@ -500,6 +501,9 @@
     scope.textContent = [authoredUse && hasSelection && (authoredLabel
       ? 'Shared candidate source · ' + authoredLabel : 'Shared candidate source unavailable for text color and fixed spacing'),
       shared.length && 'Shared source controls · ' + shared.join(', '),
+      authoredUse && hasSelection && (editScope.value === 'selected'
+        ? 'Selected occurrence preview · separate from source handoff'
+        : contract && contract.file + ' · ' + document.querySelectorAll('[data-li-revision="' + contract.revision + '"]').length + ' mounted'),
       hasSelection && preparedStylesUnavailable && 'Shared stylesheet controls are unavailable in this preview.',
     ].filter(Boolean).join(' · ')
     const canvasPaint = isCanvasExpanded?.() && ui.syncCanvasBackground(host, colorCatalog)
@@ -1001,6 +1005,12 @@
     const prepared = ui.preparedPreview.contract(node)
     const qualifiedPrepared = (prepared?.style === property || prepared?.styles?.includes(property)) && !tokenOptions?.pendingColor
     const family = property === 'color' ? 'paint' : ['gap', 'justify-content'].includes(property) ? 'spacing' : null
+    const panelProperty = ['background-color', 'border-radius', 'font-size', 'height'].includes(property)
+    if (authoredUse && panelProperty) {
+      selectionOnly ||= get('authored-edit-scope').value === 'selected'
+      if (!selectionOnly && !qualifiedPrepared)
+        throw Error('Shared source is unavailable for this control. Selected element only previews one occurrence.')
+    }
     if (authoredUse && family) {
       selectionOnly ||= get('authored-edit-scope').value === 'selected'
       const marker = authored.binding(node)

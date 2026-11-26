@@ -217,7 +217,7 @@ try {
       if (!existsSync(join(map, name)) && existsSync(join(capturedMap, name)))
         copyFileSync(join(capturedMap, name), join(map, name))
     }
-    const inventory = await prepareProject(app, manifest, studio.namespace, studio.boundary)
+    const inventory = await prepareProject(app, manifest, studio.namespace, studio.boundary, undefined, { panelBindings: Boolean(studio.authoredUseSchema) })
     if (inventory.preparation?.preparedStyles === 'unavailable')
       console.warn('Shared stylesheet controls unavailable for ' + id + '. See diagnostics in ' + manifest)
     const child = await start(

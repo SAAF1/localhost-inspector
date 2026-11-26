@@ -54,7 +54,7 @@
       ) {
         if(c.cssReady){
           const computed=getComputedStyle(node)
-          const available=key=>(!c.logicalInline?.includes(key) || (computed.writingMode==='horizontal-tb' && computed.direction==='ltr')) && computed.getPropertyValue(c.cssReady[key]).trim()==='1'
+          const available=key=>!c.cssReady[key] || (!c.logicalInline?.includes(key) || (computed.writingMode==='horizontal-tb' && computed.direction==='ltr')) && computed.getPropertyValue(c.cssReady[key]).trim()==='1'
           if(c.styles)c.styles=c.styles.filter(available)
           if(c.style && !available(c.style))delete c.style
         }
@@ -84,6 +84,15 @@
       if (field) next.set(revision, edit)
       else if (supportedDeclaration(edit)) {
         declarations.set(revision + ':' + edit.property, edit)
+        if (['height', 'border-radius', 'background-color', 'font-size'].includes(edit.property)) {
+          // Add a source-local default only while a value exists. A more specific
+          // app rule in the same layer keeps its conditional ownership.
+          for (const layer of ['ordinary', 'utilities']) {
+            const selector = ':where([data-li-revision="' + revision + '"][data-li-local-' + layer + '~="' + edit.property + '"])'
+            const rule = selector + '{' + edit.property + ':' + edit.requested + '}'
+            rules.push(layer === 'ordinary' ? rule : '@layer utilities{' + rule + '}')
+          }
+        }
         if(edit.property.startsWith('padding-')){
           const prefix='--li-'+revision.slice(0,20)
           const shorthand=['top','right','bottom','left'].map(side=>'var('+prefix+'-padding-'+side+', var('+prefix+'-base-padding-'+side+'))').join(' ')

@@ -18,7 +18,7 @@ export function authoredImports(tree) {
 
 // Qualify only a direct, unconditional native return that forwards remaining
 // props. Rest must carry both style and the dev-only provenance attribute.
-export function forwardedHost(code, exported, { requireChildren = false } = {}) {
+export function forwardedHost(code, exported, { requireChildren = false, onHost } = {}) {
   const { body } = parseAuthoredJsx(code).program
   const declaration = body.find(
     (entry) => entry.type === 'ExportNamedDeclaration' && entry.declaration?.id?.name === exported,
@@ -68,5 +68,6 @@ export function forwardedHost(code, exported, { requireChildren = false } = {}) 
         return
     } else if (children.length) return
   }
+  onHost?.(opening)
   return tag
 }

@@ -84,10 +84,27 @@ function findPotentialOverlaps(operations) {
     operationIds.size > 1 && values.size > 1 ? [{ route, property, operationIds: [...operationIds] }] : [])
 }
 
+// Preview projects prepared values in journal order on their current source revision.
+export function preparedWinners(journal) {
+  const winners = new Map()
+  const keys = new Map()
+  for (const record of journal.edits) {
+    // The eye temporarily hides a preview. Undo removes the design intent.
+    if (!record.prepared || record.undone || record.executor === 'authored-source') continue
+    const edit = effectivePreparedEdit(record, journal)
+    const key = JSON.stringify([edit.prepared.site, edit.prepared.revision, edit.prepared.field ?? edit.property])
+    keys.set(edit.id, key)
+    winners.set(key, { operation: edit.group ?? edit.id, member: edit.id })
+  }
+  return new Map([...keys].map(([id, key]) => [id, winners.get(key)]))
+}
+
 export function buildSourceHandoff(binding, journal) {
+  const winners = preparedWinners(journal)
   const byOperation = new Map()
   for (const edit of journal.edits) {
     if (edit.undone || edit.executor === 'authored-source') continue
+    if (edit.prepared && winners.get(edit.id)?.member !== edit.id) continue
     const id = edit.group ?? edit.id
     if (!byOperation.has(id)) byOperation.set(id, [])
     byOperation.get(id).push(effectivePreparedEdit(edit, journal))

@@ -104,11 +104,9 @@ function authoredStyle(opening, family, code) {
   return { start, end: style.end, values }
 }
 
-function sourceUses(code, tree, file, components, schema) {
-  const elements = []
+export function localBindingNames(tree) {
   const locals = new Set()
-  walkSource(tree.program, (node, owner) => {
-    if (node.type === 'JSXElement') elements.push({ element: node, owner })
+  walkSource(tree.program, (node) => {
     if (
       ['VariableDeclarator', 'FunctionDeclaration', 'FunctionExpression', 'ClassDeclaration'].includes(
         node.type,
@@ -117,6 +115,15 @@ function sourceUses(code, tree, file, components, schema) {
       markBindings(node.id, locals)
     if (node.params) for (const param of node.params) markBindings(param, locals)
     if (node.type === 'CatchClause') markBindings(node.param, locals)
+  })
+  return locals
+}
+
+function sourceUses(code, tree, file, components, schema) {
+  const elements = []
+  const locals = localBindingNames(tree)
+  walkSource(tree.program, (node, owner) => {
+    if (node.type === 'JSXElement') elements.push({ element: node, owner })
   })
   return elements.flatMap(({ element, owner }) => {
     const opening = element.openingElement

@@ -1,4 +1,4 @@
-import { buildSourceHandoff } from './source-handoff.mjs'
+import { buildSourceHandoff, preparedWinners } from './source-handoff.mjs'
 
 export function completeHandoff(binding, journal, report, completedAt) {
   const { projectId, verified } = report ?? {}
@@ -20,8 +20,9 @@ export function completeHandoff(binding, journal, report, completedAt) {
   // A handoff can show only the edits needed to describe one source change.
   // Completion must also retire its preview-only journal members.
   const completedIds = new Set(completed.map(entry => entry.id))
+  const winners = preparedWinners(journal)
   const retired = new Set(journal.edits.filter(edit =>
-    !edit.undone && completedIds.has(edit.group ?? edit.id),
+    !edit.undone && completedIds.has(winners.get(edit.id)?.operation ?? edit.group ?? edit.id),
   ).map(edit => edit.id))
   const retiredStyles = new Set(journal.edits.flatMap(edit =>
     retired.has(edit.id) && edit.pendingTextStyle ? [edit.pendingTextStyle.name] : []))

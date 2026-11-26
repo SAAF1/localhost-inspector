@@ -67,6 +67,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
               manifestData.namespace,
               manifestData.boundary,
               server,
+              { panelBindings: Boolean(manifestData.panelBindings) },
             )
             manifestData = next
             if (runtimeKey(next) === before) return
@@ -243,7 +244,8 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           const revision = preparedRevision(root, namespace, site, code, tree, owner, dependencies)
           if (!revision) continue
           revisions[site.id] = revision
-          reserved.add(node.start)
+          if (site.input || targets.some(({ style }) => !style.local && !style.forwarded &&
+              !style.css?.selector && !['border-radius', 'font-size'].includes(style.property))) reserved.add(node.start)
           const prefix = '--li-' + revision.slice(0, 20)
           const fields = {}
           let markers = ''
@@ -252,7 +254,9 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             const variable = site.styles ? prefix + '-' + property : prefix
             // Preserve dynamic inline/sx ownership. The variable is consumed at
             // the original declaration, so hover and media rules still compete normally.
-            if (utility || style.css) {
+            if (style.local) {
+              ;(fields.local ??= {})[property] = style.local
+            } else if (utility || style.css) {
               const shorthand = style.css?.declaration === 'padding'
               const key = cssInput(shorthand ? { ...style, property: 'padding' } : style)
               if (utility?.axis === 'inline') (fields.logicalInline ??= []).push(property)
@@ -322,6 +326,13 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             markers += ' data-li-choice={' + state + ' ?? ' + JSON.stringify(base) + '}'
             fields.input = { field, options, base, verify: site.input.verify }
             usesInput = true
+          }
+          if (fields.local) {
+            // Kept on the qualified part so projection also works after a remount.
+            for (const layer of ['ordinary', 'utilities']) {
+              const properties = Object.keys(fields.local).filter(p => fields.local[p] === layer)
+              if (properties.length) markers += ' data-li-local-' + layer + '="' + properties.join(' ') + '"'
+            }
           }
           const contract = { site: site.id, revision, file, ...fields }
           out.appendLeft(

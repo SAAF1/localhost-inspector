@@ -15,6 +15,8 @@ const styleProperties = new Set([
   'min-height',
   'max-height',
   'font-weight',
+  'font-size',
+  'border-radius',
   'color',
   'background-color',
 ])
@@ -43,13 +45,22 @@ export function preparedStyleTargets(site, node, code) {
   const targets = []
   for (const style of site.styles ?? (site.style ? [site.style] : [])) {
     const { attribute, property, literal } = style
+    if (style.css?.selector && styleProperties.has(property) && !node.attributes.some(a => a.type === 'JSXSpreadAttribute')) {
+      targets.push({ style })
+      continue
+    }
+    if (style.local && styleProperties.has(property)) {
+      if (node.attributes.some(a => a.type === 'JSXSpreadAttribute' || a.name?.name === 'style')) return
+      targets.push({ style })
+      continue
+    }
     const value = node.attributes.find((a) => a.name?.name === attribute)?.value
     if (!styleProperties.has(property) || !value || typeof literal !== 'string' || !literal) return
     if (style.utility || style.css) {
       if (
         attribute !== 'className' ||
         value.type !== 'StringLiteral' ||
-        !value.value.split(/[\t\n\f\r ]+/).includes(literal)
+        (!style.forwarded && !value.value.split(/[\t\n\f\r ]+/).includes(literal))
       )
         return
       targets.push({ style })

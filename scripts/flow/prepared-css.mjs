@@ -24,11 +24,13 @@ export const sides = ['top', 'right', 'bottom', 'left']
 const scalar = /^(?:0|\d+(?:\.\d+)?(?:px|rem|em)|var\(--[\w-]+\))$/
 export function cssFields(decl) {
   const values = decl.value.trim().split(/\s+/)
+  if (decl.prop === 'background-color' && /^(?:#[a-f0-9]{3,8}|[a-z]+|var\(--[\w-]+\))$/i.test(decl.value.trim()))
+    return [decl.prop]
   if (!values.every((v) => scalar.test(v))) return []
   // Authored logical shorthands do not establish a physical-side editing
   // contract. The separate emitted Tailwind recipe qualifies at runtime.
   if (decl.prop === 'padding' && values.length <= 4) return sides.map((side) => 'padding-' + side)
-  return values.length === 1 && /^(gap|width|height|padding-(?:top|right|bottom|left))$/.test(decl.prop)
+  return values.length === 1 && /^(gap|width|height|font-size|border-radius|padding-(?:top|right|bottom|left))$/.test(decl.prop)
     ? [decl.prop]
     : []
 }
@@ -65,9 +67,10 @@ export function preparedStyles(root, manifest) {
             (style.css && !(style.css.served ?? [style.css.file]).includes(file))
           )
             continue
-          const styles = byClass.get(style.literal) ?? new Map()
+          const key = style.css?.selector ?? '.' + style.literal
+          const styles = byClass.get(key) ?? new Map()
           styles.set(style.property, style)
-          byClass.set(style.literal, styles)
+          byClass.set(key, styles)
         }
       }
       const sheet = postcss.parse(source.value)
@@ -75,7 +78,7 @@ export function preparedStyles(root, manifest) {
       sheet.walkRules((rule) => {
         if (!baseRule(rule)) return
         const literal = rule.selector.slice(1).replace(/\\([.\[\]])/g, '$1')
-        const styles = rule.selector.startsWith('.') && byClass.get(literal)
+        const styles = rule.selector.startsWith('.') && byClass.get('.' + literal)
         if (!styles) return
         for (const decl of [...rule.nodes]) {
           if (decl.type !== 'decl') continue

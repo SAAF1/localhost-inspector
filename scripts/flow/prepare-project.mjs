@@ -6,6 +6,8 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from '@babel/parser'
 import { baseRule, cssFields, cssParser } from './prepared-css.mjs'
+import { localBindingNames } from './authored-use.mjs'
+import { forwardedHost } from './authored-forwarding.mjs'
 import { stylesheetGraph } from './stylesheet-graph.mjs'
 import { typeModule } from '../../component-types.mjs'
 
@@ -43,6 +45,7 @@ function utility(token, theme) {
   const weight = { 'font-medium': '500', 'font-semibold': '600', 'font-bold': '700' }[token]
   if (weight)
     return { property: 'font-weight', fallback: 'var(--font-weight-' + token.slice(5) + ', ' + weight + ')' }
+  if (token === 'bg-transparent') return { property: 'background-color', fallback: 'transparent' }
   const paint = /^(text|bg)-([a-z]+(?:-[a-z]+)*)$/.exec(token)
   if (paint && theme.includes('--color-' + paint[2] + ': var(--' + paint[2] + ')')) {
     return { property: paint[1] === 'text' ? 'color' : 'background-color', fallback: 'var(--' + paint[2] + ')' }
@@ -52,11 +55,12 @@ const safeIcon = (name) => /^[A-Z][A-Za-z]+$/.test(name)
 const kebab = (name) => name.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()
 function analyze(code, file, config) {
   const tree = config.tree
+  const locals = config.panelBindings && localBindingNames(tree)
   const { imports } = typeModule(tree, file)
   const icons = [...imports].filter(([, spec]) => spec.from === 'lucide-react' && safeIcon(spec.name))
   const found = [],
     rejected = []
-  function visit(node, owner) {
+  function visit(node, owner, parentElement) {
     if (!node?.type) return
     if (node.type === 'FunctionDeclaration' && /^[A-Z]/.test(node.id?.name)) owner = node
     if (!owner && node.type === 'VariableDeclarator' && node.id.type === 'Identifier') owner = node
@@ -74,11 +78,15 @@ function analyze(code, file, config) {
         opening: text,
         dependencies: config.dependencies,
       }
+      const host = config.panelBindings && /^[A-Z]/.test(name) && !locals.has(name) && config.forwarded(file, imports.get(name))
+      // Keep the existing qualified Button adapter ahead of style discovery.
+      const panelHost = host && !(config.button && imports.get(name)?.from === '@/components/ui/button')
+      if (panelHost) raw.dependencies = [...raw.dependencies, host.path]
       let reason = 'no qualified operation'
       if (!owner || opening.attributes.some((a) => a.type === 'JSXSpreadAttribute'))
         reason = 'opaque owner or spread'
-      else if (typeof name === 'string' && /^[a-z]/.test(name) && typeof classes === 'string') {
-        const tokens = classes.split(/\s+/)
+      else if (typeof name === 'string' && (/^[a-z]/.test(name) || panelHost) && (typeof classes === 'string' || !attr('className'))) {
+        const tokens = (classes ?? '').split(/\s+/).filter(Boolean)
         const eligible = tokens.flatMap((literal) => {
           const declarations = config.css.classes.get(literal) ?? []
           if (declarations.length) return declarations
@@ -118,7 +126,31 @@ function analyze(code, file, config) {
             { property: rule.property, attribute: 'className', literal, utility: { fallback: rule.fallback } },
           ]
         })
+        // The source proves forwarding. The compiled utility and actual host class
+        // must still qualify in the live page, including when a merge discarded it.
+        if (panelHost && config.tailwind && typeof classes === 'string') {
+          const ownProperties = new Set(eligible.map(style => style.property))
+          for (const literal of new Set(host.tokens)) {
+            const rule = utility(literal, config.theme)
+            if (!rule || !['height', 'background-color', 'border-radius', 'font-size'].includes(rule.property) || ownProperties.has(rule.property)) continue
+            eligible.push({ ...rule, attribute: 'className', literal, forwarded: true,
+              utility: { fallback: rule.fallback } })
+          }
+        }
+        if (config.panelBindings && parentElement && /^[a-z]/.test(name)) {
+          const parentClasses = parentElement.openingElement.attributes.find(a => a.name?.name === 'className')?.value
+          if (parentClasses?.type === 'StringLiteral') for (const token of parentClasses.value.split(/\s+/)) {
+            eligible.push(...(config.css.descendants.get('.' + token + ' ' + name) ?? []))
+          }
+        }
         const styles = eligible.filter((s) => eligible.filter((x) => s.property === x.property).length === 1)
+        if (config.panelBindings && !attr('style') && !config.css.indexError &&
+            !opening.attributes.some(a => a.name?.name?.startsWith('data-li-'))) {
+          for (const property of ['background-color', 'border-radius', 'font-size', 'height']) {
+            if (!eligible.some(style => style.property === property))
+              styles.push({ property, local: config.tailwind ? 'utilities' : 'ordinary' })
+          }
+        }
         if (styles.length) {
           found.push({
             ...raw,
@@ -184,7 +216,7 @@ function analyze(code, file, config) {
       if (reason) rejected.push({ ...entry, reason })
     }
     for (const value of Object.values(node)) {
-      if (Array.isArray(value)) for (const child of value) visit(child, owner)
+      if (Array.isArray(value)) for (const child of value) visit(child, owner, node.type === 'JSXElement' ? node : undefined)
       else if (value?.type) visit(value, owner)
     }
   }
@@ -196,6 +228,7 @@ function analyze(code, file, config) {
 }
 const trees = new Map()
 function ordinaryCSS(root, graph, classify) {
+  const descendants = new Map()
   const classes = new Map(),
     tokenFiles = [],
     spacingSources = [],
@@ -221,20 +254,24 @@ function ordinaryCSS(root, graph, classify) {
     }
     if (indexError) continue
     sheet.walkRules((rule) => {
-      if (!baseRule(rule) || !/^\.[a-zA-Z_][\w-]*$/.test(rule.selector)) return
+      if (!baseRule(rule)) return
+      const descendant = /^\.[a-zA-Z_][\w-]* [a-z][a-z0-9]*$/.test(rule.selector)
+      if (!descendant && !/^\.[a-zA-Z_][\w-]*$/.test(rule.selector)) return
+      const index = descendant ? descendants : classes
       const literal = rule.selector.slice(1)
       for (const d of rule.nodes) {
         if (d.type !== 'decl') continue
         try {
           for (const property of classify(d)) {
-            const list = classes.get(literal) ?? []
+            const key = descendant ? rule.selector : literal
+            const list = index.get(key) ?? []
             list.push({
               attribute: 'className',
               literal,
               property,
-              css: { file, served, declaration: d.prop, value: d.value },
+              css: { file, served, ...(descendant ? { selector: rule.selector } : {}), declaration: d.prop, value: d.value },
             })
-            classes.set(literal, list)
+            index.set(key, list)
           }
         } catch (error) {
           indexError = { type: 'internal-preparation-error', capability: 'prepared-styles',
@@ -250,18 +287,37 @@ function ordinaryCSS(root, graph, classify) {
   }
   // Utility classification also consults this index for same-class
   // ownership. Let neither kind publish candidates from a partial index.
-  if (indexError) classes.clear()
+  if (indexError) { classes.clear(); descendants.clear() }
   const variableSources = [...definitions].map(([file, names]) => ({ file, names: [...names] }))
-  return { classes, tokenFiles, spacingSources, variableSources, indexError }
+  return { classes, descendants, tokenFiles, spacingSources, variableSources, indexError }
 }
 export async function prepareProject(project, destination, namespace, boundary = 'src', server, {
-  classifyCSS = cssFields,
+  classifyCSS = cssFields, panelBindings = false,
 } = {}) {
   const root = realpathSync(project),
     source = realpathSync(join(root, boundary))
   if (!source.startsWith(root + sep) || resolve(destination).startsWith(root + sep))
     throw Error('Use an app source subdirectory and an external manifest.')
-  const graph = await stylesheetGraph(root, server)
+  const resolved = new Map()
+  const graph = await stylesheetGraph(root, server, panelBindings ? (file, spec, path) => {
+    if (/\.[jt]sx$/.test(path)) resolved.set(JSON.stringify([file, spec]), path)
+  } : undefined)
+  const forwarding = new Map()
+  function forwarded(file, spec) {
+    const path = spec && resolved.get(JSON.stringify([file, spec.from]))
+    if (!path || realpathSync(join(root, path)) !== join(root, path)) return
+    const key = JSON.stringify([path, spec.name])
+    if (!forwarding.has(key)) {
+      let tokens = []
+      const tag = forwardedHost(readFileSync(join(root, path), 'utf8'), spec.name, { onHost(opening) {
+        const value = opening.attributes.find(a => a.name?.name === 'className')?.value
+        const literals = value?.type === 'StringLiteral' ? [value] : value?.expression?.arguments ?? []
+        tokens = literals.filter(a => a.type === 'StringLiteral').flatMap(a => a.value.split(/\s+/))
+      } })
+      forwarding.set(key, tag ? { path, tokens } : null)
+    }
+    return forwarding.get(key)
+  }
   const deps = [...new Set([...dependencies, ...graph.configuration])].filter((path) =>
     existsSync(join(root, path)),
   )
@@ -299,7 +355,7 @@ export async function prepareProject(project, destination, namespace, boundary =
           }
           trees.set(path, cached)
         }
-        const result = analyze(code, file, { theme, button, tailwind, dependencies: deps, tree: cached.tree, css })
+        const result = analyze(code, file, { theme, button, tailwind, panelBindings, forwarded, dependencies: deps, tree: cached.tree, css })
         sites.push(...result.sites)
         unresolved.push(...result.rejected)
         files.push({ file, status: 'indexed', candidates: result.sites.length })
@@ -325,6 +381,7 @@ export async function prepareProject(project, destination, namespace, boundary =
     unresolved,
     sites,
     retiredSites,
+    ...(panelBindings ? { panelBindings: true } : {}),
     spacingSources: css.spacingSources,
     variableSources: css.variableSources,
     ...(css.indexError ? { preparation: { preparedStyles: 'unavailable', diagnostics: [css.indexError] } } : {}),

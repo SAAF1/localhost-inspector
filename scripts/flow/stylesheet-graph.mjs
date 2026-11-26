@@ -23,7 +23,7 @@ function scriptImports(source) {
   visit(ast.program)
   return imports
 }
-export async function stylesheetGraph(root, running) {
+export async function stylesheetGraph(root, running, onProjectImport) {
   const { createServer } = await projectVite(root)
   const server =
     running ??
@@ -58,6 +58,7 @@ export async function stylesheetGraph(root, running) {
     }
     if (!resolved.startsWith(root + '/') || resolved.includes('/node_modules/')) return
     const file = relative(root, resolved)
+    if (!served) onProjectImport?.(relative(root, importer), id, file)
     if (/\.css$/.test(file)) {
       const entry = served ?? file
       const key = JSON.stringify([file, entry, lazy])
