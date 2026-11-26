@@ -991,6 +991,10 @@
         if (rebased.length) await restore(isCurrent)
       },
       hasPreparedOperation(id) { return Boolean(saved.get(id)?.prepared) },
+      waitForPreparedMember(id, current) {
+        const edit = saved.get(id)
+        if (edit?.prepared && !edit.previewHidden) return ui.preparedPreview.waitForMember(edit, current)
+      },
       hasOperation(id) { return saved.has(id) },
       isPreviewHidden(id) { return saved.get(id)?.previewHidden === true },
       async setPreviewHidden(changes, isCurrent, comparing = false) {
