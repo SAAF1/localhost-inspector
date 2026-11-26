@@ -7,8 +7,8 @@ import { join, relative, resolve } from 'node:path'
 import { parse } from '@babel/parser'
 import { cssInput, cssReady, paddingParts, sides } from './prepared-css.mjs'
 import MagicString from 'magic-string'
-import { addAuthoredUseMarkers } from './authored-use.mjs'
-import { matchesPreparedOpening, preparedOpenings, preparedStyleTargets, preparedRevision } from './prepared-site-qualification.mjs'
+import { addAuthoredUseMarkers, localBindingNames } from './authored-use.mjs'
+import { moduleReference, matchesPreparedOpening, preparedOpenings, preparedStyleTargets, preparedRevision } from './prepared-site-qualification.mjs'
 
 const runtime = 'virtual:inspector-prepared'
 const runtimeSource = new URL('../../integrations/prepared-input.mjs', import.meta.url)
@@ -182,6 +182,17 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           if (recipes.length) throw error
           return
         }
+        const moduleImports = new Map()
+        if (recipes.some(site => site.moduleClass)) {
+          const locals = localBindingNames(tree)
+          for (const statement of tree.program.body) {
+            if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue
+            const spec = statement.specifiers.find(s => s.type === 'ImportDefaultSpecifier')
+            if (!spec || locals.has(spec.local.name)) continue
+            const imported = await this.resolve(statement.source.value, id)
+            if (imported?.id.endsWith('.module.css')) moduleImports.set(spec.local.name, relative(root, imported.id))
+          }
+        }
         const openings = preparedOpenings(tree)
         const out = new MagicString(code)
         const revisions = {}
@@ -209,6 +220,10 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           )
             continue
           const { node, children, owner } = matches[0]
+          if (site.moduleClass) {
+            const actual = moduleReference(node, moduleImports)
+            if (actual?.file !== site.moduleClass.file || actual.member !== site.moduleClass.member) continue
+          }
           const attr = (name) => node.attributes.find((a) => a.name?.name === name)
           const targets = preparedStyleTargets(site, node, code)
           if (!targets) continue
@@ -244,8 +259,8 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           const revision = preparedRevision(root, namespace, site, code, tree, owner, dependencies)
           if (!revision) continue
           revisions[site.id] = revision
-          if (site.input || targets.some(({ style }) => !style.local && !style.forwarded &&
-              !style.css?.selector && !['border-radius', 'font-size'].includes(style.property))) reserved.add(node.start)
+          if (site.input || (!site.moduleClass && targets.some(({ style }) => !style.local && !style.forwarded &&
+              !style.css?.selector && !['border-radius', 'font-size'].includes(style.property)))) reserved.add(node.start)
           const prefix = '--li-' + revision.slice(0, 20)
           const fields = {}
           let markers = ''
@@ -335,12 +350,18 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             }
           }
           const contract = { site: site.id, revision, file, ...fields }
+          let revisionAttribute = ' data-li-revision="' + revision + '"'
+          if (site.moduleClass) {
+            const expression = attr('className').value.expression
+            const reference = code.slice(expression.start, expression.end)
+            revisionAttribute = ' data-li-revision={typeof ' + reference + ' === "string" && /^[\\w-]+$/.test(' +
+              reference + ') ? "' + revision + '" : undefined}'
+          }
           out.appendLeft(
             node.attributes.at(-1)?.end ?? node.name.end,
             markers +
-              ' data-li-revision="' +
-              revision +
-              '" data-li-contract={' +
+              revisionAttribute +
+              ' data-li-contract={' +
               JSON.stringify(JSON.stringify(contract)) +
               '}',
           )

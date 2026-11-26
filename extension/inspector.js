@@ -1710,7 +1710,10 @@
     ))) renderFields({ keepPopup: true })
   }
   window.addEventListener('focus', () => void refreshJournal())
-  window.addEventListener('resize', refreshResponsiveSpacing)
+  window.addEventListener('resize', () => {
+    refreshResponsiveSpacing()
+    if (recovery.hasPrepared && !busy && !loadingRoute) syncPending()
+  })
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     refreshResponsiveSpacing()
     if (!isCanvasExpanded?.() || !colorCatalog) return

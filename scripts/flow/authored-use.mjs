@@ -108,7 +108,7 @@ export function localBindingNames(tree) {
   const locals = new Set()
   walkSource(tree.program, (node) => {
     if (
-      ['VariableDeclarator', 'FunctionDeclaration', 'FunctionExpression', 'ClassDeclaration'].includes(
+      ['VariableDeclarator', 'FunctionDeclaration', 'FunctionExpression', 'ClassDeclaration', 'ClassExpression'].includes(
         node.type,
       )
     )

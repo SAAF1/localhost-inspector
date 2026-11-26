@@ -6,7 +6,7 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from '@babel/parser'
 import { baseRule, cssFields, cssParser } from './prepared-css.mjs'
-import { literalColorAttribute, panelOpening } from './prepared-site-qualification.mjs'
+import { moduleReference, literalColorAttribute, panelOpening } from './prepared-site-qualification.mjs'
 import { localBindingNames } from './authored-use.mjs'
 import { forwardedHost } from './authored-forwarding.mjs'
 import { stylesheetGraph } from './stylesheet-graph.mjs'
@@ -59,6 +59,13 @@ function analyze(code, file, config) {
   const locals = config.panelBindings && localBindingNames(tree)
   const { imports } = typeModule(tree, file)
   const icons = [...imports].filter(([, spec]) => spec.from === 'lucide-react' && safeIcon(spec.name))
+  const modules = new Map()
+  if (config.panelBindings) for (const statement of tree.program.body) {
+    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue
+    const path = config.resolved.get(JSON.stringify([file, statement.source.value]))
+    const spec = statement.specifiers.find(entry => entry.type === 'ImportDefaultSpecifier')
+    if (spec && path?.endsWith('.module.css') && !locals.has(spec.local.name)) modules.set(spec.local.name, path)
+  }
   const found = [],
     rejected = []
   function visit(node, owner, parentElement) {
@@ -72,6 +79,9 @@ function analyze(code, file, config) {
       const entry = { file, owner: owner?.id.name, line: opening.loc.start.line }
       const attr = (key) => opening.attributes.find((a) => a.name?.name === key)?.value
       const classes = attr('className')?.value
+      const reference = moduleReference(opening, modules)
+      const moduleClass = reference && config.css.moduleClasses.get(JSON.stringify([reference.file, reference.member]))
+      const moduleUse = moduleClass && /^[a-z]/.test(name)
       const raw = {
         id: 'use-' + hash(JSON.stringify([file, entry.owner, text])).slice(0, 24),
         file,
@@ -86,7 +96,7 @@ function analyze(code, file, config) {
       let reason = 'no qualified operation'
       if (!owner || opening.attributes.some((a) => a.type === 'JSXSpreadAttribute'))
         reason = 'opaque owner or spread'
-      else if (typeof name === 'string' && (/^[a-z]/.test(name) || panelHost) && (typeof classes === 'string' || !attr('className'))) {
+      else if (typeof name === 'string' && (/^[a-z]/.test(name) || panelHost) && (typeof classes === 'string' || moduleUse || !attr('className'))) {
         const tokens = (classes ?? '').split(/\s+/).filter(Boolean)
         const eligible = tokens.flatMap((literal) => {
           const declarations = config.css.classes.get(literal) ?? []
@@ -144,10 +154,15 @@ function analyze(code, file, config) {
             eligible.push(...(config.css.descendants.get('.' + token + ' ' + name) ?? []))
           }
         }
+        if (moduleUse) {
+          eligible.push(...moduleClass)
+          raw.moduleClass = reference
+          raw.dependencies = [...raw.dependencies, reference.file]
+        }
         const styles = eligible.filter((s) => eligible.filter((x) => s.property === x.property).length === 1)
         if (config.panelBindings && (!attr('style') || (/^[a-z]/.test(name) && literalColorAttribute(opening))) && !config.css.indexError &&
             !opening.attributes.some(a => a.name?.name?.startsWith('data-li-'))) {
-          for (const property of ['background-color', 'border-radius', 'font-size', 'height']) {
+          for (const property of (moduleUse ? ['background-color', 'border-radius', 'font-size'] : ['background-color', 'border-radius', 'font-size', 'height'])) {
             if (!eligible.some(style => style.property === property))
               styles.push({ property, local: config.tailwind ? 'utilities' : 'ordinary' })
           }
@@ -233,6 +248,7 @@ function analyze(code, file, config) {
 }
 const trees = new Map()
 function ordinaryCSS(root, graph, classify) {
+  const moduleClasses = new Map()
   const descendants = new Map()
   const classes = new Map(),
     tokenFiles = [],
@@ -262,19 +278,23 @@ function ordinaryCSS(root, graph, classify) {
       if (!baseRule(rule)) return
       const descendant = /^\.[a-zA-Z_][\w-]* [a-z][a-z0-9]*$/.test(rule.selector)
       if (!descendant && !/^\.[a-zA-Z_][\w-]*$/.test(rule.selector)) return
-      const index = descendant ? descendants : classes
+      const module = file.endsWith('.module.css')
+      if (module && descendant) return
+      const index = module ? moduleClasses : descendant ? descendants : classes
       const literal = rule.selector.slice(1)
+      const key = module ? JSON.stringify([file, literal]) : descendant ? rule.selector : literal
+      if (module && !index.has(key)) index.set(key, [])
       for (const d of rule.nodes) {
         if (d.type !== 'decl') continue
         try {
           for (const property of classify(d)) {
-            const key = descendant ? rule.selector : literal
+            if (module && !['background-color', 'border-radius', 'font-size'].includes(property)) continue
             const list = index.get(key) ?? []
             list.push({
               attribute: 'className',
               literal,
               property,
-              css: { file, served, ...(descendant ? { selector: rule.selector } : {}), declaration: d.prop, value: d.value },
+              css: { file, served, ...(module ? { member: literal } : {}), ...(descendant ? { selector: rule.selector } : {}), declaration: d.prop, value: d.value },
             })
             index.set(key, list)
           }
@@ -292,9 +312,9 @@ function ordinaryCSS(root, graph, classify) {
   }
   // Utility classification also consults this index for same-class
   // ownership. Let neither kind publish candidates from a partial index.
-  if (indexError) { classes.clear(); descendants.clear() }
+  if (indexError) { classes.clear(); descendants.clear(); moduleClasses.clear() }
   const variableSources = [...definitions].map(([file, names]) => ({ file, names: [...names] }))
-  return { classes, descendants, tokenFiles, spacingSources, variableSources, indexError }
+  return { classes, moduleClasses, descendants, tokenFiles, spacingSources, variableSources, indexError }
 }
 export async function prepareProject(project, destination, namespace, boundary = 'src', server, {
   classifyCSS = cssFields, panelBindings = false,
@@ -305,12 +325,12 @@ export async function prepareProject(project, destination, namespace, boundary =
     throw Error('Use an app source subdirectory and an external manifest.')
   const resolved = new Map()
   const graph = await stylesheetGraph(root, server, panelBindings ? (file, spec, path) => {
-    if (/\.[jt]sx$/.test(path)) resolved.set(JSON.stringify([file, spec]), path)
+    if (/\.[jt]sx$|\.module\.css$/.test(path)) resolved.set(JSON.stringify([file, spec]), path)
   } : undefined)
   const forwarding = new Map()
   function forwarded(file, spec) {
     const path = spec && resolved.get(JSON.stringify([file, spec.from]))
-    if (!path || realpathSync(join(root, path)) !== join(root, path)) return
+    if (!path || !/\.[jt]sx$/.test(path) || realpathSync(join(root, path)) !== join(root, path)) return
     const key = JSON.stringify([path, spec.name])
     if (!forwarding.has(key)) {
       let tokens = []
@@ -360,7 +380,7 @@ export async function prepareProject(project, destination, namespace, boundary =
           }
           trees.set(path, cached)
         }
-        const result = analyze(code, file, { theme, button, tailwind, panelBindings, forwarded, dependencies: deps, tree: cached.tree, css })
+        const result = analyze(code, file, { theme, button, tailwind, panelBindings, forwarded, resolved, dependencies: deps, tree: cached.tree, css })
         sites.push(...result.sites)
         unresolved.push(...result.rejected)
         files.push({ file, status: 'indexed', candidates: result.sites.length })

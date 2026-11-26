@@ -57,6 +57,12 @@ export function preparedStyles(root, manifest) {
         .find((n) => n.id.name === '__vite__css')?.init
       if (source?.type !== 'StringLiteral') return
       const file = relative(root, id)
+      const constants = new Map(ast.program.body.flatMap(statement =>
+        (statement.declaration ?? statement).declarations ?? []).filter(d => d.init?.type === 'StringLiteral')
+        .map(d => [d.id.name, d.init.value]))
+      const exported = ast.program.body.find(n => n.type === 'ExportDefaultDeclaration')?.declaration
+      const members = new Map((exported?.properties ?? []).filter(p => p.type === 'ObjectProperty' && !p.computed)
+        .map(p => [p.key.name ?? p.key.value, p.value.type === 'StringLiteral' ? p.value.value : constants.get(p.value.name)]))
       const byClass = new Map()
       for (const site of inventory.sites) {
         for (const style of site.styles ?? [site.style]) {
@@ -67,7 +73,9 @@ export function preparedStyles(root, manifest) {
             (style.css && !(style.css.served ?? [style.css.file]).includes(file))
           )
             continue
-          const key = style.css?.selector ?? '.' + style.literal
+          const compiled = style.css?.member && members.get(style.css.member)
+          if (style.css?.member && (file !== style.css.file || !compiled || !/^[\w-]+$/.test(compiled))) continue
+          const key = style.css?.selector ?? '.' + (compiled || style.literal)
           const styles = byClass.get(key) ?? new Map()
           styles.set(style.property, style)
           byClass.set(key, styles)

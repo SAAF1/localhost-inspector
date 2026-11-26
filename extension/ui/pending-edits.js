@@ -128,7 +128,7 @@
           const detail = property + '  ' + edit.before + ' → ' + edit.requested +
             (sourceEdit ? ' · Candidate source' : edit.template ? ' · Whole template' : '') + (edit.sessionOnly ? ' · Current element only' : '') + ({
               applied: ' · Previewing', hidden: ' · Hidden', superseded: ' · Overridden by a newer edit',
-              pending: ' · Awaiting verification', stale: ' · Source changed', failed: ' · Effect missing', unobservable: ' · Unavailable in this view',
+              pending: ' · Awaiting verification', stale: ' · Source changed', failed: ' · Effect missing · Saved, current appearance differs', unobservable: ' · Unavailable in this view',
             }[state] ?? '')
           open.append(ui.element('span', 'li-pending-name', name), ui.element('span', 'li-pending-detail',
             recent ? pageName(edit.route) + ' · ' + detail : detail))

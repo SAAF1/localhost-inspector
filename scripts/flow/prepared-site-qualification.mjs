@@ -32,6 +32,14 @@ function walk(node, visit, owner) {
 }
 
 // Literal text color cannot own any of the four local panel properties.
+export function moduleReference(opening, imports) {
+  const expression = opening.attributes.find(a => a.name?.name === 'className')?.value?.expression
+  if (expression?.type !== 'MemberExpression' || expression.object.type !== 'Identifier') return
+  const file = imports.get(expression.object.name)
+  const member = expression.computed ? expression.property.type === 'StringLiteral' && expression.property.value : expression.property.name
+  if (file && member) return { file, member }
+}
+
 export function literalColorAttribute(node) {
   const styles = node.attributes.filter(a => a.name?.name === 'style')
   if (styles.length !== 1) return
@@ -70,6 +78,11 @@ export function preparedStyleTargets(site, node, code) {
   const targets = []
   for (const style of site.styles ?? (site.style ? [site.style] : [])) {
     const { attribute, property, literal } = style
+    if (style.css?.member && site.moduleClass?.file === style.css.file &&
+        site.moduleClass.member === style.css.member && styleProperties.has(property)) {
+      targets.push({ style })
+      continue
+    }
     if (style.css?.selector && styleProperties.has(property) && !node.attributes.some(a => a.type === 'JSXSpreadAttribute')) {
       targets.push({ style })
       continue
