@@ -351,7 +351,8 @@
     editsUI.showEdits()
     const navigation = ++editNavigation
     if (edit.prepared && !comparing && !edit.previewHidden) {
-      const current = () => navigation === editNavigation && destination.route === savedRoute && route() === currentRoute
+      const path = currentRoute, version = activeRouteVersion, selected = selection.current
+      const current = () => navigation === editNavigation && isCurrentRoute(path, version) && selection.current === selected
       await ui.preparedPreview.waitForMember(edit, current)
       if (!current()) return
       syncPending()
@@ -1801,8 +1802,10 @@
       ))) renderFields({ keepPopup: true })
     }
     if (!recovery.hasRecords) return
-    if (!busy && !loadingRoute && sourceRows().length && records.some(record =>
-      (record.type === 'childList' && document.body.contains(record.target) && !host.contains(record.target)) || record.attributeName === authored.attribute)) reportRecovery()
+    if (!busy && !loadingRoute && (sourceRows().length || recovery.hasPrepared) && records.some(record =>
+      (record.type === 'childList' && document.body.contains(record.target) && !host.contains(record.target)) ||
+      record.attributeName === authored.attribute || record.attributeName === 'data-li-revision' ||
+      record.attributeName === 'data-li-render-revision')) reportRecovery()
     recoveryRequested ||= styleChanges.length !== records.length || recovery.hasTargetClassChange(styleChanges) ||
       ((recovery.hasScopedEdits || recovery.hasTemplateEdits) && styleChanges.some(record => record.attributeName === 'class')) ||
       (!busy && !loadingRoute && !comparing && recovery.hasStyleConflict(styleChanges))

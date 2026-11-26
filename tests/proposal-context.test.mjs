@@ -25,3 +25,11 @@ test('a conflicting frame ID, ambiguous page or another origin cannot silently c
   assert.throws(() => proposalContext({ ...map, frames: [list, { ...list, id: 'duplicate' }] }, '/records?q=a'))
   assert.throws(() => proposalContext(map, candidate + '/records'))
 })
+
+test('a workspace live-route receipt stays local and cannot reopen an Inspector endpoint', async () => {
+  const { lastAppRoute } = await import('../scripts/flow/proposal-view.mjs')
+  for (const invalid of [null, {}, '//elsewhere.example/page', '/\\elsewhere.example/page', '/a/../__inspector-flow/']) {
+    assert.equal(lastAppRoute({ inspectorAppRoute: invalid }, original), null)
+  }
+  assert.equal(lastAppRoute({ inspectorAppRoute: '/browse?query=a#/page' }, original), '/browse?query=a#/page')
+})

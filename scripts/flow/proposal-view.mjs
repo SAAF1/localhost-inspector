@@ -58,7 +58,7 @@ function contextAddress(origin, { frame, route, expanded, variant }) {
 // assigning a made-up frame or publishing it as a shareable comparison.
 export function lastAppRoute(state, origin) {
   const path = state?.inspectorAppRoute
-  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return null
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || path.includes('\\')) return null
   const url = new URL(path, origin)
   if (url.origin !== origin || url.pathname.startsWith('/__inspector')) return null
   return url.pathname + url.search + url.hash
@@ -75,8 +75,8 @@ export function trackContext(frame, read) {
     if (!frame.isConnected || frame.contentDocument !== doc) return
     const context = read()
     const address = contextAddress(location.origin, context)
-    const route = !context.expanded && !context.frame &&
-      lastAppRoute({inspectorAppRoute: context.route}, location.origin) || null
+    const route = !context.expanded && !context.frame && context.unmapped
+      ? lastAppRoute({inspectorAppRoute: context.route}, location.origin) : null
     const next = address || (location.hash.startsWith('#context=') ? canvasAddress(location.origin) : location)
     if (next.href !== location.href || (history.state?.inspectorAppRoute ?? null) !== route) {
       const state = { ...history.state }

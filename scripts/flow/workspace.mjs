@@ -1023,7 +1023,8 @@ map.addEventListener('pointerout', event => {
 
 function comparisonContext() {
   const frame = currentFrame()
-  return { frame, route: routeOf(preview), expanded, variant: focusedVariant?.id === frame?.id ? focusedVariant?.variant : undefined }
+  const route = routeOf(preview)
+  return { frame, route, unmapped: route && !framesByRoute.has(mappedRoute(route)), expanded, variant: focusedVariant?.id === frame?.id ? focusedVariant?.variant : undefined }
 }
 
 let stopContextTracking
