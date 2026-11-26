@@ -191,6 +191,7 @@
   let landmarkPreviewTargets = false
   let sectionPreviewTargets = false
   let preparedPreviews = false
+  let selectedUseHeight = false
   let authoredUse = false
   get('authored-edit-scope').addEventListener('change', () => renderFields())
   let scopeSelection
@@ -509,6 +510,7 @@
       cohort.every(member => authored.binding(member).revision === use.revision && authored.eligible(member, action)))
     let origin
     try { origin = JSON.parse(node?.getAttribute('data-li-source-use')) } catch { /* Unmarked source. */ }
+    const selectedHeight = selectedUseHeight && hasSelection && editScope.value === 'selected' && ui.selectedUse(node)
     const authoredLabel = actions.map(action => action === 'paint' ? 'text color' : 'fixed spacing').join(', ')
     scope.textContent = [authoredUse && hasSelection && (authoredLabel
       ? 'Shared candidate source · ' + authoredLabel : 'Shared candidate source unavailable for text color and fixed spacing'),
@@ -517,7 +519,7 @@
       shared.length && Object.values(contract.parts ?? {}).some(part => part.depth) && 'Selected envelope and its verified painted descendant',
       shared.length && 'Shared source controls · ' + shared.join(', '),
       authoredUse && hasSelection && (editScope.value === 'selected'
-        ? (node.hasAttribute('data-li-record-scope') && node.getAttribute('data-inspector-target') ? 'One record · source handoff available for corner radius' : 'Selected occurrence preview · separate from source handoff')
+        ? (node.hasAttribute('data-li-record-scope') && node.getAttribute('data-inspector-target') ? 'One record · source handoff available for corner radius' : selectedHeight ? 'Selected action · fixed Height handoff at ' + selectedHeight.owner : 'Selected occurrence preview · separate from source handoff')
         : contract && contract.file + ' · ' + ui.preparedPreview.membersOf(contract.revision).length + ' mounted'),
       hasSelection && preparedStylesUnavailable && 'Shared stylesheet controls are unavailable in this preview.',
     ].filter(Boolean).join(' · ')
@@ -1085,6 +1087,7 @@
     const version = activeRouteVersion
     const isCurrent = () => isCurrentRoute(editRoute, version)
     const target = ui.describePreviewTarget(node)
+    const selectedUse = selectedUseHeight && authoredUse && selectionOnly && property === 'height' && /^\d+(?:\.\d+)?px$/.test(requested) && ui.selectedUse(node)
     let recordScope
     if (authoredUse && selectionOnly && property === 'border-radius' && (qualifiedPrepared || node.hasAttribute('data-li-record-scope'))) {
       try { recordScope = JSON.parse(node.getAttribute('data-li-record-scope')) } catch { /* Unverified source. */ }
@@ -1112,6 +1115,10 @@
       const templateSourceFingerprint = template ? await ui.templateSourceFingerprint(source) : undefined
       edit = await editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template, templateSourceFingerprint })
       if (selectionOnly) edit.intent = 'selected occurrence only'
+      if (selectedUse && edit.restore === 'unique') {
+        if (JSON.stringify(ui.selectedUse(node)) !== JSON.stringify(selectedUse)) throw Error('The selected source use changed.')
+        edit.selectedUse = selectedUse
+      }
       if (recordScope) {
         if (ui.findPreviewTarget(target, node) !== node) throw Error('The record is no longer unique.')
         edit.recordScope = recordScope
@@ -1611,6 +1618,7 @@
     landmarkPreviewTargets = snapshot.landmarkPreviewTargets === true
     sectionPreviewTargets = snapshot.sectionPreviewTargets === true
     preparedPreviews = snapshot.preparedPreviews === true
+    selectedUseHeight = snapshot.selectedUseHeight === true
     authoredUse = snapshot.authoredUse === true
     templatePreviews = snapshot.templatePreviews === true
     templateSourcePreviews = snapshot.templateSourcePreviews === true

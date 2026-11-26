@@ -67,6 +67,14 @@ export function journalValidators(journalRoute) {
       record.intent !== 'selected occurrence only' || record.target?.key !== recordScope?.key ||
       group || prepared || reference || pending || record.template || !/^\d+(?:\.\d+)?px$/.test(record.requested)))
       throw Error('Invalid selected-record request.')
+    const selectedUse = record?.selectedUse
+    if (selectedUse !== undefined && (record.property !== 'height' || record.restore !== 'unique' ||
+        record.intent !== 'selected occurrence only' || group || prepared || reference || pending || record.template || recordScope ||
+        !/^\d+(?:\.\d+)?px$/.test(record.requested) || record.observed !== record.requested ||
+        !Array.isArray(selectedUse?.dependencies) || selectedUse.dependencies.length > 12 ||
+        !/^use-[a-f0-9]{24}$/.test(selectedUse?.id) || !/^[\w$-]{1,100}$/.test(selectedUse.field) ||
+        !targetFingerprint(selectedUse.callerDigest) || !targetFingerprint(selectedUse.componentDigest)))
+      throw Error('Invalid selected-use request.')
     const target = record?.target
     if (!record || !/^[a-f0-9-]{36}$/.test(record.id) || !validRoute(record.route) || !validRequest || !validPending ||
         Object.hasOwn(record, 'group') || (!group && Object.hasOwn(record, 'textStyleToken')) ||
@@ -88,7 +96,7 @@ export function journalValidators(journalRoute) {
     // An older extension can still save previews, but only a current extension
     // explicitly signals the template intent expected by the new handoff.
     const intent = record.intent === featureTemplateScope ? featureTemplateScope : 'selected occurrence only'
-    const sourceContext = intent === featureTemplateScope ? sourceContextFrom(record.sourceContext) : undefined
+    const sourceContext = (selectedUse || intent === featureTemplateScope) ? sourceContextFrom(record.sourceContext) : undefined
     const { width, height } = record.viewport ?? {}
     const viewport = Number.isInteger(width) && Number.isInteger(height) ? { width, height } : undefined
     const colorToken = token ? { source: token.source, name: token.name } : undefined
@@ -100,6 +108,10 @@ export function journalValidators(journalRoute) {
       ...(prepared ? { prepared: { site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}),
         ...(prepared.effect ? {effect:{property:prepared.effect.property,value:prepared.effect.value}} : {}),
         ...(prepared.part ? {part:Object.fromEntries(['id','revision','depth','file','selector'].map(k=>[k,prepared.part[k]]))} : {}) } } : {}),
+      ...(selectedUse ? {selectedUse: {
+        ...Object.fromEntries(['id','file','owner','callerDigest','component','componentDigest','field'].map(k=>[k,selectedUse[k]])),
+        dependencies:selectedUse.dependencies.map(({file,revision})=>({file,revision})),
+      }} : {}),
       ...(recordScope ? {recordScope: Object.fromEntries(['id','value','key','caller','file','owner','prop','field','collection','backing'].map(k => [k,recordScope[k]]))} : {}),
       target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,
       templateSourceFingerprint: record.templateSourceFingerprint,

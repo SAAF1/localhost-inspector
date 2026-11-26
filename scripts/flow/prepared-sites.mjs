@@ -1,5 +1,6 @@
 import { markRecordCallers, markRecordHost } from './record-scope.mjs'
 import { componentFingerprint } from './component-proof.mjs'
+import { markSelectedCalls } from './selected-use.mjs'
 import { markSourceSelections } from './selection-provenance.mjs'
 import { onlyElement } from './component-surface.mjs'
 import { classMemberExpression, classJoinPackages, resolvedClassJoin } from './class-composition.mjs'
@@ -168,9 +169,10 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
       return []
     },
     resolveId(id) {
-      if (id === runtime || id === 'virtual:inspector-prepared-registry' || styles.has(id)) return '\0' + id
+      if (id === 'virtual:inspector-selected-use' || id === runtime || id === 'virtual:inspector-prepared-registry' || styles.has(id)) return '\0' + id
     },
     load(id) {
+      if (id === '\0virtual:inspector-selected-use') return readFileSync(new URL('../../integrations/selected-use.mjs', import.meta.url),'utf8')
       if (id === '\0virtual:inspector-prepared-registry')
         return (
           readFileSync(new URL('../../integrations/prepared-registry.mjs', import.meta.url), 'utf8') +
@@ -418,12 +420,14 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           if (recordRoots.size) out.prepend('import { recordAttributes as __liRecordAttrs } from "virtual:inspector-prepared-registry";\n')
           const records = manifestData.panelBindings && await markRecordCallers({ root, file, code, tree, out,
             resolveImport: async specifier => (await this.resolve(specifier, id))?.id })
+          const calls = manifestData.panelBindings && await markSelectedCalls(root,file,code,tree,out,
+            async spec => (await this.resolve(spec,id))?.id)
           const selected = manifestData.panelBindings && markSourceSelections(file,code,openings,out)
           const marked = await addAuthoredUseMarkers({
             root, file, code, tree, out, reserved, preparedAtOpening, schema: authoredUseSchema,
             resolveImport: async (specifier) => (await this.resolve(specifier, id))?.id,
           })
-          if (!recipes.length) return (recordRoots.size || records || selected || marked) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
+          if (!recipes.length) return (recordRoots.size || records || selected || marked || calls) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
         }
         // Report known-but-stale sites separately from an absent scene. The registry
         // contains only mappings for modules loaded in this page.

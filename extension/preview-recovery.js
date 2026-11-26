@@ -192,12 +192,26 @@
     return matchesTarget(node, target, node !== liveNode) ? node : null
   }
 
+  function selectedUse(node) {
+    let proof
+    const receive = event => {
+      try { proof = JSON.parse(event.detail) } catch { /* Missing development receipt. */ }
+    }
+    node.addEventListener('li-selected-use', receive)
+    try { node.dispatchEvent(new Event('li-read-selected-use', {bubbles:true})) }
+    finally { node.removeEventListener('li-selected-use', receive) }
+    return proof
+  }
+  ui.selectedUse = selectedUse
+  const sameUse = (edit,node) => !edit?.selectedUse || (node && JSON.stringify(selectedUse(node)) === JSON.stringify(edit.selectedUse))
+
   function ownsDeclaration({ node, property, requested }) {
     return node.style.getPropertyValue(property) === requested &&
       node.style.getPropertyPriority(property) === ''
   }
 
   async function verifySavedNode(edit, node, identity, isCurrent) {
+    if (!sameUse(edit,node)) return false
     const { key, anchor, textFingerprint, regionFingerprint, classFingerprint, contextFingerprint } = edit.target
     if (anchor && (!textFingerprint || !regionFingerprint || !classFingerprint)) return false
     if (!key && (textFingerprint || regionFingerprint || classFingerprint)) {
@@ -491,6 +505,7 @@
     }
 
     function isAttached(edit, entry) {
+      if (!sameUse(edit,entry.node)) return false
       if (edit?.template) return templateMatches(edit, entry.node) && sameTemplateSource(edit, entry.node) === true
       return Boolean(edit && matchesTarget(entry.node, entry.liveTarget) &&
         (edit.restore !== 'unique' || findTarget(edit.target, entry.node) === entry.node))
@@ -678,7 +693,7 @@
             complete = false
             break
           }
-          const exactMatch = matchesTarget(exact?.node, exact?.target) &&
+          const exactMatch = matchesTarget(exact?.node, exact?.target) && sameUse(edit,exact.node) &&
             (!edit.recordScope || findTarget(edit.target, exact.node) === exact.node)
           const node = exactMatch ? exact.node : (edit.restore === 'unique' ? await resolveSavedNode(edit, groupCurrent) : null)
           if (conflicts.has(edit.id) || !node) {

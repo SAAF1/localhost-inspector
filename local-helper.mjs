@@ -265,6 +265,11 @@ if (mode === 'handoff' || mode === 'proposal-readiness') {
   if (journal.version !== 2) throw Error('Open Inspector to migrate this journal before exporting a handoff')
   await assertAuthoredReady(binding, file, journal, read)
   const handoff = buildSourceHandoff(binding, journal)
+  for (const op of handoff.operations.filter(op=>op.scope === 'selected-use')) {
+    const { verifySelectedUse } = await import('./scripts/flow/selected-use.mjs')
+    try { verifySelectedUse(binding.source, op.changes[0].selectedUse) }
+    catch { op.status='blocked'; op.reason='selected-source-changed' }
+  }
   if (journal.textStyleDefinitions?.length) {
     const catalog = await readCatalog(binding, 'text-styles')
     const pending = journal.textStyleDefinitions.filter(style =>
@@ -432,6 +437,11 @@ async function handle(message) {
     await atomic(file, journal)
     const imageCleanupFailed = await removeVisualEvidence(root, binding, retired)
     return { revision: journal.revision, completed, imageCleanupFailed, reloadInspector: true }
+  }
+  if (message.type === 'save' && message.record?.selectedUse !== undefined) {
+    if (!binding.authoredUse) throw Error('Selected source preview requires opt-in.')
+    const { verifySelectedUse } = await import('./scripts/flow/selected-use.mjs')
+    verifySelectedUse(binding.source,message.record.selectedUse)
   }
   if (message.type === 'save' && message.record?.recordScope !== undefined) {
     if (!binding.authoredUse) throw Error('Selected-record source preview requires opt-in.')

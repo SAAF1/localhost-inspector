@@ -13,7 +13,7 @@ export function journalSnapshot(message, journal, journalRoute, buttonSize, auth
       return { ...edit, sourceReceipt }
     })
   return { revision: journal.revision, route, preparedPreviews: true, scopedPreviewTargets: true, landmarkPreviewTargets: true, sectionPreviewTargets: true, templatePreviews: true,
-    templateSourcePreviews: true, templatePaddingPreviews: true, projectWideRevert: true, ...(authoredUse ? { authoredUse: true } : {}), previewVisibility: true,
+    templateSourcePreviews: true, templatePaddingPreviews: true, projectWideRevert: true, ...(authoredUse ? { authoredUse: true, selectedUseHeight: true } : {}), previewVisibility: true,
     textStyleDefinitions: journal.textStyleDefinitions ?? [],
     ...(message.forComponentReset === true ? { componentEdits: journal.edits.filter(edit => edit.target.mount) } : {}),
     edits: visibleEdits, pending: pendingEdits(journal.edits), buttonSizeKey: buttonSize?.key }
