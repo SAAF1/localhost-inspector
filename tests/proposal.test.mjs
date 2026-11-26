@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { once } from 'node:events'
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { acceptProposal, createProposal, proposalStatus, refreshProposal } from '../scripts/proposal.mjs'
+
+import { keepStudio } from '../scripts/keep-studio.mjs'
+import { parseAuthoredJsx } from '../scripts/flow/authored-forwarding.mjs'
+import { preparedOpenings, preparedRevision } from '../scripts/flow/prepared-site-qualification.mjs'
 
 function fixture(t) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'inspector-test-proposal-')))
@@ -186,4 +191,62 @@ test('refresh refuses a draft addition which collides with an existing ignored s
   assert.equal(readFileSync(join(app, '.env'), 'utf8'), 'ignored\n')
   assert.equal(readFileSync(join(draft.appRoot, '.env'), 'utf8'), 'draft value')
   assert.equal(existsSync(proposal + '-new'), false)
+})
+
+test('keepStudio retains a literal utility from a saved candidate and refuses stale or stylesheet-owned edits atomically', async t => {
+  const { app, proposal } = fixture(t)
+  const file = 'src/Card.jsx'
+  const opening = '<article className="card gap-4">'
+  const code = 'export function Card() { return ' + opening + 'Hello</article> }\n'
+  mkdirSync(join(app, 'src'))
+  writeFileSync(join(app, file), code)
+  const { appRoot } = createProposal(app, proposal)
+  const state = join(proposal, 'journal')
+  mkdirSync(state)
+  const server = spawn(process.execPath, ['-e', `
+    const server = require('node:net').createServer()
+    server.listen(0, '127.0.0.1', () => process.send(server.address().port))
+  `], { cwd: appRoot, stdio: ['ignore', 'ignore', 'inherit', 'ipc'] })
+  t.after(async () => {
+    if (server.exitCode !== null || server.signalCode) return
+    const stopped = once(server, 'exit')
+    server.kill()
+    await stopped
+  })
+  const [port] = await Promise.race([
+    once(server, 'message'),
+    once(server, 'exit').then(() => { throw Error('Candidate listener exited early') }),
+  ])
+  const origin = 'http://127.0.0.1:' + port
+  const binding = { id: 'saved-proposal', origin, source: appRoot }
+  const save = (file, value) => writeFileSync(file, JSON.stringify(value))
+  save(join(proposal, '../studio.json'), { versions: [{ id: 'a', directory: proposal }] })
+  save(join(proposal, 'preview-session.json'), { state, binding: binding.id, port: String(port) })
+  save(join(state, 'bindings.json'), { [origin]: binding })
+  const site = { id: 'card-gap', owner: 'Card', file, opening, dependencies: ['local.css'],
+    styles: [{ attribute: 'className', literal: 'gap-4', property: 'gap', utility: {} }] }
+  const manifest = join(proposal, 'prepared.json')
+  save(manifest, { namespace: 'studio-test', sites: [site] })
+  const tree = parseAuthoredJsx(code)
+  const revision = preparedRevision(appRoot, 'studio-test', site, code, tree, preparedOpenings(tree)[0].owner, new Map())
+  const edit = { id: 'gap-edit', route: '/', intent: 'feature-template', target: { tag: 'article' },
+    before: '16px', observed: '19px', property: 'gap', requested: '19px',
+    prepared: { site: site.id, file, revision } }
+  const journal = edits => save(join(state, binding.id + '-changes.json'), { binding, version: 2, revision: 1, edits })
+  journal([edit])
+  const dependency = join(appRoot, 'local.css')
+  const prior = readFileSync(dependency)
+  writeFileSync(dependency, '.changed {}')
+  assert.throws(() => keepStudio(proposal), /Prepared source changed/)
+  assert.equal(readFileSync(join(appRoot, file), 'utf8'), code)
+  writeFileSync(dependency, prior)
+  const moduleSite = { ...site, id: 'module-owner', moduleClass: { file: 'src/Card.module.css', member: 'card' } }
+  save(manifest, { namespace: 'studio-test', sites: [site, moduleSite] })
+  journal([edit, { ...edit, id: 'other', property: 'color', prepared: { ...edit.prepared, site: moduleSite.id } }])
+  assert.throws(() => keepStudio(proposal), /coding-agent source handoff/)
+  assert.equal(readFileSync(join(appRoot, file), 'utf8'), code)
+  journal([edit])
+  assert.deepEqual(keepStudio(proposal).files, [file])
+  assert.equal(readFileSync(join(appRoot, file), 'utf8'), code.replace('gap-4', 'gap-[19px]'))
+  assert.equal(readFileSync(join(app, file), 'utf8'), code)
 })

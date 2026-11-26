@@ -10,8 +10,7 @@ import { candidateHandoff } from './proposal-journal.mjs'
 import { readProposal } from './proposal.mjs'
 import MagicString from 'magic-string'
 import { parse } from '@babel/parser'
-import { preparedSites } from './flow/prepared-sites.mjs'
-import { preparedOpenings } from './flow/prepared-site-qualification.mjs'
+import { preparedOpenings, preparedRevision, preparedStyleTargets } from './flow/prepared-site-qualification.mjs'
 
 function patchFile(file, original, updated, temp) {
   const before = join(temp, 'before'),
@@ -32,9 +31,8 @@ export function keepStudio(dir) {
     throw Error('Choose a candidate from this studio.')
   const { appRoot, status } = readProposal(dir)
   if (status === 'accepted') throw Error('This design is already accepted.')
-  const manifest = join(dir, 'prepared.json'),
-    sites = JSON.parse(readFileSync(manifest, 'utf8')).sites
-  const plugin = preparedSites(appRoot, manifest)
+  const { namespace, sites } = JSON.parse(readFileSync(join(dir, 'prepared.json'), 'utf8'))
+  const dependencies = new Map()
   const handoff = candidateHandoff(dir),
     files = new Map()
   const recordSites = new Map()
@@ -49,23 +47,31 @@ export function keepStudio(dir) {
         recordSites.set(siteKey, changes)
         continue
       }
-      const prepared = change.prepared,
-        site = sites.find((s) => s.id === prepared?.site)
-      if (!site || site.file !== prepared.file || !/^src\/[\w/.$()-]+\.[jt]sx$/.test(site.file))
+      const prepared = change.prepared
+      const matches = prepared && sites.filter(site => site.id === prepared.site)
+      if (matches?.length !== 1 || matches[0].file !== prepared.file || !/^src\/[\w/.$()-]+\.[jt]sx$/.test(prepared.file))
         throw Error('This operation needs an individual source handoff.')
+      const site = matches[0]
+      const style = site.styles?.find(s => s.property === change.property)
+      if (site.moduleClass || prepared.part || style?.css)
+        throw Error('Retain this shared style through the coding-agent source handoff. Automatic retention requires a literal utility class.')
       if (!files.has(site.file)) {
-        const path = join(appRoot, site.file),
-          original = readFileSync(path, 'utf8')
-        const transformed = plugin.transform.call({ addWatchFile() {} }, original, path)?.code
-        files.set(site.file, { original, transformed, sites: new Map(), icons: new Set() })
+        const original = readFileSync(join(appRoot, site.file), 'utf8')
+        const tree = parse(original, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
+        files.set(site.file, { original, tree, openings: preparedOpenings(tree), sites: new Map(), icons: new Set() })
       }
       const record = files.get(site.file)
-      // Registry output proves identity against the live owner and all its dependencies.
-      if (!record.transformed?.includes(JSON.stringify(site.id) + ':' + JSON.stringify(prepared.revision)))
+      const uses = record.openings.filter(({ node, owner }) =>
+        owner.id.name === site.owner && record.original.slice(node.start, node.end) === site.opening)
+      if (uses.length !== 1) throw Error('The authored use is ambiguous or changed.')
+      const use = uses[0]
+      // Verify the saved receipt against the live owner, imports and dependency bytes.
+      const revision = preparedRevision(appRoot, namespace, site, record.original, record.tree, use.owner, dependencies)
+      if (!revision || revision !== prepared.revision || !preparedStyleTargets(site, use.node, record.original))
         throw Error('Prepared source changed. Recheck the design before keeping it.')
-      const fields = record.sites.get(site) ?? new Map()
+      if (!record.sites.has(site)) record.sites.set(site, { use, fields: new Map() })
+      const { fields } = record.sites.get(site)
       fields.set(change.property, change.requested)
-      record.sites.set(site, fields)
     }
   }
   for (const changes of recordSites.values()) {
@@ -80,15 +86,8 @@ export function keepStudio(dir) {
     for (const [file, {original, updated}] of recordFiles) patch += patchFile(file, original, updated, temp)
     for (const [file, record] of files) {
       const out = new MagicString(record.original)
-      const ast = parse(record.original, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
-      const openings = preparedOpenings(ast)
-      for (const [site, fields] of record.sites) {
-        const matched = openings.filter(
-          ({ node, owner }) =>
-            owner.id.name === site.owner && record.original.slice(node.start, node.end) === site.opening,
-        )
-        if (matched.length !== 1) throw Error('The authored use is ambiguous.')
-        const { node, children } = matched[0]
+      for (const [site, { use, fields }] of record.sites) {
+        const { node, children } = use
         const attr = (name) => node.attributes.find((a) => a.name?.name === name)?.value
         let classes = attr('className')?.value
         for (const [property, value] of fields) {
@@ -112,7 +111,7 @@ export function keepStudio(dir) {
           } else {
             const style = site.styles?.find((s) => s.property === property)
             let replacement
-            const prefix = style?.literal.match(/^(gap|w|h|min-w|max-w|min-h|max-h)-/)?.[1]
+            const prefix = style?.literal?.match(/^(gap|w|h|min-w|max-w|min-h|max-h)-/)?.[1]
             const token = /^var\(--[\w-]+\)$/.test(value)
             if (prefix && (token || /^\d+(?:\.\d+)?px$/.test(value))) replacement = prefix + '-[' + value + ']'
             if (prefix === 'w' && value === '100%') replacement = 'w-full'
