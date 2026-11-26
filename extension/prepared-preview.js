@@ -30,6 +30,16 @@
           (parseFloat(css.getPropertyValue('border-'+side+'-width')) || 0)+1)) return
     return part
   }
+  function revisionOf(node) {
+    return node?.getAttribute('data-li-revision') ?? node?.getAttribute('data-li-render-revision')
+  }
+  function revisionSelector(revision) {
+    const value = CSS.escape(revision)
+    return ':is([data-li-revision="' + value + '"],[data-li-render-revision="' + value + '"]:not([data-li-revision]))'
+  }
+  function membersOf(revision) {
+    return document.querySelectorAll(revisionSelector(revision))
+  }
   const renderedFields = ['background-color', 'border-radius', 'font-size']
   function declaration(part, property) {
     const css = getComputedStyle(part)
@@ -57,13 +67,13 @@
         if (!sameBox(node,child)) break
         const css = getComputedStyle(child)
         if (css.backgroundColor === 'rgba(0, 0, 0, 0)' && css.backgroundImage === 'none') continue
-        if (!child.hasAttribute('data-li-revision') || css.backgroundImage !== 'none') return
+        if (!revisionOf(child) || css.backgroundImage !== 'none') return
         part = child
         depth = level
       }
     }
     const binding = declaration(part,property)
-    const revision = part.getAttribute('data-li-revision')
+    const revision = revisionOf(part)
     if (!binding || !/^[a-f0-9]{64}$/.test(revision ?? '')) return
     return { ...binding, depth, revision }
   }
@@ -72,7 +82,7 @@
   }
   function partNode(node,binding) {
     for (let i=0; node && i<binding.depth; i++) node = node.childElementCount===1 ? node.firstElementChild : null
-    return node?.getAttribute('data-li-revision') === binding.revision ? node : null
+    return revisionOf(node) === binding.revision ? node : null
   }
   function renderedTextMatches(node, requested) {
     const walker = document.createTreeWalker(node,NodeFilter.SHOW_TEXT)
@@ -135,12 +145,12 @@
   let inputs = new Map()
   function contract(node) {
     try {
-      const c = JSON.parse(node.getAttribute('data-li-contract'))
+      const c = JSON.parse(node.getAttribute('data-li-contract') ?? node.getAttribute('data-li-render-contract'))
       if (
         /^[a-z][a-z0-9-]{0,63}$/.test(c?.site) &&
         /^[a-f0-9]{64}$/.test(c.revision) &&
         revisions[c.site] === c.revision &&
-        node.getAttribute('data-li-revision') === c.revision
+        revisionOf(node) === c.revision
       ) {
         if (c.surface) c.styles = c.styles.filter(property => surfacePart(node,c,property))
         if (c.styleInputs) c.styles = c.styles.filter(property => {
@@ -198,8 +208,8 @@
         if (part) {
           if (/^[a-f0-9]{32}$/.test(part.id) && /^[a-f0-9]{64}$/.test(part.revision) &&
               Number.isInteger(part.depth) && part.depth >= 0 && part.depth <= 4) {
-            const owner = '[data-li-revision="' + revision + '"]'
-            const selector = part.depth ? owner + ' > :only-child'.repeat(part.depth) + '[data-li-revision="' + part.revision + '"]' : owner
+            const owner = revisionSelector(revision)
+            const selector = part.depth ? owner + ' > :only-child'.repeat(part.depth) + revisionSelector(part.revision) : owner
             rules.push(selector + '{--li-render-' + part.id + ':' + edit.requested + '}')
           }
           continue
@@ -239,12 +249,12 @@
     inputs = next
   }
   function locate(edit) {
-    return document.querySelector('[data-li-revision="' + CSS.escape(edit.prepared.revision) + '"]')
+    return document.querySelector(revisionSelector(edit.prepared.revision))
   }
   function observe(edit, visible, hidden) {
     if (!hidden && stale(edit)) return { state: 'stale' }
     const { revision, site, field } = edit.prepared
-    const members = [...document.querySelectorAll('[data-li-revision="' + CSS.escape(revision) + '"]')]
+    const members = [...membersOf(revision)]
       .filter(visible)
     if (!members.length) return { state: hidden ? 'hidden' : 'unobservable' }
     const [node] = members
@@ -261,9 +271,9 @@
     return { state: effective ? (current.id === edit.id ? 'applied' : 'superseded') : 'failed', node, visibleMembers: members.length }
   }
   function authored(node, property) {
-    const revision = node.getAttribute('data-li-revision')
+    const revision = revisionOf(node)
     const edit = revision && declarations.get(revision + ':' + property)
     return edit?.property === property ? edit.requested : undefined
   }
-  ui.preparedPreview = { samePart, contract, project, locate, authored, shows, read, showsEffect, observe }
+  ui.preparedPreview = { membersOf, samePart, contract, project, locate, authored, shows, read, showsEffect, observe }
 })()

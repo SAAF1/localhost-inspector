@@ -508,7 +508,7 @@
       shared.length && 'Shared source controls · ' + shared.join(', '),
       authoredUse && hasSelection && (editScope.value === 'selected'
         ? 'Selected occurrence preview · separate from source handoff'
-        : contract && contract.file + ' · ' + document.querySelectorAll('[data-li-revision="' + contract.revision + '"]').length + ' mounted'),
+        : contract && contract.file + ' · ' + ui.preparedPreview.membersOf(contract.revision).length + ' mounted'),
       hasSelection && preparedStylesUnavailable && 'Shared stylesheet controls are unavailable in this preview.',
     ].filter(Boolean).join(' · ')
     const canvasPaint = isCanvasExpanded?.() && ui.syncCanvasBackground(host, colorCatalog)
@@ -866,7 +866,7 @@
     }))
     const boundParts = records.filter(edit => edit.prepared.part)
     if (boundParts.length) {
-      const members = document.querySelectorAll('[data-li-revision="' + contract.revision + '"]')
+      const members = ui.preparedPreview.membersOf(contract.revision)
       if (Array.from(members).some(member => {
         const active = ui.preparedPreview.contract(member)
         return boundParts.some(edit => !ui.preparedPreview.samePart(active?.parts?.[edit.property],edit.prepared.part))
@@ -877,7 +877,7 @@
       : []
     function verified(edit) {
       edit.observed = ui.preparedPreview.read(node, edit)
-      const members = document.querySelectorAll('[data-li-revision="'+contract.revision+'"]')
+      const members = ui.preparedPreview.membersOf(contract.revision)
       return members.length > 0 && Array.from(members).every(member => {
         const active = ui.preparedPreview.contract(member)
         return active?.revision === contract.revision &&

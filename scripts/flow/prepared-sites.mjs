@@ -389,11 +389,15 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             revisionAttribute = ' data-li-revision={typeof ' + reference + ' === "string" && /^[\\w-]+$/.test(' +
               reference + ') ? "' + revision + '" : undefined}'
           }
+          // A native spread may receive an existing contract from its caller.
+          // Keep the internal host's fallback identity in a distinct attribute.
+          const fallbackHost = site.renderedBindings && node.attributes.some(a=>a.type==='JSXSpreadAttribute')
+          if (fallbackHost) revisionAttribute = ' data-li-render-revision="' + revision + '"'
           out.appendLeft(
             node.attributes.at(-1)?.end ?? node.name.end,
             markers +
               revisionAttribute +
-              ' data-li-contract={' +
+              (fallbackHost ? ' data-li-render-contract={' : ' data-li-contract={') +
               JSON.stringify(JSON.stringify(contract)) +
               '}',
           )
