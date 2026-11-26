@@ -667,7 +667,8 @@
             complete = false
             break
           }
-          const exactMatch = matchesTarget(exact?.node, exact?.target)
+          const exactMatch = matchesTarget(exact?.node, exact?.target) &&
+            (!edit.recordScope || findTarget(edit.target, exact.node) === exact.node)
           const node = exactMatch ? exact.node : (edit.restore === 'unique' ? await resolveSavedNode(edit, groupCurrent) : null)
           if (conflicts.has(edit.id) || !node) {
             complete = false

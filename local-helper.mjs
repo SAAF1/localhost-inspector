@@ -433,6 +433,11 @@ async function handle(message) {
     const imageCleanupFailed = await removeVisualEvidence(root, binding, retired)
     return { revision: journal.revision, completed, imageCleanupFailed, reloadInspector: true }
   }
+  if (message.type === 'save' && message.record?.recordScope !== undefined) {
+    if (!binding.authoredUse) throw Error('Selected-record source preview requires opt-in.')
+    const { verifyRecordSource } = await import('./scripts/flow/record-scope.mjs')
+    verifyRecordSource(binding.source, message.record.recordScope)
+  }
   const { changed, removed, value } = await applyJournalOperation(message, journal, { validators, journalRoute,
     readCatalog: kind => readCatalog(binding, kind), readButtonSize: () => readButtonSize(binding) })
   if (!changed) return { file, ...value }
