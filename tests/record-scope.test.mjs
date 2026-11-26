@@ -302,6 +302,17 @@ test('an evaluated project data import corroborates projected records across qua
   assert.ok(await markRecordCallers({root:dir,file:'Orders.jsx',code:caller,tree,out,catalog,resolveImport:()=>join(dir,'Row.jsx')}))
   parseAuthoredJsx(out.toString())
   const proof=JSON.parse(out.toString().match(/map\(__liRecordIdentity\((.*?), lines, "code",/)[1])
+  // A concise map has no closing parenthesis between the JSX and the
+  // callback boundary. Both product transforms wrap at exactly that offset.
+  const {markSelectedCalls}=await import('../scripts/flow/selected-use.mjs')
+  await markSelectedCalls(dir,'Orders.jsx',caller,tree,out,async()=>join(dir,'Row.jsx'))
+  const combined=parseAuthoredJsx(out.toString())
+  const {walk}=await import('../scripts/flow/record-render-path.mjs')
+  const recordCalls=[]
+  walk(combined.program,node=>{if(node.type==='CallExpression' && node.callee.name==='__liRecordIdentity') recordCalls.push(node)})
+  assert.equal(recordCalls.length,1)
+  assert.equal(recordCalls[0].arguments.length,6)
+  assert.equal(recordCalls[0].arguments[3].body.type,'ArrowFunctionExpression')
   const entries=recordCatalogRows(dir,catalog,'code').entries
   const original=globalThis.document
   globalThis.document={addEventListener(){}}

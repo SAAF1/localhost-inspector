@@ -66,8 +66,10 @@ export async function markSelectedCalls(root,file,code,tree,out,resolveImport) {
   out.prepend('import { selectedModule as __liSelectedModule } from "virtual:inspector-selected-use";__liSelectedModule(import.meta.url,'+
     JSON.stringify(file)+','+JSON.stringify(digest(code))+');\n')
   function wrap(n,child,args) {
-    out.prependLeft(n.start,(child ? '{' : '')+'__liSelectedCall(')
-    out.appendRight(n.end,args+')'+(child ? '}' : ''))
+    // Keep the wrapper inside its JSX span. A concise map callback may have
+    // its own record arguments appended immediately after that same JSX.
+    out.prependRight(n.start,(child ? '{' : '')+'__liSelectedCall(')
+    out.prependLeft(n.end,args+')'+(child ? '}' : ''))
   }
   for (const {n,child} of repeated) wrap(n,child,'')
   const resolveLocal = createComponentTypeResolver(root)
