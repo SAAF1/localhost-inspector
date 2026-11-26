@@ -135,11 +135,8 @@ test('both panel controls stay reachable after the browser magnifies the canvas'
     const physicalWidth = locator => locator.evaluate(node => node.getBoundingClientRect().width * visualViewport.scale)
     const controls = ['workspace-sidebar', 'localhost-inspector-dock', 'flow-toggle', 'inspector-toggle']
     const before = await Promise.all(controls.map(id => physicalWidth(h.page.locator('#' + id))))
-    const { width, height } = h.page.viewportSize()
-    await client.send('Input.synthesizePinchGesture', {
-      x: width / 2, y: height / 2, scaleFactor: 1.6, gestureSourceType: 'touch',
-    })
-    // The synthetic input reply can precede the visual viewport's resize event.
+    // Exercise native page magnification regardless of the runner's gesture settings.
+    await client.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1.6 })
     await h.page.waitForFunction(() => visualViewport.scale > 1.4 &&
       Math.abs(parseFloat(document.documentElement.style.getPropertyValue('--chrome-scale')) * visualViewport.scale - 1) < 0.001,
     null, { timeout: 3000 })
