@@ -1,3 +1,4 @@
+import { classMemberExpression, classJoinPackages, resolvedClassJoin } from './class-composition.mjs'
 import { prepareProject } from './prepare-project.mjs'
 // Explicit development recipes for qualified JSX sites. An ambiguous opening
 // never inherits a previous operation. No application files are rewritten.
@@ -25,6 +26,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
   const watchInputs = server => server.watcher.add([manifest, ...new Set(
     manifestData.sites.flatMap(site => (site.dependencies ?? []).map(path => join(root, path))))])
   const styles = new Map()
+  let clientContainer
   let compatibleAlias = true
   return {
     name: 'inspector-prepared-sites',
@@ -51,6 +53,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
       )
     },
     configureServer(server) {
+      clientContainer = server.environments?.client.pluginContainer ?? server.pluginContainer
       watchInputs(server)
       // Some copied workspaces miss native file events. Revalidate the
       // prepared files when the app document is reopened, before Vite can
@@ -183,12 +186,15 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           return
         }
         const moduleImports = new Map()
+        const joins = new Set()
         if (recipes.some(site => site.moduleClass)) {
           const locals = localBindingNames(tree)
           for (const statement of tree.program.body) {
             if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue
             const spec = statement.specifiers.find(s => s.type === 'ImportDefaultSpecifier')
             if (!spec || locals.has(spec.local.name)) continue
+            if (classJoinPackages.has(statement.source.value) && await resolvedClassJoin(clientContainer, statement.source.value, id))
+              joins.add(spec.local.name)
             const imported = await this.resolve(statement.source.value, id)
             if (imported?.id.endsWith('.module.css')) moduleImports.set(spec.local.name, relative(root, imported.id))
           }
@@ -221,7 +227,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             continue
           const { node, children, owner } = matches[0]
           if (site.moduleClass) {
-            const actual = moduleReference(node, moduleImports)
+            const actual = moduleReference(node, moduleImports, joins)
             if (actual?.file !== site.moduleClass.file || actual.member !== site.moduleClass.member) continue
           }
           const attr = (name) => node.attributes.find((a) => a.name?.name === name)
@@ -352,7 +358,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           const contract = { site: site.id, revision, file, ...fields }
           let revisionAttribute = ' data-li-revision="' + revision + '"'
           if (site.moduleClass) {
-            const expression = attr('className').value.expression
+            const expression = classMemberExpression(node, joins)
             const reference = code.slice(expression.start, expression.end)
             revisionAttribute = ' data-li-revision={typeof ' + reference + ' === "string" && /^[\\w-]+$/.test(' +
               reference + ') ? "' + revision + '" : undefined}'

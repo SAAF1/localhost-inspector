@@ -60,10 +60,13 @@ function analyze(code, file, config) {
   const { imports } = typeModule(tree, file)
   const icons = [...imports].filter(([, spec]) => spec.from === 'lucide-react' && safeIcon(spec.name))
   const modules = new Map()
+  const joins = new Set()
   if (config.panelBindings) for (const statement of tree.program.body) {
     if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue
     const path = config.resolved.get(JSON.stringify([file, statement.source.value]))
     const spec = statement.specifiers.find(entry => entry.type === 'ImportDefaultSpecifier')
+    if (spec && !locals.has(spec.local.name) && config.classJoins.has(JSON.stringify([file, statement.source.value])))
+      joins.add(spec.local.name)
     if (spec && path?.endsWith('.module.css') && !locals.has(spec.local.name)) modules.set(spec.local.name, path)
   }
   const found = [],
@@ -79,7 +82,7 @@ function analyze(code, file, config) {
       const entry = { file, owner: owner?.id.name, line: opening.loc.start.line }
       const attr = (key) => opening.attributes.find((a) => a.name?.name === key)?.value
       const classes = attr('className')?.value
-      const reference = moduleReference(opening, modules)
+      const reference = moduleReference(opening, modules, joins)
       const moduleClass = reference && config.css.moduleClasses.get(JSON.stringify([reference.file, reference.member]))
       const moduleUse = moduleClass && /^[a-z]/.test(name)
       const raw = {
@@ -160,7 +163,7 @@ function analyze(code, file, config) {
           raw.dependencies = [...raw.dependencies, reference.file]
         }
         const styles = eligible.filter((s) => eligible.filter((x) => s.property === x.property).length === 1)
-        if (config.panelBindings && (!attr('style') || (/^[a-z]/.test(name) && literalColorAttribute(opening))) && !config.css.indexError &&
+        if (config.panelBindings && !(moduleUse && attr('className')?.expression?.type === 'CallExpression') && (!attr('style') || (/^[a-z]/.test(name) && literalColorAttribute(opening))) && !config.css.indexError &&
             !opening.attributes.some(a => a.name?.name?.startsWith('data-li-'))) {
           for (const property of (moduleUse ? ['background-color', 'border-radius', 'font-size'] : ['background-color', 'border-radius', 'font-size', 'height'])) {
             if (!eligible.some(style => style.property === property))
@@ -324,9 +327,10 @@ export async function prepareProject(project, destination, namespace, boundary =
   if (!source.startsWith(root + sep) || resolve(destination).startsWith(root + sep))
     throw Error('Use an app source subdirectory and an external manifest.')
   const resolved = new Map()
+  const classJoins = new Set()
   const graph = await stylesheetGraph(root, server, panelBindings ? (file, spec, path) => {
     if (/\.[jt]sx$|\.module\.css$/.test(path)) resolved.set(JSON.stringify([file, spec]), path)
-  } : undefined)
+  } : undefined, panelBindings ? (file, spec) => classJoins.add(JSON.stringify([file, spec])) : undefined)
   const forwarding = new Map()
   function forwarded(file, spec) {
     const path = spec && resolved.get(JSON.stringify([file, spec.from]))
@@ -380,7 +384,7 @@ export async function prepareProject(project, destination, namespace, boundary =
           }
           trees.set(path, cached)
         }
-        const result = analyze(code, file, { theme, button, tailwind, panelBindings, forwarded, resolved, dependencies: deps, tree: cached.tree, css })
+        const result = analyze(code, file, { theme, button, tailwind, panelBindings, forwarded, resolved, classJoins, dependencies: deps, tree: cached.tree, css })
         sites.push(...result.sites)
         unresolved.push(...result.rejected)
         files.push({ file, status: 'indexed', candidates: result.sites.length })

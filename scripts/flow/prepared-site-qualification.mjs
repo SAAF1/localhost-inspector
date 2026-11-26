@@ -1,3 +1,4 @@
+import { classMemberExpression } from './class-composition.mjs'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -31,9 +32,8 @@ function walk(node, visit, owner) {
   }
 }
 
-// Literal text color cannot own any of the four local panel properties.
-export function moduleReference(opening, imports) {
-  const expression = opening.attributes.find(a => a.name?.name === 'className')?.value?.expression
+export function moduleReference(opening, imports, joins) {
+  const expression = classMemberExpression(opening, joins)
   if (expression?.type !== 'MemberExpression' || expression.object.type !== 'Identifier') return
   const file = imports.get(expression.object.name)
   const member = expression.computed ? expression.property.type === 'StringLiteral' && expression.property.value : expression.property.name

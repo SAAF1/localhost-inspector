@@ -1,5 +1,6 @@
 // Follow literal frontend imports using the installed application's Vite resolver.
 import { readFileSync } from 'node:fs'
+import { classJoinPackages, resolvedClassJoin } from './class-composition.mjs'
 import { projectVite } from './project-vite.mjs'
 import { join, relative, resolve } from 'node:path'
 import { parse } from '@babel/parser'
@@ -23,7 +24,7 @@ function scriptImports(source) {
   visit(ast.program)
   return imports
 }
-export async function stylesheetGraph(root, running, onProjectImport) {
+export async function stylesheetGraph(root, running, onProjectImport, onClassJoin) {
   const { createServer } = await projectVite(root)
   const server =
     running ??
@@ -56,6 +57,8 @@ export async function stylesheetGraph(root, running, onProjectImport) {
       unresolved.add(relative(root, importer) + ' ' + id)
       return
     }
+    if (!served && onClassJoin && classJoinPackages.has(id) && await resolvedClassJoin(container, id, importer))
+      onClassJoin(relative(root, importer), id)
     if (!resolved.startsWith(root + '/') || resolved.includes('/node_modules/')) return
     const file = relative(root, resolved)
     if (!served) onProjectImport?.(relative(root, importer), id, file)
