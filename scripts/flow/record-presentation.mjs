@@ -23,42 +23,55 @@ export function presentationInput(root, params) {
   if (param?.key.type === 'Identifier') return { prop: param.key.name }
 }
 
-function recordGuard(test, use) {
-  if (test?.type !== 'LogicalExpression' || test.operator !== '&&') return
-  const { left, right } = test
-  if (
-    !equal(left) ||
-    !member(left.left, use.item, use.field) ||
-    left.right.type !== 'StringLiteral' ||
-    !equal(right) ||
-    right.right.type !== 'NumericLiteral' ||
-    right.right.value !== 1
-  )
-    return
-  const length = right.left
-  const filter = length?.object
+function countGuard(right, collection, field, value) {
+  if (!equal(right) || right.right.type !== 'NumericLiteral' || right.right.value !== 1) return false
+  const length = right.left,
+    filter = length?.object
   if (
     length?.type !== 'MemberExpression' ||
     length.computed ||
     !id(length.property, 'length') ||
     filter?.type !== 'CallExpression' ||
-    !member(filter.callee, use.collection, 'filter') ||
+    !member(filter.callee, collection, 'filter') ||
     filter.arguments.length !== 1
   )
-    return
-  const callback = filter.arguments[0]
-  const condition = callback.body
-  if (
-    callback.type !== 'ArrowFunctionExpression' ||
-    callback.params.length !== 1 ||
-    callback.params[0].type !== 'Identifier' ||
-    !equal(condition) ||
-    !member(condition.left, callback.params[0].name, use.field) ||
-    condition.right.type !== 'StringLiteral' ||
-    condition.right.value !== left.right.value
+    return false
+  const [callback] = filter.arguments
+  const cond = callback.body
+  return (
+    callback.type === 'ArrowFunctionExpression' &&
+    callback.params.length === 1 &&
+    callback.params[0].type === 'Identifier' &&
+    equal(cond) &&
+    member(cond.left, callback.params[0].name, field) &&
+    cond.right.type === 'StringLiteral' &&
+    cond.right.value === value
   )
-    return
-  return left.right.value
+}
+const conjunction = (node) => node?.type === 'LogicalExpression' && node.operator === '&&'
+function recordGuard(test, use) {
+  if (!conjunction(test)) return
+  const derived = use.backing !== use.collection
+  const base = derived ? test.left : test
+  if (!conjunction(base)) return
+  const { left, right } = base
+  if (!equal(left) || !member(left.left, use.item, use.field) || left.right.type !== 'StringLiteral') return
+  const value = left.right.value
+  if (!countGuard(right, use.collection, use.field, value)) return
+  if (derived) {
+    const extra = test.right,
+      membership = extra?.left
+    if (
+      !conjunction(extra) ||
+      membership?.type !== 'CallExpression' ||
+      !member(membership.callee, use.backing, 'includes') ||
+      membership.arguments.length !== 1 ||
+      !id(membership.arguments[0], use.item) ||
+      !countGuard(extra.right, use.backing, use.field, value)
+    )
+      return
+  }
+  return value
 }
 
 export function recordBranches(use, prop) {

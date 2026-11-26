@@ -1,3 +1,13 @@
+import {
+  walk,
+  member,
+  identifier,
+  componentFunction,
+  returnedValue,
+  renderedRecord,
+  lookupCorroboration,
+  backingCollection,
+} from './record-render-path.mjs'
 import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
@@ -7,29 +17,13 @@ import { authoredImports, parseAuthoredJsx } from './authored-forwarding.mjs'
 
 const digest = (value) => createHash('sha256').update(value).digest('hex').slice(0, 24)
 const markerProp = '__inspectorRecordScope'
-const scalar = /^[a-zA-Z0-9_./:-]{1,70}$/
+const scalar = /^[^\x00-\x1F\x7F]{1,70}$/u
 const names = /^[A-Za-z_$][\w$]*$/
-const member = (node, method) =>
-  node?.type === 'MemberExpression' &&
-  !node.computed &&
-  node.property.type === 'Identifier' &&
-  (!method || node.property.name === method)
-const identifier = (node, name) => node?.type === 'Identifier' && (!name || node.name === name)
-
-function walk(node, visit) {
-  if (!node?.type) return
-  visit(node)
-  for (const child of Object.values(node)) {
-    if (Array.isArray(child)) for (const item of child) walk(item, visit)
-    else if (child?.type) walk(child, visit)
-  }
-}
-
 function mappedUses(tree) {
   const imports = authoredImports(tree)
   const locals = localBindingNames(tree)
   const uses = []
-  walk(tree.program, (node) => {
+  walk(tree.program, (node, scope) => {
     if (node.type !== 'CallExpression' || !member(node.callee, 'map') || !identifier(node.callee.object)) return
     const [fn] = node.arguments
     if (
@@ -37,10 +31,10 @@ function mappedUses(tree) {
       fn?.type !== 'ArrowFunctionExpression' ||
       fn.params.length !== 1 ||
       !identifier(fn.params[0]) ||
-      fn.body.type !== 'JSXElement'
+      returnedValue(fn)?.type !== 'JSXElement'
     )
       return
-    const opening = fn.body.openingElement
+    const opening = returnedValue(fn).openingElement
     const imported = imports.get(opening.name.name)
     if (
       !imported ||
@@ -69,8 +63,12 @@ function mappedUses(tree) {
         identifier(expr.arguments[0].object, item)
       )
     })
-    if (corroborated)
+    const proof = !corroborated && lookupCorroboration(tree, scope, fn, opening, item, field, locals)
+    const backing = backingCollection(scope, node.callee.object.name)
+    if (backing && (corroborated || proof))
       uses.push({
+        proof: [...(proof || []), ...(backing.source ? [backing.source] : [])],
+        backing: backing.name,
         fn,
         opening,
         imported,
@@ -84,12 +82,7 @@ function mappedUses(tree) {
 }
 
 function componentRoot(tree, exported, prop) {
-  const fn = tree.program.body.find(
-    (s) =>
-      s.type === 'ExportNamedDeclaration' &&
-      s.declaration?.type === 'FunctionDeclaration' &&
-      s.declaration.id.name === exported,
-  )?.declaration
+  const fn = componentFunction(tree, exported)
   const params = fn?.params[0]
   if (
     params?.type !== 'ObjectPattern' ||
@@ -99,14 +92,11 @@ function componentRoot(tree, exported, prop) {
     return
   const record = params.properties.find((p) => p.key.name === prop && identifier(p.value))?.value.name
   if (!record) return
-  const statement = fn.body.body[0]
-  const root =
-    statement?.type === 'ReturnStatement' &&
-    statement.argument?.type === 'JSXElement' &&
-    statement.argument.openingElement
+  const jsx = returnedValue(fn)
+  if (jsx?.type !== 'JSXElement') return
+  const root = jsx.openingElement
   if (
-    fn.body.body.length !== 1 ||
-    !/^[a-z][a-z0-9]*$/.test(root?.name.name ?? '') ||
+    !/^[a-z][a-z0-9]*$/.test(root.name.name ?? '') ||
     root.attributes.some(
       (a) =>
         a.type === 'JSXSpreadAttribute' ||
@@ -114,17 +104,8 @@ function componentRoot(tree, exported, prop) {
     )
   )
     return
-  let rendersRecord = false
-  walk(statement.argument, (node) => {
-    if (
-      node.type === 'JSXExpressionContainer' &&
-      member(node.expression) &&
-      identifier(node.expression.object, record)
-    )
-      rendersRecord = true
-  })
   const presentation = presentationInput(root, params)
-  if (rendersRecord && presentation) return { root, fn, params, presentation }
+  if (renderedRecord(fn, record, jsx) && presentation) return { root, fn, params, presentation }
 }
 
 function checkedSource(root, file) {
@@ -149,6 +130,7 @@ function useIdentity(caller, file, code, use, ownerSource, root) {
       use.prop,
       code.slice(use.opening.start, use.opening.end),
       ownerSource.slice(root.start, root.end),
+      ...(use.proof ? use.proof.map((span) => code.slice(span.start, span.end)) : []),
     ]),
   )
 }
@@ -183,6 +165,7 @@ export async function markRecordCallers({ root, file, code, tree, out, resolveIm
       prop: use.prop,
       field: use.field,
       collection: use.collection,
+      ...(use.backing !== use.collection ? { backing: use.backing } : {}),
     })
     out.appendLeft(
       use.fn.start,
@@ -194,7 +177,7 @@ export async function markRecordCallers({ root, file, code, tree, out, resolveIm
         JSON.stringify(use.field) +
         ', __liScope => (',
     )
-    out.appendLeft(use.fn.end, '))')
+    out.appendLeft(use.fn.end, use.backing === use.collection ? '))' : '), ' + use.backing + ')')
     out.appendLeft(use.opening.name.end, ' ' + markerProp + '={__liScope(' + use.item + ')}')
     marked = true
   }
@@ -204,12 +187,13 @@ export async function markRecordCallers({ root, file, code, tree, out, resolveIm
 }
 
 export function markRecordHost(tree, node, owner, file, out, requireInput = false) {
-  const props = owner.params?.[0]
+  const props = componentFunction(tree, owner.id?.name)?.params?.[0]
   if (props?.type !== 'ObjectPattern') return
   for (const p of props.properties) {
     const host = p.key && componentRoot(tree, owner.id.name, p.key.name)
     if (host?.root !== node || (requireInput && !host.presentation.prop)) continue
-    const proof = 'arguments[0]?.' + markerProp
+    const proof = '__liRecordProof'
+    out.appendLeft(props.start + 1, markerProp + ': ' + proof + ', ')
     out.appendLeft(
       node.name.end,
       ' {...__liRecordAttrs(' + proof + ', ' + JSON.stringify(file) + ', ' + JSON.stringify(owner.id.name) + ')}',
@@ -222,6 +206,7 @@ export function verifyRecordSource(root, proof) {
   if (
     !proof ||
     !scalar.test(proof.value) ||
+    !String(proof.value).trim() ||
     typeof proof.value !== 'string' ||
     !/^[a-f0-9]{24}$/.test(proof.id) ||
     !names.test(proof.owner) ||
@@ -253,6 +238,7 @@ export function verifyRecordSource(root, proof) {
       use.prop === proof.prop &&
       use.field === proof.field &&
       use.collection === proof.collection &&
+      use.backing === (proof.backing ?? proof.collection) &&
       recordBranches(use, host.presentation.prop) &&
       useIdentity(proof.caller, proof.file, code, use, ownerCode, host.root) === proof.id
     )

@@ -11,19 +11,13 @@ export function planRecordRadius(root, change) {
   const { use, host, tree, code, ownerCode } = verifyRecordSource(root, proof)
   const prop = host.presentation.prop ?? 'recordCornerRadius'
   const value = JSON.stringify(proof.value)
+  const unique = (collection) =>
+    collection + '.filter(record => record.' + use.field + ' === ' + value + ').length === 1'
+  const base = use.item + '.' + use.field + ' === ' + value + ' && ' + unique(use.collection)
   const condition =
-    use.item +
-    '.' +
-    use.field +
-    ' === ' +
-    value +
-    ' && ' +
-    use.collection +
-    '.filter(record => record.' +
-    use.field +
-    ' === ' +
-    value +
-    ').length === 1'
+    use.backing === use.collection
+      ? base
+      : '(' + base + ') && (' + use.backing + '.includes(' + use.item + ') && ' + unique(use.backing) + ')'
   const expression = condition + ' ? ' + JSON.stringify(change.requested) + ' : undefined'
   const caller = new MagicString(code)
   if (host.presentation.prop) {

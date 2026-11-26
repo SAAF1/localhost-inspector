@@ -98,7 +98,7 @@ export function journalValidators(journalRoute) {
       ...(prepared ? { prepared: { site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}),
         ...(prepared.effect ? {effect:{property:prepared.effect.property,value:prepared.effect.value}} : {}),
         ...(prepared.part ? {part:Object.fromEntries(['id','revision','depth','file','selector'].map(k=>[k,prepared.part[k]]))} : {}) } } : {}),
-      ...(recordScope ? {recordScope: Object.fromEntries(['id','value','key','caller','file','owner','prop','field','collection'].map(k => [k,recordScope[k]]))} : {}),
+      ...(recordScope ? {recordScope: Object.fromEntries(['id','value','key','caller','file','owner','prop','field','collection','backing'].map(k => [k,recordScope[k]]))} : {}),
       target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,
       templateSourceFingerprint: record.templateSourceFingerprint,
       colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,
