@@ -1,3 +1,10 @@
+export function effectivePreparedEdit(edit, journal) {
+  const revision = journal.preparedRevisions?.[edit.id]
+  return edit.prepared && revision && revision !== edit.prepared.revision
+    ? { ...edit, prepared: { ...edit.prepared, revision } }
+    : edit
+}
+
 function operations(edits) {
   const groups = new Map()
   for (const edit of edits) {
@@ -68,7 +75,7 @@ function literal(edit) {
     !edit.requested.startsWith('var(')
 }
 
-export function removePendingEdit(edits, id) {
+export function removePendingEdit(edits, id, preparedRevisions) {
   const group = operations(edits).get(id)
   if (!group) throw Error('Edit was not found')
   const removed = new Set(group.map(edit => edit.id))
@@ -83,9 +90,11 @@ export function removePendingEdit(edits, id) {
     if (color && edits.some(entry => !removed.has(entry.id) && entry.colorToken?.name === color)) {
       throw Error('Remove edits using this color first.')
     }
-    const possible = later.filter(entry => sameOccurrence(edit, entry) && entry.property === edit.property)
+    const current = effectivePreparedEdit(edit, { preparedRevisions })
+    const effective = next => effectivePreparedEdit(next, { preparedRevisions })
+    const possible = later.filter(entry => sameOccurrence(current, effective(entry)) && entry.property === edit.property)
     const guarded = next => edit.target.id || (edit.target.anchor && next.target.anchor)
-    const sameVerifiedTarget = next => edit.prepared ? edit.prepared.revision === next.prepared?.revision : edit.template || next.template
+    const sameVerifiedTarget = next => edit.prepared ? current.prepared.revision === effective(next).prepared?.revision : edit.template || next.template
       ? Boolean(edit.template && edit.template === next.template && edit.templateSourceFingerprint === next.templateSourceFingerprint)
       : edit.frameState === next.frameState && Boolean(edit.target.key ||
       (guarded(next) && edit.target.regionFingerprint &&

@@ -25,21 +25,9 @@ const scalar = /^(?:0|\d+(?:\.\d+)?(?:px|rem|em)|var\(--[\w-]+\))$/
 export function cssFields(decl) {
   const values = decl.value.trim().split(/\s+/)
   if (!values.every((v) => scalar.test(v))) return []
-  if (
-    decl.prop === 'padding-inline' &&
-    styles.get('padding-left')?.utility?.axis === 'inline' &&
-    styles.get('padding-right')?.utility?.axis === 'inline' &&
-    !/\s+(?![^()]*\))/.test(decl.value) &&
-    rule.parent.name === 'layer' &&
-    rule.parent.params.trim() === 'utilities'
-  ) {
-    const left = styles.get('padding-left'),
-      right = styles.get('padding-right')
-    // Keep the compiler's logical declaration and its exact empty-journal fallback.
-    decl.value = 'var(' + cssInput(left) + ', ' + decl.value + ') var(' + cssInput(right) + ', ' + decl.value + ')'
-    for (const style of [left, right]) rule.append({ prop: cssReady(style), value: '1' })
-    changed = true
-  } else if (decl.prop === 'padding' && values.length <= 4) return sides.map((s) => 'padding-' + s)
+  // Authored logical shorthands do not establish a physical-side editing
+  // contract. The separate emitted Tailwind recipe qualifies at runtime.
+  if (decl.prop === 'padding' && values.length <= 4) return sides.map((side) => 'padding-' + side)
   return values.length === 1 && /^(gap|width|height|padding-(?:top|right|bottom|left))$/.test(decl.prop)
     ? [decl.prop]
     : []
@@ -59,6 +47,8 @@ export function preparedStyles(root, manifest) {
     apply: 'serve',
     transform(code, id) {
       if (!id.endsWith('.css') || id.includes('virtual:') || !code.includes('__vite__css')) return
+      const inventory = JSON.parse(readFileSync(manifest, 'utf8'))
+      if (inventory.preparation?.preparedStyles === 'unavailable') return
       const ast = parse(code, { sourceType: 'module' })
       const source = ast.program.body
         .flatMap((n) => n.declarations ?? [])
@@ -66,7 +56,6 @@ export function preparedStyles(root, manifest) {
       if (source?.type !== 'StringLiteral') return
       const file = relative(root, id)
       const byClass = new Map()
-      const inventory = JSON.parse(readFileSync(manifest, 'utf8'))
       for (const site of inventory.sites) {
         for (const style of site.styles ?? [site.style]) {
           if (style?.utility && inventory.utilityEntry && inventory.utilityEntry !== file) continue

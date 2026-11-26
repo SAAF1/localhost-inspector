@@ -1,3 +1,4 @@
+import { effectivePreparedEdit } from './journal-edits.mjs'
 export const featureTemplateScope = 'feature-template'
 const targetContextLimit = 6
 const childTagLimit = 4
@@ -89,7 +90,7 @@ export function buildSourceHandoff(binding, journal) {
     if (edit.undone || edit.executor === 'authored-source') continue
     const id = edit.group ?? edit.id
     if (!byOperation.has(id)) byOperation.set(id, [])
-    byOperation.get(id).push(edit)
+    byOperation.get(id).push(effectivePreparedEdit(edit, journal))
   }
 
   const operations = Array.from(byOperation, ([id, edits]) => {

@@ -8,79 +8,17 @@ import { parse } from '@babel/parser'
 import { cssInput, cssReady, paddingParts, sides } from './prepared-css.mjs'
 import MagicString from 'magic-string'
 import { addAuthoredUseMarkers } from './authored-use.mjs'
+import { preparedOpenings, preparedStyleTargets, preparedRevision } from './prepared-site-qualification.mjs'
 
-const styleProperties = new Set([
-  'gap',
-  'padding-left',
-  'padding-right',
-  'padding-top',
-  'padding-bottom',
-  'width',
-  'height',
-  'min-width',
-  'max-width',
-  'min-height',
-  'max-height',
-  'font-weight',
-  'color',
-  'background-color',
-])
 const runtime = 'virtual:inspector-prepared'
 const runtimeSource = new URL('../../integrations/prepared-input.mjs', import.meta.url)
-function walk(node, visit, owner) {
-  if (!node?.type) return
-  if (node.type === 'FunctionDeclaration' && /^[A-Z]/.test(node.id?.name)) owner = node
-  if (!owner && node.type === 'VariableDeclarator' && node.id.type === 'Identifier') owner = node
-  visit(node, owner)
-  for (const value of Object.values(node)) {
-    if (Array.isArray(value)) for (const child of value) walk(child, visit, owner)
-    else if (value?.type) walk(value, visit, owner)
-  }
-}
-
-export function preparedOpenings(tree) {
-  const openings = []
-  walk(tree.program, (node, owner) => {
-    if (node.type === 'JSXElement' && owner)
-      openings.push({ node: node.openingElement, children: node.children, owner })
-  })
-  return openings
-}
-
-// Qualify the entire site before registering CSS or changing even one source span.
-function styleTargets(site, node, code) {
-  const targets = []
-  for (const style of site.styles ?? (site.style ? [site.style] : [])) {
-    const { attribute, property, literal } = style
-    const value = node.attributes.find((a) => a.name?.name === attribute)?.value
-    if (!styleProperties.has(property) || !value || typeof literal !== 'string' || !literal) return
-    if (style.utility || style.css) {
-      if (
-        attribute !== 'className' ||
-        value.type !== 'StringLiteral' ||
-        !value.value.split(/[\t\n\f\r ]+/).includes(literal)
-      )
-        return
-      targets.push({ style })
-    } else {
-      const expression = code.slice(value.start, value.end)
-      const index = expression.indexOf(literal)
-      if (index < 0 || expression.indexOf(literal, index + 1) >= 0) return
-      const start = value.start + index,
-        end = start + literal.length
-      if (targets.some((t) => t.start < end && start < t.end)) return
-      targets.push({ style, start, end })
-    }
-  }
-  return targets
-}
 
 export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
   if (!manifest) return
   root = realpathSync(root)
   const read = () => JSON.parse(readFileSync(manifest, 'utf8'))
-  const runtimeKey = ({ sites, retiredSites, utilityEntry, buttonAdapter }) =>
-    JSON.stringify([sites, retiredSites, utilityEntry, buttonAdapter])
+  const runtimeKey = ({ sites, retiredSites, utilityEntry, buttonAdapter, preparation }) =>
+    JSON.stringify([sites, retiredSites, utilityEntry, buttonAdapter, preparation?.preparedStyles])
   let manifestData = read()
   // Watch the inputs directly. Making generated CSS an import of every
   // prepared component makes an ordinary CSS update recreate React contexts.
@@ -92,6 +30,11 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
     name: 'inspector-prepared-sites',
     enforce: 'pre',
     apply: 'serve',
+    transformIndexHtml() {
+      if (manifestData.preparation?.preparedStyles === 'unavailable') {
+        return [{ tag: 'meta', attrs: { name: 'inspector-prepared-styles', content: 'unavailable' }, injectTo: 'head' }]
+      }
+    },
     config() {
       return { optimizeDeps: { include: ['react', 'react-dom'] } }
     },
@@ -266,7 +209,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             continue
           const { node, children, owner } = matches[0]
           const attr = (name) => node.attributes.find((a) => a.name?.name === name)
-          const targets = styleTargets(site, node, code)
+          const targets = preparedStyleTargets(site, node, code)
           if (!targets) continue
           if (site.input) {
             const { options, base, attribute, child, choices, verify } = site.input
@@ -297,29 +240,8 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
               continue
             slotTag = slots[0].openingElement.name
           }
-          const hash = createHash('sha256').update(
-            JSON.stringify([namespace, site, code.slice(owner.start, owner.end)]),
-          )
-          for (const statement of tree.program.body) {
-            const name = (statement.declaration ?? statement).id?.name
-            if (statement.type === 'ImportDeclaration' || site.symbols?.includes(name))
-              hash.update(code.slice(statement.start, statement.end))
-          }
-          let missingDependency = false
-          for (const path of site.dependencies ?? []) {
-            if (!dependencies.has(path)) {
-              try {
-                dependencies.set(path, readFileSync(join(root, path)))
-              } catch (error) {
-                if (error.code !== 'ENOENT') throw error
-                missingDependency = true
-                break
-              }
-            }
-            hash.update(dependencies.get(path))
-          }
-          if (missingDependency) continue
-          const revision = hash.digest('hex')
+          const revision = preparedRevision(root, namespace, site, code, tree, owner, dependencies)
+          if (!revision) continue
           revisions[site.id] = revision
           reserved.add(node.start)
           const prefix = '--li-' + revision.slice(0, 20)

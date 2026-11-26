@@ -129,7 +129,7 @@
       return (field || c.style === edit.property || c.styles?.includes(edit.property)) &&
         showsEffect(member, current, c)
     })
-    return { state: effective ? (current.id === edit.id ? 'applied' : 'superseded') : 'failed', node }
+    return { state: effective ? (current.id === edit.id ? 'applied' : 'superseded') : 'failed', node, visibleMembers: members.length }
   }
   function authored(node, property) {
     const revision = node.getAttribute('data-li-revision')

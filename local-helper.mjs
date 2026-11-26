@@ -402,7 +402,8 @@ async function handle(message) {
   }
   // Verification can already have rolled back the staged edit. Its retry
   // acknowledges the current snapshot without writing through a stale revision.
-  if (binding.authoredUse && message.type === 'rejectAuthoredUse' && !journal.edits.some(edit => edit.id === message.id)) {
+  if (binding.authoredUse && message.type === 'rejectAuthoredUse' && !journal.edits.some(edit =>
+    edit.id === message.id && ['compiled', 'undoing'].includes(edit.sourceState))) {
     return authoredResult(journal)
   }
   requireRevision(message, journal)

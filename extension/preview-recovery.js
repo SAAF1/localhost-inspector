@@ -432,12 +432,45 @@
       for (const id of Array.from(attached.keys()).reverse()) detach(id)
     }
 
+    let stagedPrepared = []
     function projectPrepared(extra) {
       const records = Array.from(saved.values()).filter(edit => edit.prepared)
       if (extra) records.push(...(Array.isArray(extra)?extra:[extra]))
-      ui.preparedPreview.project(records)
+      ui.preparedPreview.project([...records, ...stagedPrepared])
+    }
+    function stagePrepared(transitions) {
+      const checks = transitions.map(transition => {
+        const { id, site, property, from, to } = transition
+        const edit = saved.get(id)
+        if (!edit?.prepared || edit.prepared.site !== site || edit.property !== property || edit.prepared.revision !== from)
+          throw Error('A saved prepared edit changed. Reopen the candidate before editing.')
+        const previous = transition.visible && ui.preparedPreview.observe(edit, visible, false)
+        if (transition.visible && previous.state !== 'applied')
+          throw Error('The earlier shared edit must be visible and applied before changing this source.')
+        return { edit: { ...edit, prepared: { ...edit.prepared, revision: to } }, count: previous?.visibleMembers ?? 0 }
+      })
+      stagedPrepared = checks.map(check => check.edit)
+      projectPrepared()
+      return {
+        evidence() {
+          const evidence = []
+          for (const { edit, count } of checks) {
+            if (!count) continue
+            const actual = ui.preparedPreview.observe(edit, visible, false)
+            if (actual.state !== 'applied' || actual.visibleMembers !== count) return null
+            evidence.push({ id: edit.id, revision: edit.prepared.revision, visibleMembers: count })
+          }
+          return evidence
+        },
+        finish(accepted) {
+          if (accepted) for (const { edit } of checks) saved.set(edit.id, edit)
+          stagedPrepared = []
+          projectPrepared()
+        },
+      }
     }
     function clear() {
+      stagedPrepared = []
       ui.preparedPreview.project([])
       reconcileConflicts()
       clearAttached()
@@ -747,7 +780,8 @@
     }
 
     return {
-      projectPrepared,
+      projectPrepared, stagePrepared,
+      get hasPrepared() { return Array.from(saved.values()).some(edit => edit.prepared) },
       ownsLiveProperty(node, property) {
         const entry = inlineStacks.get(node)?.get(property)?.at(-1)
         return Boolean(entry && ownsDeclaration(entry))
@@ -806,7 +840,7 @@
       },
       matchesSnapshot(edits) {
         return edits.length === saved.size && edits.every(edit => saved.get(edit.id)?.before === edit.before &&
-          saved.get(edit.id)?.sourceState === edit.sourceState)
+          saved.get(edit.id)?.sourceState === edit.sourceState && saved.get(edit.id)?.prepared?.revision === edit.prepared?.revision)
       },
       get hasSessionPreview() {
         return Array.from(attached).some(([id, entry]) => saved.get(editId(id, entry))?.restore !== 'unique')

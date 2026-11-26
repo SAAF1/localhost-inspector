@@ -1,14 +1,14 @@
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { declaresVariable, validRoute } from './journal-values.mjs'
-import { pendingEdits, removePendingEdit, setPreviewVisibility } from './journal-edits.mjs'
+import { effectivePreparedEdit, pendingEdits, removePendingEdit, setPreviewVisibility } from './journal-edits.mjs'
 
 export function journalSnapshot(message, journal, journalRoute, buttonSize, authoredUse = false) {
   if (!validRoute(message.route)) throw Error('Expected a route')
   const route = journalRoute(message.route)
   const visibleEdits = journal.edits.filter(edit => edit.route === route || edit.template || edit.prepared)
     .map(edit => {
-      if (edit.executor !== 'authored-source') return edit
+      if (edit.executor !== 'authored-source') return effectivePreparedEdit(edit, journal)
       const { patch, ...sourceReceipt } = edit.sourceReceipt
       return { ...edit, sourceReceipt }
     })
@@ -77,7 +77,7 @@ export async function applyJournalOperation(message, journal, { validators, jour
     if (edits === journal.edits) return { value: { revision: journal.revision, pending: pendingEdits(edits) } }
     journal.edits = edits
   } else if (message.type === 'removeEdit') {
-    const result = removePendingEdit(journal.edits, message.id)
+    const result = removePendingEdit(journal.edits, message.id, journal.preparedRevisions)
     journal.edits = result.edits
     removed = result.removed
     rebased = result.rebased
@@ -98,6 +98,9 @@ export async function applyJournalOperation(message, journal, { validators, jour
     removed = journal.edits.filter(matches)
     journal.edits = journal.edits.filter(edit => !matches(edit))
   } else throw Error('Unknown operation')
+  if (journal.preparedRevisions && removed.length) {
+    for (const edit of removed) delete journal.preparedRevisions[edit.id]
+  }
   journal.revision++
   return { changed: true, removed, value: { revision: journal.revision, pending: pendingEdits(journal.edits), rebased, definition } }
 }

@@ -195,12 +195,13 @@ function analyze(code, file, config) {
   return { sites, rejected }
 }
 const trees = new Map()
-function ordinaryCSS(root, graph) {
+function ordinaryCSS(root, graph, classify) {
   const classes = new Map(),
     tokenFiles = [],
     spacingSources = [],
     referenced = new Set(),
     definitions = new Map()
+  let indexError
   const parse = cssParser(root)
   for (const { file, served } of graph.sheets) {
     const code = readFileSync(join(root, file), 'utf8')
@@ -218,20 +219,27 @@ function ordinaryCSS(root, graph) {
       tokenFiles.push(file)
       definitions.set(file, tokens)
     }
+    if (indexError) continue
     sheet.walkRules((rule) => {
       if (!baseRule(rule) || !/^\.[a-zA-Z_][\w-]*$/.test(rule.selector)) return
       const literal = rule.selector.slice(1)
       for (const d of rule.nodes) {
         if (d.type !== 'decl') continue
-        for (const property of cssFields(d)) {
-          const list = classes.get(literal) ?? []
-          list.push({
-            attribute: 'className',
-            literal,
-            property,
-            css: { file, served, declaration: d.prop, value: d.value },
-          })
-          classes.set(literal, list)
+        try {
+          for (const property of classify(d)) {
+            const list = classes.get(literal) ?? []
+            list.push({
+              attribute: 'className',
+              literal,
+              property,
+              css: { file, served, declaration: d.prop, value: d.value },
+            })
+            classes.set(literal, list)
+          }
+        } catch (error) {
+          indexError = { type: 'internal-preparation-error', capability: 'prepared-styles',
+            file, selector: rule.selector, line: d.source?.start?.line, declaration: d.prop, message: error.message }
+          return false
         }
       }
     })
@@ -240,9 +248,14 @@ function ordinaryCSS(root, graph) {
     const used = [...names].filter((name) => referenced.has(name))
     if (used.length && used.length <= 100) spacingSources.push({ file, names: used })
   }
-  return { classes, tokenFiles, spacingSources }
+  // Utility classification also consults this index for same-class
+  // ownership. Let neither kind publish candidates from a partial index.
+  if (indexError) classes.clear()
+  return { classes, tokenFiles, spacingSources, indexError }
 }
-export async function prepareProject(project, destination, namespace, boundary = 'src', server) {
+export async function prepareProject(project, destination, namespace, boundary = 'src', server, {
+  classifyCSS = cssFields,
+} = {}) {
   const root = realpathSync(project),
     source = realpathSync(join(root, boundary))
   if (!source.startsWith(root + sep) || resolve(destination).startsWith(root + sep))
@@ -255,10 +268,10 @@ export async function prepareProject(project, destination, namespace, boundary =
     .filter((sheet) => sheet.served.includes(graph.utilityEntries[0]))
     .map(({ file }) => readFileSync(join(root, file), 'utf8'))
     .join('\n')
-  const tailwind = graph.utilityEntries.length === 1
+  const css = ordinaryCSS(root, graph, classifyCSS)
+  const tailwind = !css.indexError && graph.utilityEntries.length === 1
   const button =
     existsSync(join(root, buttonSource)) && hash(readFileSync(join(root, buttonSource))) === buttonRevision
-  const css = ordinaryCSS(root, graph)
   css.utilityFiles = graph.sheets.filter((s) => s.served.includes(graph.utilityEntries[0])).map((s) => s.file)
   const files = [],
     sites = [],
@@ -312,6 +325,7 @@ export async function prepareProject(project, destination, namespace, boundary =
     sites,
     retiredSites,
     spacingSources: css.spacingSources,
+    ...(css.indexError ? { preparation: { preparedStyles: 'unavailable', diagnostics: [css.indexError] } } : {}),
     stylesheetGraph: graph,
     utilityEntry: tailwind ? graph.utilityEntries[0] : null,
     buttonAdapter: button ? { file: buttonSource, digest: buttonRevision } : null,

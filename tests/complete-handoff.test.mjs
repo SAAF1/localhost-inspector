@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { buildSourceHandoff } from '../source-handoff.mjs'
 import { completeHandoff } from '../complete-handoff.mjs'
 
 const binding = { id: 'bound-project' }
@@ -74,4 +75,14 @@ test('completion preserves a text-style definition until its pending application
   completeHandoff(binding, journal, report('create', 'apply'), completedAt)
   assert.deepEqual(journal.edits, [unrelated])
   assert.deepEqual(journal.completed.map(edit => edit.id), ['create', 'apply'])
+})
+
+test('handoff exports the current prepared basis and completion retires its transition', () => {
+  const prepared = { file: 'src/Card.jsx', site: 'card', revision: 'original' }
+  const journal = { revision: 4, edits: [edit('spacing', { prepared })], preparedRevisions: { spacing: 'current' } }
+  assert.equal(buildSourceHandoff(binding, journal).operations[0].changes[0].prepared.revision, 'current')
+  assert.equal(prepared.revision, 'original')
+  completeHandoff(binding, journal, report('spacing'), completedAt)
+  assert.deepEqual(journal.preparedRevisions, {})
+  assert.deepEqual(journal.edits, [])
 })

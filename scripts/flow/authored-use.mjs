@@ -154,11 +154,11 @@ function sourceUses(code, tree, file, components, schema) {
     if (schema === 1) {
       const id = digest(JSON.stringify([file, locator, family, dependencyPaths]))
       const revision = digest(JSON.stringify([fragment, dependencies, component?.imported]))
-      return [{ opening, style, binding: { schema, id, family, file, tag, locator, revision, dependencies } }]
+      return [{ opening, element, style, binding: { schema, id, family, file, tag, locator, revision, dependencies } }]
     }
     const id = digest(JSON.stringify([file, locator, dependencyPaths, component?.imported]))
     const revision = digest(JSON.stringify([fragment, dependencies, component?.imported, actions]))
-    return [{ opening, style, binding: { schema, id, file, tag, locator, revision, dependencies, actions } }]
+    return [{ opening, element, style, binding: { schema, id, file, tag, locator, revision, dependencies, actions } }]
   })
 }
 
@@ -275,14 +275,14 @@ function readBinding(root, code, claimed) {
   )
   if (matches.length !== 1 || matches[0].binding.tag !== claimed.tag)
     throw Error('Authored use is absent or ambiguous in the current source.')
-  const { binding, style } = matches[0]
+  const { binding, style, element } = matches[0]
   if (binding.schema === 1) return matches[0]
   if (!binding.actions.includes(claimed.family))
     throw Error('This shared action is unsupported at the authored use.')
-  return { binding: { ...binding, family: claimed.family }, style }
+  return { binding: { ...binding, family: claimed.family }, style, element }
 }
 
-function transaction(file, before, after, binding, nextBinding, patch, properties) {
+function transaction(file, before, after, binding, nextBinding, patch, properties, element) {
   const values = Object.fromEntries(
     Object.entries(properties).map(([key, value]) => [
       key === 'justifyContent' ? 'justify-content' : key,
@@ -299,13 +299,14 @@ function transaction(file, before, after, binding, nextBinding, patch, propertie
     nextBinding,
     patch,
     values,
+    ownedElement: { start: element.start, end: element.end },
   }
 }
 
 export function planAuthoredUse(root, claimed, values) {
   root = realpathSync(root)
   const before = readFileSync(fileInside(root, claimed.file), 'utf8')
-  const { binding, style } = readBinding(root, before, claimed)
+  const { binding, style, element } = readBinding(root, before, claimed)
   if (binding.revision !== claimed.revision) throw Error('Authored use changed since it was observed.')
   let properties
   if (binding.family === 'paint') {
@@ -336,7 +337,7 @@ export function planAuthoredUse(root, claimed, values) {
   }
   const after = before.slice(0, style.start) + patch.after + before.slice(style.end)
   const next = readBinding(root, after, binding).binding
-  return transaction(binding.file, before, after, binding, next, patch, properties)
+  return transaction(binding.file, before, after, binding, next, patch, properties, element)
 }
 
 export function reverseAuthoredUse(root, receipt) {
@@ -366,5 +367,6 @@ export function reverseAuthoredUse(root, receipt) {
       after: patch.before,
     },
     restored.style.values,
+    current.element,
   )
 }

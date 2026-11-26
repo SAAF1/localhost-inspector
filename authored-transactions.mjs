@@ -2,6 +2,7 @@ import { unlink } from 'node:fs/promises'
 import { pendingEdits } from './journal-edits.mjs'
 import { targetFingerprint, validValue } from './journal-values.mjs'
 import { planAuthoredUse, reverseAuthoredUse } from './scripts/flow/authored-use.mjs'
+import { applyPreparedTransitions, preparedTransitions, requirePreparedTransitions, verifyPreparedEvidence } from './prepared-requalification.mjs'
 import { absent, authoredError, compile, conflict, patchText, replaceSource, requireWritableCandidate, revision, source } from './authored-source-file.mjs'
 
 export { requireAuthoredCandidate } from './authored-source-file.mjs'
@@ -52,16 +53,10 @@ function matchingPrepared(edit, descriptor, values) {
   return edit.prepared?.file === descriptor.file && Object.hasOwn(values, edit.property)
 }
 
-function validateCollision(journal, descriptor, values) {
-  if (journal.edits.some(edit => matchingPrepared(edit, descriptor, values))) {
-    throw conflict('This source and property already have a prepared edit. Resolve it before writing candidate source.')
-  }
-}
-
 export function guardAuthoredJournalOperation(message, journal) {
   const native = journal.edits.filter(edit => edit.executor === authoredExecutor)
   if (!native.length) return
-  if (native.some(edit => edit.sourceState === 'compiled')) throw conflict('Finish the current source verification first.')
+  if (native.some(edit => ['compiled', 'undoing'].includes(edit.sourceState))) throw conflict('Finish the current source verification first.')
   if (['reset', 'resetAll'].includes(message.type)) throw authoredError('Undo authored source edits individually before resetting the journal.')
   if (message.type === 'setPreviewVisibility' && native.some(edit => edit.id === message.id)) {
     throw authoredError('Use candidate Compare to view the original source.')
@@ -109,13 +104,46 @@ export function authoredTransactions({ binding, file, read, atomic, validators, 
       const unresolved = { ...intent.edit, sourceState: 'conflict' }
       if (at < 0) journal.edits.push(unresolved)
       else journal.edits[at] = unresolved
-    } else if (intent.kind === 'save' && at >= 0) journal.edits.splice(at, 1)
+    } else if (at >= 0) {
+      if (intent.kind === 'save') journal.edits.splice(at, 1)
+      else journal.edits[at] = intent.edit
+    }
     if (at >= 0 || divergent) {
+      Object.assign(journal, applyPreparedTransitions(journal, intent.preparedTransitions, 'from'))
       journal.revision++
       await atomic(file, journal)
     }
     await forget()
     if (force && divergent) throw conflict('Candidate source changed during rollback. Existing source was kept.')
+  }
+
+  function newSourcePlan(journal, descriptor, values) {
+    const latest = latestAuthoredEdits(journal)
+    for (const prior of latest.values()) if (prior.authoredBinding.file === descriptor.file) checkAuthoredReceipt(binding, prior)
+    const previous = latest.get(descriptor.id)
+    if (previous && previous.authoredBinding.revision !== descriptor.revision) {
+      throw conflict('The controlling source changed since the previous authored edit.')
+    }
+    return checkPlan(() => planAuthoredUse(binding.source, descriptor, values))
+  }
+
+  function undoSourcePlan(journal, edit) {
+    if (journal.edits.slice(journal.edits.indexOf(edit) + 1).some(next => next.authoredBinding?.id === edit.authoredBinding.id)) {
+      throw conflict('Undo the newer edit on this authored use first.')
+    }
+    const context = { ...edit.sourceReceipt, binding: edit.authoredPreviousBinding, nextBinding: edit.authoredBinding }
+    return checkPlan(() => reverseAuthoredUse(binding.source, context))
+  }
+
+  const transitionsFor = (journal, plan) => preparedTransitions(binding, journal, plan, read)
+
+  async function preflight(message, journal, edit) {
+    if (await read(transaction, null)) throw conflict('Finish the current source verification first.')
+    await requireWritableCandidate(binding)
+    if (message.id && !edit) throw conflict('The authored source operation was not found.')
+    if (!edit && (!message.binding || !message.values)) throw authoredError('Expected one bounded authored use.')
+    const plan = edit ? undoSourcePlan(journal, edit) : newSourcePlan(journal, message.binding, message.values)
+    return { revision: journal.revision, preparedTransitions: await transitionsFor(journal, plan) }
   }
 
   async function save(message, journal) {
@@ -125,17 +153,12 @@ export function authoredTransactions({ binding, file, read, atomic, validators, 
     if (!operationId(record?.id) || journal.edits.some(edit => edit.id === record.id) ||
         !descriptor || !values || record.requested !== values[record.property] || record.template ||
         record.prepared || record.pendingColor) throw authoredError('Invalid authored source operation.')
-    const latest = latestAuthoredEdits(journal)
-    for (const prior of latest.values()) if (prior.authoredBinding.file === descriptor.file) checkAuthoredReceipt(binding, prior)
-    const previous = latest.get(descriptor.id)
-    if (previous && previous.authoredBinding.revision !== descriptor.revision) {
-      throw conflict('The controlling source changed since the previous authored edit.')
-    }
     const catalog = record.colorToken ? await readCatalog('colors') : null
     const validated = validators.editFrom({ ...record, restore: 'unique' }, catalog)
-    const plan = checkPlan(() => planAuthoredUse(binding.source, descriptor, values))
+    const plan = newSourcePlan(journal, descriptor, values)
     const effective = plan.values ?? values
-    validateCollision(journal, descriptor, effective)
+    const transitions = await transitionsFor(journal, plan)
+    requirePreparedTransitions(transitions, message.preparedTransitions)
     const authoredBefore = message.authoredBefore ?? record.authoredBefore
     if (!authoredBefore || Object.keys(authoredBefore).length !== Object.keys(effective).length ||
         Object.keys(effective).some(property => {
@@ -146,9 +169,9 @@ export function authoredTransactions({ binding, file, read, atomic, validators, 
     if (receipt.beforeRevision === receipt.afterRevision) return authoredResult(journal)
     const edit = { ...validated, executor: authoredExecutor, sourceState: 'compiled',
       authoredBinding: plan.nextBinding, authoredValues: effective, authoredBefore, sourceReceipt: receipt, authoredBasis: binding.authoredUse.basis,
-      authoredPreviousBinding: plan.binding }
+      authoredPreviousBinding: plan.binding, ...(transitions.length ? { preparedTransitions: transitions } : {}) }
     await compile(binding, plan.binding, receipt.beforeRevision)
-    const intent = { kind: 'save', edit, patch: receipt,
+    const intent = { kind: 'save', edit, patch: receipt, preparedTransitions: transitions,
       locators: { binding: plan.binding, nextBinding: plan.nextBinding } }
     await atomic(transaction, intent)
     active.set(transaction, Date.now() + 15_000)
@@ -157,9 +180,9 @@ export function authoredTransactions({ binding, file, read, atomic, validators, 
       await replaceSource(binding, receipt, true)
       wrote = true
       await compile(binding, plan.nextBinding, receipt.afterRevision, true)
-      journal.edits.push(edit)
-      journal.revision++
-      await atomic(file, journal)
+      const staged = applyPreparedTransitions({ ...journal, edits: [...journal.edits, edit], revision: journal.revision + 1 }, transitions)
+      await atomic(file, staged)
+      Object.assign(journal, staged)
     } catch (error) {
       if (wrote) await recover(journal, true)
       else await forget()
@@ -170,24 +193,35 @@ export function authoredTransactions({ binding, file, read, atomic, validators, 
 
   async function verify(message, journal, edit) {
     const intent = await read(transaction, null)
-    if (intent?.kind !== 'save' || intent.edit.id !== edit.id || edit.sourceState !== 'compiled') {
+    if (intent?.edit.id !== edit.id ||
+        !(intent.kind === 'save' ? edit.sourceState === 'compiled' : edit.sourceState === 'undoing')) {
       throw conflict('The candidate source operation is no longer awaiting verification.')
     }
-    let authoredEvidence
+    let authoredEvidence, preparedEvidence
     try {
-      authoredEvidence = verifyObservation(edit, message.observed, message.evidence)
+      if (intent.kind === 'save') authoredEvidence = verifyObservation(edit, message.observed, message.evidence)
+      else {
+        if (!message.observed || Object.entries(edit.authoredBefore).some(([key, value]) => message.observed[key] !== value))
+          throw authoredError('The rendered result did not match the previous authored values.')
+      }
+      preparedEvidence = verifyPreparedEvidence(intent.preparedTransitions, message.preparedEvidence)
       await requireWritableCandidate(binding)
       if (revision((await source(binding.source, intent.patch.file)).text) !== intent.patch.afterRevision) {
         throw conflict('Candidate source changed before visible verification.')
       }
-      checkPlan(() => reverseAuthoredUse(binding.source, { ...intent.patch, ...intent.locators }))
+      const reverse = checkPlan(() => reverseAuthoredUse(binding.source, { ...intent.patch, ...intent.locators }))
+      const restoredTransitions = await transitionsFor(journal, reverse)
+      requirePreparedTransitions(restoredTransitions,
+        (intent.preparedTransitions ?? []).map(change => ({ ...change, from: change.to, to: change.from })))
     } catch (error) {
       await recover(journal, true)
       throw error
     }
-    const checked = { ...edit, sourceState: 'verified', authoredObserved: message.observed, authoredEvidence }
+    const checked = intent.kind === 'save' ? { ...edit, sourceState: 'verified', authoredObserved: message.observed,
+      authoredEvidence, ...(preparedEvidence.length ? { preparedEvidence } : {}) } : null
     const at = journal.edits.indexOf(edit)
-    const next = { ...journal, revision: journal.revision + 1, edits: journal.edits.with(at, checked) }
+    const next = { ...journal, revision: journal.revision + 1,
+      edits: checked ? journal.edits.with(at, checked) : journal.edits.filter(entry => entry !== edit) }
     try {
       await atomic(file, next)
     } catch (error) {
@@ -198,19 +232,19 @@ export function authoredTransactions({ binding, file, read, atomic, validators, 
     return authoredResult(next, checked)
   }
 
-  async function undo(journal, edit) {
+  async function undo(message, journal, edit) {
     if (await read(transaction, null)) throw conflict('Finish the current source verification first.')
     await requireWritableCandidate(binding)
-    if (journal.edits.slice(journal.edits.indexOf(edit) + 1).some(next => next.authoredBinding?.id === edit.authoredBinding.id)) {
-      throw conflict('Undo the newer edit on this authored use first.')
-    }
-    const context = { ...edit.sourceReceipt, binding: edit.authoredPreviousBinding, nextBinding: edit.authoredBinding }
-    const plan = checkPlan(() => reverseAuthoredUse(binding.source, context))
+    const plan = undoSourcePlan(journal, edit)
+    const transitions = await transitionsFor(journal, plan)
+    requirePreparedTransitions(transitions, message.preparedTransitions)
     const patch = validReceipt(plan)
-    await atomic(transaction, { kind: 'undo', edit, patch,
+    await atomic(transaction, { kind: 'undo', edit, patch, preparedTransitions: transitions,
       locators: { binding: plan.binding, nextBinding: plan.nextBinding } })
     active.set(transaction, Date.now() + 15_000)
-    const next = { ...journal, revision: journal.revision + 1, edits: journal.edits.filter(entry => entry !== edit) }
+    const checked = transitions.length ? { ...edit, sourceState: 'undoing', preparedTransitions: transitions } : null
+    const next = applyPreparedTransitions({ ...journal, revision: journal.revision + 1, edits: checked
+      ? journal.edits.with(journal.edits.indexOf(edit), checked) : journal.edits.filter(entry => entry !== edit) }, transitions)
     let wrote = false
     try {
       await replaceSource(binding, patch, true)
@@ -222,8 +256,8 @@ export function authoredTransactions({ binding, file, read, atomic, validators, 
       else await forget()
       throw error
     }
-    await forget()
-    return authoredResult(next)
+    if (!checked) await forget()
+    return authoredResult(next, checked)
   }
 
   return {
@@ -239,16 +273,17 @@ export function authoredTransactions({ binding, file, read, atomic, validators, 
     },
     async handle(message, journal) {
       const edit = journal.edits.find(entry => entry.executor === authoredExecutor && entry.id === message.id)
+      if (message.type === 'planAuthoredUse') return preflight(message, journal, edit)
       if (message.type === 'saveAuthoredUse') return save(message, journal)
       if (message.type === 'verifyAuthoredUse' || message.type === 'rejectAuthoredUse') {
         if (!edit && message.type === 'rejectAuthoredUse') return authoredResult(journal)
         if (!edit) throw conflict('The authored source operation was not found.')
         if (message.type === 'verifyAuthoredUse') return verify(message, journal, edit)
-        if (edit.sourceState !== 'compiled') throw conflict('The candidate source operation is no longer awaiting verification.')
+        if (!['compiled', 'undoing'].includes(edit.sourceState)) throw conflict('The candidate source operation is no longer awaiting verification.')
         await recover(journal, true)
         return authoredResult(journal)
       }
-      if (edit && ['undo', 'removeEdit'].includes(message.type)) return undo(journal, edit)
+      if (edit && ['undo', 'removeEdit'].includes(message.type)) return undo(message, journal, edit)
     },
   }
 }

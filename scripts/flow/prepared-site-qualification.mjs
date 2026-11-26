@@ -1,0 +1,88 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+const styleProperties = new Set([
+  'gap',
+  'padding-left',
+  'padding-right',
+  'padding-top',
+  'padding-bottom',
+  'width',
+  'height',
+  'min-width',
+  'max-width',
+  'min-height',
+  'max-height',
+  'font-weight',
+  'color',
+  'background-color',
+])
+function walk(node, visit, owner) {
+  if (!node?.type) return
+  if (node.type === 'FunctionDeclaration' && /^[A-Z]/.test(node.id?.name)) owner = node
+  if (!owner && node.type === 'VariableDeclarator' && node.id.type === 'Identifier') owner = node
+  visit(node, owner)
+  for (const value of Object.values(node)) {
+    if (Array.isArray(value)) for (const child of value) walk(child, visit, owner)
+    else if (value?.type) walk(value, visit, owner)
+  }
+}
+
+export function preparedOpenings(tree) {
+  const openings = []
+  walk(tree.program, (node, owner) => {
+    if (node.type === 'JSXElement' && owner)
+      openings.push({ node: node.openingElement, element: node, children: node.children, owner })
+  })
+  return openings
+}
+
+// Qualify the entire site before registering CSS or changing even one source span.
+export function preparedStyleTargets(site, node, code) {
+  const targets = []
+  for (const style of site.styles ?? (site.style ? [site.style] : [])) {
+    const { attribute, property, literal } = style
+    const value = node.attributes.find((a) => a.name?.name === attribute)?.value
+    if (!styleProperties.has(property) || !value || typeof literal !== 'string' || !literal) return
+    if (style.utility || style.css) {
+      if (
+        attribute !== 'className' ||
+        value.type !== 'StringLiteral' ||
+        !value.value.split(/[\t\n\f\r ]+/).includes(literal)
+      )
+        return
+      targets.push({ style })
+    } else {
+      const expression = code.slice(value.start, value.end)
+      const index = expression.indexOf(literal)
+      if (index < 0 || expression.indexOf(literal, index + 1) >= 0) return
+      const start = value.start + index,
+        end = start + literal.length
+      if (targets.some((t) => t.start < end && start < t.end)) return
+      targets.push({ style, start, end })
+    }
+  }
+  return targets
+}
+
+// The runtime and transaction planner must compute the identical revision.
+export function preparedRevision(root, namespace, site, code, tree, owner, dependencies) {
+  const hash = createHash('sha256').update(JSON.stringify([namespace, site, code.slice(owner.start, owner.end)]))
+  for (const statement of tree.program.body) {
+    const name = (statement.declaration ?? statement).id?.name
+    if (statement.type === 'ImportDeclaration' || site.symbols?.includes(name))
+      hash.update(code.slice(statement.start, statement.end))
+  }
+  for (const path of site.dependencies ?? []) {
+    if (!dependencies.has(path)) {
+      try { dependencies.set(path, readFileSync(join(root, path))) }
+      catch (error) {
+        if (error.code !== 'ENOENT') throw error
+        return null
+      }
+    }
+    hash.update(dependencies.get(path))
+  }
+  return hash.digest('hex')
+}

@@ -32,6 +32,7 @@ export function completeHandoff(binding, journal, report, completedAt) {
       '. Verify and complete those applications first or include them in the same report.')
   }
 
+  if (journal.preparedRevisions) for (const id of retired) delete journal.preparedRevisions[id]
   journal.edits = remaining
   journal.completed = [...(journal.completed ?? []), ...completed]
   return { completed, retired: [...retired] }

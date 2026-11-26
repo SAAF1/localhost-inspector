@@ -218,6 +218,8 @@ try {
         copyFileSync(join(capturedMap, name), join(map, name))
     }
     const inventory = await prepareProject(app, manifest, studio.namespace, studio.boundary)
+    if (inventory.preparation?.preparedStyles === 'unavailable')
+      console.warn('Shared stylesheet controls unavailable for ' + id + '. See diagnostics in ' + manifest)
     const child = await start(
       [join(repo, 'scripts/flow/serve.mjs'), '--source', app, String(port), map],
       app,

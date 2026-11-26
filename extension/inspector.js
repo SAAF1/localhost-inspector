@@ -493,12 +493,15 @@
       scopeSelection = node
     }
     editScope.hidden = !authoredUse || !hasSelection
-    scope.hidden = !shared.length && editScope.hidden
+    const preparedStylesUnavailable = document.querySelector('meta[name="inspector-prepared-styles"][content="unavailable"]')
+    scope.hidden = !shared.length && editScope.hidden && !(hasSelection && preparedStylesUnavailable)
     const actions = (use?.actions ?? (use ? [use.family] : [])).filter(action => authored.eligible(node, action))
     const authoredLabel = actions.map(action => action === 'paint' ? 'text color' : 'fixed spacing').join(', ')
     scope.textContent = [authoredUse && hasSelection && (authoredLabel
       ? 'Shared candidate source · ' + authoredLabel : 'Shared candidate source unavailable for text color and fixed spacing'),
-      shared.length && 'Shared source controls · ' + shared.join(', ')].filter(Boolean).join(' · ')
+      shared.length && 'Shared source controls · ' + shared.join(', '),
+      hasSelection && preparedStylesUnavailable && 'Shared stylesheet controls are unavailable in this preview.',
+    ].filter(Boolean).join(' · ')
     const canvasPaint = isCanvasExpanded?.() && ui.syncCanvasBackground(host, colorCatalog)
     const groupCount = selection.group.length
     const canvasSection = !groupCount && !hasSelection && ui.canvasBackgroundSection({
@@ -875,6 +878,22 @@
     }
     reportRecovery()
   }
+  async function planContinuity(request, path, version) {
+    const planned = recovery.hasPrepared ? await send({ type: 'planAuthoredUse', ...request, expectedRevision: journalRevision }) : {}
+    if (!isCurrentRoute(path, version)) throw Error('Selection changed. Reopen the saved edit before continuing.')
+    const preparedTransitions = planned.preparedTransitions ?? []
+    return { preparedTransitions, projection: recovery.stagePrepared(preparedTransitions) }
+  }
+
+  async function rejectSource(id, path, version, revision) {
+    try {
+      if (isCurrentRoute(path, version)) await write({ type: 'rejectAuthoredUse', id }, path, version)
+      else await send({ type: 'rejectAuthoredUse', id, expectedRevision: revision })
+    } catch {
+      if (currentRoute === path) window.phaseAInspectorReady = loadRoute()
+      throw Error('The source change could not be confirmed or restored. Reopen the candidate and check Edits.')
+    }
+  }
   async function commitAuthoredUse(node, use, property, values, tokenOptions) {
     const path = currentRoute
     const version = activeRouteVersion
@@ -905,30 +924,25 @@
       ...(tokenOptions?.colorToken ? { colorToken: tokenOptions.colorToken } : {}),
       target: { tag: node.localName, key: null, slot: node.getAttribute('data-slot'), id: node.id || null },
     }
-    const staged = await write({ type: 'saveAuthoredUse', record, binding: use, values }, path, version)
-    if (!staged.edit) return
-    let accepted
+    const { preparedTransitions, projection } = await planContinuity({ binding: use, values }, path, version)
+    let staged, accepted
     try {
-      let effect
+      staged = await write({ type: 'saveAuthoredUse', record, binding: use, values, preparedTransitions }, path, version)
+      if (!staged.edit) return
+      let effect, preparedEvidence
       if (!await ui.waitForPreview(current, () => {
         effect = authored.observation(staged.edit.authoredBinding, staged.edit.authoredValues, nodes.length)
-        return effect && protectedPeers.unchanged()
-      })) throw Error('The source edit did not reach every visible member while preserving nearby independent elements.')
+        preparedEvidence = projection.evidence()
+        return effect && preparedEvidence && protectedPeers.unchanged()
+      })) throw Error('The source change did not preserve every visible member and earlier shared edit.')
       accepted = await write({
-        type: 'verifyAuthoredUse', id, observed: effect.values,
+        type: 'verifyAuthoredUse', id, observed: effect.values, preparedEvidence,
         evidence: { ...effect.evidence, protectedPeers: protectedPeers.count },
       }, path, version)
     } catch (error) {
-      try {
-        if (current()) await write({ type: 'rejectAuthoredUse', id }, path, version)
-        else await send({ type: 'rejectAuthoredUse', id, expectedRevision: staged.revision })
-      } catch {
-        if (current()) window.phaseAInspectorReady = loadRoute()
-        throw Error('The source edit could not be confirmed or restored. Reopen the candidate and check Edits.', { cause: error })
-      }
-      if (!current() && currentRoute === route()) window.phaseAInspectorReady = loadRoute()
+      if (staged?.edit) await rejectSource(id, path, version, staged.revision)
       throw error
-    }
+    } finally { projection.finish(Boolean(accepted) && current()) }
     if (current()) {
       recovery.remember(accepted.edit ?? pendingRows.find(edit => edit.id === id))
       if (selection.current === node && !node.isConnected) {
@@ -945,17 +959,38 @@
     const current = () => isCurrentRoute(path, version)
     const use = edit.authoredBinding
     const count = authored.members(use).length
-    await write({ type, id: edit.id }, path, version)
-    if (!current()) return
-    recovery.forget(edit.id)
-    reportRecovery()
-    if (count && !await ui.waitForPreview(current, () => {
-      const members = authored.members(use)
-      return members.length >= count && members.every(node => {
-        const actual = authored.read(node, use.family)
-        return Object.entries(edit.authoredBefore).every(([property, value]) => actual[property] === value)
-      })
-    })) status('The source edit was removed, but the previous visible effect could not be confirmed.', true)
+    const { preparedTransitions, projection } = await planContinuity({ id: edit.id }, path, version)
+    let staged, accepted
+    try {
+      staged = await write({ type, id: edit.id, preparedTransitions }, path, version)
+      const restored = () => {
+        const members = authored.members(use)
+        return members.length >= count && members.every(node => {
+          const actual = authored.read(node, use.family)
+          return Object.entries(edit.authoredBefore).every(([property, value]) => actual[property] === value)
+        })
+      }
+      if (staged.edit?.sourceState === 'undoing') {
+        let preparedEvidence
+        if (!count || !await ui.waitForPreview(current, () => {
+          preparedEvidence = projection.evidence()
+          return restored() && preparedEvidence
+        })) throw Error('Undo could not preserve the earlier shared edit and restore the source effect.')
+        accepted = await write({ type: 'verifyAuthoredUse', id: edit.id,
+          observed: authored.read(authored.members(use)[0], use.family), preparedEvidence }, path, version)
+      } else {
+        accepted = staged
+        if (count && !await ui.waitForPreview(current, restored))
+          status('The source edit was removed, but the previous visible effect could not be confirmed.', true)
+      }
+    } catch (error) {
+      if (staged?.edit?.sourceState === 'undoing') await rejectSource(edit.id, path, version, staged.revision)
+      throw error
+    } finally { projection.finish(Boolean(accepted) && current()) }
+    if (current()) {
+      recovery.forget(edit.id)
+      reportRecovery()
+    }
   }
 
   async function commitEdit(node, property, requested, tokenOptions, selectionOnly = false) {
