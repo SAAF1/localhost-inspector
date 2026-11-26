@@ -708,6 +708,17 @@
           try {
             const identity = describe(node)
             lastResolved.set(edit, { node, identity })
+            // A preceding replay or rollback can leave the app transitioning.
+            // Sample the baseline only after its own property has settled.
+            const transitioning = () => node.getAnimations().some(animation =>
+              animation.transitionProperty === edit.property && animation.playState === 'running')
+            if (edit.restore === 'unique' && transitioning()) {
+              const settled = await ui.waitForPreview(groupCurrent, () => !transitioning())
+              if (!settled || !await verifySavedNode(edit, node, describe(node), groupCurrent)) {
+                complete = false
+                break
+              }
+            }
             const before = edit.restore === 'session'
               ? ui.buttonSize.currentSize(node, edit.target.key)
               : getComputedStyle(node).getPropertyValue(edit.property)
