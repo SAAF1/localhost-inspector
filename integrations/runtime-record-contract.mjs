@@ -63,14 +63,14 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
       return
     }
   }
-  function inspect(node,admit){
+  function inspect(node,expected){
     if(!painted(node))return
     const raw=node.getAttribute('data-li-source-use')
     if(!raw)return
     const part=JSON.parse(raw),binding=keyed(node)
     if(!binding || !moduleRevisions.has(part.file))return
     const {site:anchor,record}=binding,field=anchor.field,value=own(record,field)
-    if(!scalar(value))return
+    if(!scalar(value) || (expected && (expected.value!==value || expected.anchor!==anchor.id)))return
     const hosts=document.querySelectorAll('[data-li-source-use="'+CSS.escape(raw)+'"]')
     if(hosts.length>128)return
     const peers=new Map()
@@ -81,7 +81,7 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
       if(!scalar(id) || peers.has(String(id)))return
       peers.set(String(id),other.record)
     }
-    if(peers.get(String(value))!==record || (admit && peers.size<2))return
+    if(peers.get(String(value))!==record || (!expected && peers.size<2))return
     const fields=witness(record,field,node.textContent)
     if(!fields)return
     const members=new Set(peers.values()),matched=new Set()
@@ -108,8 +108,9 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
     if(!(node instanceof HTMLElement))return
     let proof
     try{
-      proof=inspect(node,event.detail!=='restore')
-      if(!proof && event.detail!=='restore' && keyed(node))proof={unavailable:true}
+      const expected=event.detail?.mode==='restore' ? event.detail : null
+      proof=inspect(node,expected)
+      if(!proof && !expected && keyed(node))proof={unavailable:true}
     }catch{/* Optional preparation must preserve application behavior. */}
     node.dispatchEvent(new CustomEvent('li-record-contract',{detail:JSON.stringify(proof??null)}))
   })

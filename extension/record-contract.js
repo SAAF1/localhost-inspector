@@ -16,23 +16,28 @@
         a[k].revision===b[k].revision)
   }
   function remember(proof){
-    if(proof?.kind==='state-record' && typeof proof.key==='string')known.set(proof.key,proof)
+    if(proof?.kind!=='state-record' || typeof proof.key!=='string')return
+    known.set(proof.key,proof)
   }
   async function prepare(node) {
     const proof=read(node,'admit')
     if(!proof)return
     if(proof.unavailable)throw Error('Cannot verify one unique application record and its painted source part. No change was saved.')
+    for(const cached of known.values()){
+      if(same(cached,proof))return {...cached,members:proof.members,preparation:'reused'}
+    }
     const state=JSON.stringify([proof.part.id,proof.anchor.id,proof.authority.file,proof.authority.id,
       proof.field,proof.value,proof.witness])
     const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(state))
     proof.key='bound:'+Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('')
     if(!same(proof,read(node,'admit')))return
+    proof.preparation='prepared'
     remember(proof)
     return proof
   }
   function matches(node,key) {
     const expected=known.get(key)
-    return Boolean(expected && node && same(expected,read(node,'restore')))
+    return Boolean(expected && node && same(expected,read(node,{mode:'restore',anchor:expected.anchor.id,value:expected.value})))
   }
   function candidates(key){
     const expected=known.get(key)
