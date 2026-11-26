@@ -273,7 +273,7 @@ function analyze(code, file, config) {
           } else reason = 'no verified direct finite slot or variant'
         }
       }
-      if (reason && finite?.[0].implicit && !opening.attributes.some(a=>a.type==='JSXSpreadAttribute')) {
+      if (reason && finite && finite[0].implicit) {
         found.push({...raw,input:finite[0],...(finite.length>1 ? {additionalInputs:finite.slice(1)} : {}),
           componentProof:config.proof(finiteDefinition.files),
           dependencies:[...new Set([...raw.dependencies,...finiteDefinition.files])]})
