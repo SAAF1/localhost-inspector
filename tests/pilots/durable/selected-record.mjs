@@ -21,7 +21,7 @@ try {
   const rows=()=>cards.evaluateAll(nodes=>nodes.map(n=>({title:n.querySelector('.card-text button').textContent,
     radius:getComputedStyle(n).borderRadius,key:n.getAttribute('data-inspector-target')})))
   const original='Atomic Habits'
-  const selected=cards.filter({has:frame.getByRole('button',{name:original,exact:true})})
+  const selected=cards.filter({hasText:original})
   const matches=(values,radius)=>values.length===6 && values.filter(v=>v.title===original).length===1 &&
     values.every(v=>v.radius===(v.title===original?radius:'0px'))
   const verify=async (step,radius)=>{
@@ -42,6 +42,7 @@ try {
   await verify('original','0px')
   await choose();await radius(17);await verify('one-book radius','17px')
   await panel('#edits-tab');await panel('.li-pending-open');await verify('saved inspection','17px')
+  await panel('#clear');await verify('compare before','0px');await panel('#clear');await verify('compare after','17px')
   await selected.locator('.cover-link').click()
   await frame.locator('.book-overview').waitFor()
   await frame.locator('.back').click()
