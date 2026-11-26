@@ -901,6 +901,7 @@
         site: contract.site,
         file: contract.file,
         revision: contract.revision,
+        ...(contract.styleInputs?.[key] ? {styleInput:true} : {}),
         ...(field ? { field } : {}),
         ...(sharedUse && key === 'gap' ? { effect: { property: 'gap', value: requested } } : {}),
         ...(contract.parts?.[key] ? { part:{...contract.parts[key],cascade:ui.preparedPreview.cascadeReceipt(key)} } : {}),
