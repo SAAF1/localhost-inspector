@@ -153,7 +153,13 @@
       labelOf(node) === target.text
   }
 
-  function candidatesFor(target, exemplar) {
+  const nativeInputUse = (target, proof) => target.tag === 'input' && proof?.file && proof.file === proof.component
+
+  function candidatesFor(target, exemplar, proof) {
+    if (nativeInputUse(target, proof)) {
+      const nodes = document.querySelectorAll('input[data-li-selected-native="' + CSS.escape(proof.id) + '"]')
+      return nodes.length === 1 && sameUse({selectedUse:proof}, nodes[0]) ? [nodes[0]] : []
+    }
     if (target.key?.startsWith('bound:')) return ui.recordContracts.candidates(target.key)
     if (target.anchor && !target.key && !target.id) {
       const { kind, value, path } = target.anchor
@@ -185,8 +191,8 @@
     return Array.from(document.querySelectorAll(selector))
   }
 
-  function findTarget(target, liveNode) {
-    const candidates = candidatesFor(target, liveNode)
+  function findTarget(target, liveNode, proof) {
+    const candidates = candidatesFor(target, liveNode, proof)
     const label = target.anchor && (target.text || (liveNode && labelOf(liveNode)))
     const matches = label ? candidates.filter(node => labelOf(node) === label) : candidates
     if (matches.length !== 1) return null
@@ -231,23 +237,23 @@
       const legacy = await Promise.all(Array.from({ length: 6 }, (_, depth) => fingerprint(dataContext(node, depth))))
       if (!legacy.includes(contextFingerprint)) return false
     }
-    return isCurrent() && findTarget(edit.target, node) === node && matchesTarget(node, identity, true)
+    return isCurrent() && findTarget(edit.target, node, edit.selectedUse) === node && matchesTarget(node, identity, true)
   }
 
   async function resolveSavedNode(edit, isCurrent) {
     const { target } = edit
     if (target.anchor?.kind === 'section') {
-      const candidates = candidatesFor(target)
+      const candidates = candidatesFor(target, undefined, edit.selectedUse)
       const matches = await Promise.all(candidates.map(node =>
         verifySavedNode(edit, node, describe(node), isCurrent)))
       return matches.filter(Boolean).length === 1 ? candidates[matches.indexOf(true)] : null
     }
-    let node = findTarget(target)
+    let node = findTarget(target, undefined, edit.selectedUse)
     if (!node && target.anchor && target.textFingerprint) {
-      const labels = new Set(candidatesFor(target).map(labelOf))
+      const labels = new Set(candidatesFor(target, undefined, edit.selectedUse).map(labelOf))
       const checks = await Promise.all(Array.from(labels, async label => [label, await fingerprint(label)]))
       const match = checks.find(([, digest]) => digest === target.textFingerprint)
-      if (match) node = findTarget({ ...target, text: match[0] })
+      if (match) node = findTarget({ ...target, text: match[0] }, undefined, edit.selectedUse)
     }
     return node && await verifySavedNode(edit, node, describe(node, false), isCurrent) ? node : null
   }
@@ -514,7 +520,7 @@
       if (!sameUse(edit,entry.node)) return false
       if (edit?.template) return templateMatches(edit, entry.node) && sameTemplateSource(edit, entry.node) === true
       return Boolean(edit && matchesTarget(entry.node, entry.liveTarget) &&
-        (edit.restore !== 'unique' || findTarget(edit.target, entry.node) === entry.node))
+        (edit.restore !== 'unique' || findTarget(edit.target, entry.node, edit.selectedUse) === entry.node))
     }
 
     async function forget(id, isCurrent) {
@@ -701,7 +707,7 @@
             break
           }
           const exactMatch = matchesTarget(exact?.node, exact?.target) && sameUse(edit,exact.node) &&
-            (!edit.recordScope || findTarget(edit.target, exact.node) === exact.node)
+            (!edit.recordScope || findTarget(edit.target, exact.node, edit.selectedUse) === exact.node)
           const node = exactMatch ? exact.node : (edit.restore === 'unique' ? await resolveSavedNode(edit, groupCurrent) : null)
           if (conflicts.has(edit.id) || !node) {
             complete = false
@@ -787,7 +793,7 @@
       const resolved = lastResolved.get(edit)
       const exact = attached.get(edit.id)?.node ?? original.get(edit.id)?.node ??
         (resolved && matchesTarget(resolved.node, resolved.identity, true) &&
-          findTarget(edit.target, resolved.node) === resolved.node ? resolved.node : null)
+          findTarget(edit.target, resolved.node, edit.selectedUse) === resolved.node ? resolved.node : null)
       const candidates = edit.template ? templateNodes(edit).filter(visible) : [exact].filter(visible)
       const nodes = edit.template && !hidden
         ? candidates.filter(node => sameTemplateSource(edit, node) === true) : candidates
@@ -878,7 +884,7 @@
           (!edit.frameState || inState(edit, readFrameState()))
         const exact = original.get(edit.id)
         const node = exact && matchesTarget(exact.node, exact.target) &&
-            (edit.restore !== 'unique' || findTarget(edit.target, exact.node) === exact.node) ? exact.node :
+            (edit.restore !== 'unique' || findTarget(edit.target, exact.node, edit.selectedUse) === exact.node) ? exact.node :
           !edit.template && edit.restore === 'unique' ? await resolveSavedNode(edit, current) : null
         if (!current() || !visible(node)) return observation
         return { node, state: comparing || edit.previewHidden ? 'hidden' : 'failed' }
@@ -896,6 +902,12 @@
       },
       get hasSaved() { return Boolean(this.lastSavedId) },
       get hasRecords() { return saved.size > 0 },
+      get hasUnattachedNativeHeightAtViewport() {
+        return Array.from(saved.values()).some(edit =>
+          !attached.has(edit.id) && !conflicts.has(edit.id) && !edit.previewHidden && edit.property === 'height' &&
+          nativeInputUse(edit.target, edit.selectedUse) &&
+          edit.viewport?.width === innerWidth && edit.viewport?.height === innerHeight)
+      },
       get hasScopedEdits() { return hasScopedEdits() },
       get hasTemplateEdits() { return Array.from(saved.values()).some(edit => edit.template) },
       changedBaseline(id, node) {
@@ -938,7 +950,7 @@
             const entry = attached.get(edit.id)
             if (!inState(edit, state)) return Boolean(entry)
             if (entry) return !sessionEntry(entry) && !isAttached(edit, entry)
-            return !conflicts.has(edit.id) && edit.restore === 'unique' && candidatesFor(edit.target).length > 0
+            return !conflicts.has(edit.id) && edit.restore === 'unique' && candidatesFor(edit.target, undefined, edit.selectedUse).length > 0
           })
         })
       },

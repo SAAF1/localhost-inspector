@@ -67,3 +67,34 @@ test('a moved component can load independently of its original route module', as
   assert.equal(details(), 7)
   assert.deepEqual(seen, [['Route.jsx', 'Details', details]])
 })
+
+test('a native text input needs one direct opening and an editable style shape', async t => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'selected-native-')))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const file = 'Search.jsx'
+  const input = '<input type="search" placeholder="Find" style={{ paddingTop: 8 }} />'
+  const code = 'export function Search() { return <div>' + input + '</div> }'
+  async function compile(source) {
+    const out = new MagicString(source)
+    await markSelectedCalls(dir, file, source, parseAuthoredJsx(source), out, async () => null)
+    parseAuthoredJsx(out.toString())
+    return out.toString()
+  }
+  const result = await compile(code)
+  const match = result.match(/data-li-selected-native="(use-[a-f0-9]{24})"\s*\/>,(\{[^}]+\}),\["placeholder"\]/)
+  assert.ok(match)
+  const proof = { ...JSON.parse(match[2]), field: 'placeholder', dependencies: [] }
+  assert.equal(proof.id, match[1])
+  assert.equal(proof.component, file)
+  writeFileSync(join(dir, file), code)
+  verifySelectedUse(dir, proof)
+  for (const invalid of [
+    code.replace(input, input + input),
+    code.replace(input, '{rows.map(() => ' + input + ')}'),
+    code.replace(input, input.replace('style={{ paddingTop: 8 }}', 'style={dynamic}')),
+    code.replace(input, input.replace('type="search"', 'type="checkbox"')),
+    code.replace(input, input.replace('type="search"', '{...props}')),
+  ]) assert.doesNotMatch(await compile(invalid), /data-li-selected-native=/)
+  writeFileSync(join(dir, file), code.replace('paddingTop: 8', 'paddingTop: 9'))
+  assert.throws(() => verifySelectedUse(dir, proof), /source changed/)
+})

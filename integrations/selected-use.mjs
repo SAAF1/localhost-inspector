@@ -98,9 +98,28 @@ function selected(node) {
   }
   return proof && {proof,collection}
 }
+function selectedNative(node) {
+  const id = node.getAttribute('data-li-selected-native')
+  if (!/^use-[a-f0-9]{24}$/.test(id ?? '') || !['text','search'].includes(node.type)) return
+  const hosts = document.querySelectorAll('input[data-li-selected-native="' + id + '"]')
+  if (hosts.length !== 1 || hosts[0] !== node) return
+  const fiber = currentFiber(node)
+  const call = calls.get(fiber?.memoizedProps)
+  if (!call || call.basis.id !== id || call.basis.file !== call.basis.component) return
+  for (let f = fiber; f; f = f.return)
+    if (f.key != null || repeated.has(f.memoizedProps)) return
+  const [field] = call.fields
+  if (fiber.memoizedProps[field] !== node.getAttribute(field)) return
+  return {...call.basis, field, dependencies:[]}
+}
 document.addEventListener('li-read-selected-use', event => {
   const node = event.target
   if (!(node instanceof HTMLElement)) return
+  if (node instanceof HTMLInputElement) {
+    const receipt = selectedNative(node)
+    if (receipt) node.dispatchEvent(new CustomEvent('li-selected-use',{detail:JSON.stringify(receipt)}))
+    return
+  }
   const match = selected(node)
   if (!match || match.collection || match.proof.dependencies.length > 12) return
   const receipt = match.proof

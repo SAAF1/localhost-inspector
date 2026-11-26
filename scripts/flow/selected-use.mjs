@@ -13,6 +13,21 @@ const safeFile = file => typeof file === 'string' && file.length <= 240 &&
   /^[\w./ -]+\.[jt]sx?$/.test(file) && !file.startsWith('/') && !file.split('/').some(part => ['..','node_modules','.git'].includes(part))
 const digest = value => createHash('sha256').update(value).digest('hex')
 
+function nativeInputField(opening) {
+  if (opening.name.name !== 'input' || opening.attributes.some(a =>
+    a.type !== 'JSXAttribute' || a.name?.name === 'aria-labelledby' || a.name?.name?.startsWith('data-li-'))) return
+  const attr = name => opening.attributes.find(a => a.name?.name === name)
+  const type = attr('type')
+  if (type && (type.value?.type !== 'StringLiteral' || !['text', 'search'].includes(type.value.value))) return
+  const style = attr('style')
+  const value = style?.value?.expression
+  if (style && (value?.type !== 'ObjectExpression' ||
+      value.properties.some(p => p.type !== 'ObjectProperty' || p.computed))) return
+  const label = attr('aria-label') ?? attr('placeholder')
+  if (label?.value?.type === 'StringLiteral' && label.value.value.trim() && label.value.value.length <= 160)
+    return label.name.name
+}
+
 // Limit eligibility to a named top-level component's direct render, outside
 // callbacks, keys and loops. A static label is a candidate input, never identity.
 function candidates(file, code, tree, repeatedCalls) {
@@ -36,6 +51,11 @@ function candidates(file, code, tree, repeatedCalls) {
       if (repeated && (opening.name.type === 'JSXMemberExpression' || /^[A-Z]/.test(name))) {
         if(!recordKey) repeatedCalls?.push({n,child})
         return
+      }
+      const field = !repeated && nativeInputField(opening)
+      if (field) {
+        const id = sourceUseId(file, owner, code.slice(opening.start, opening.end))
+        found.set(id, found.has(id) ? null : {id, owner, n, fields:[field], native:true, child})
       }
       const imported = repeated ? undefined : imports.get(name)
       if (imported?.from.startsWith('.') && !locals.has(name) &&
@@ -104,7 +124,15 @@ export async function markSelectedCalls(root,file,code,tree,out,resolveImport) {
   const imports = new Map()
   const callerDigest = digest(code)
   let changed = repeated.length > 0
-  for (const {id,owner,n,fields,spec,child} of candidatesHere) {
+  for (const {id,owner,n,fields,spec,child,native} of candidatesHere) {
+    if (native) {
+      const opening = n.openingElement
+      const basis = {id,file,owner,callerDigest,component:file,componentDigest:callerDigest}
+      out.appendLeft(opening.attributes.at(-1).end, ' data-li-selected-native="' + id + '"')
+      wrap(n,child,','+JSON.stringify(basis)+','+JSON.stringify(fields))
+      changed = true
+      continue
+    }
     if (!imports.has(spec)) {
       imports.set(spec,null)
       try {
@@ -138,6 +166,7 @@ export function verifySelectedUse(root, proof) {
       digest(code) !== proof.callerDigest || digest(read(proof.component)) !== proof.componentDigest)
     throw Error('Selected source changed. Reopen the candidate and verify the action again.')
   const use = candidates(proof.file,code,parseAuthoredJsx(code)).find(c => c.id === proof.id && c.owner === proof.owner)
-  if (!use?.fields.includes(proof.field) || createComponentTypeResolver(root)(proof.file,use.spec)?.module?.file !== proof.component)
+  const component = use?.native ? proof.file : use && createComponentTypeResolver(root)(proof.file,use.spec)?.module?.file
+  if (!use?.fields.includes(proof.field) || component !== proof.component)
     throw Error('The selected action no longer has its original caller and input.')
 }

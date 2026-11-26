@@ -1174,7 +1174,9 @@
     let edit, captureEnabled
     try {
       const templateSourceFingerprint = template ? await ui.templateSourceFingerprint(source) : undefined
-      edit = await editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template, templateSourceFingerprint })
+      edit = await editRecord(entry, target, {
+        editRoute, sourceContext, tokenOptions, template, templateSourceFingerprint, selectedUse,
+      })
       if (selectionOnly) edit.intent = 'selected occurrence only'
       if (selectedUse && edit.restore === 'unique') {
         if (JSON.stringify(ui.selectedUse(node)) !== JSON.stringify(selectedUse)) throw Error('The selected source use changed.')
@@ -1352,7 +1354,9 @@
     recoveryRequested ||= !attached
     reportRecovery()
   }
-  async function editRecord(entry, target, { editRoute, sourceContext, tokenOptions, template, templateSourceFingerprint }) {
+  async function editRecord(entry, target, {
+    editRoute, sourceContext, tokenOptions, template, templateSourceFingerprint, selectedUse,
+  }) {
     const capturedState = template ? undefined : readFrameState()
     const frameState = capturedState && /^[a-f0-9]{64}$/.test(capturedState) ? capturedState : undefined
     if (target.anchor?.kind === 'section' && !sectionPreviewTargets) target = ui.describePreviewTarget(entry.node, false)
@@ -1363,7 +1367,7 @@
     return {
       id: crypto.randomUUID(), route: editRoute, target: await ui.previewTargetForJournal(journalTarget), property: entry.property, before: entry.before,
       requested: entry.requested, observed: entry.observed, ...tokenOptions,
-      restore: template || (capturedState !== 'unverified' && ui.findPreviewTarget(journalTarget, entry.node) === entry.node) ? 'unique' : 'ambiguous',
+      restore: template || (capturedState !== 'unverified' && ui.findPreviewTarget(journalTarget, entry.node, selectedUse) === entry.node) ? 'unique' : 'ambiguous',
       viewport: { width: innerWidth, height: innerHeight }, frameState, ...(template ? { template } : {}),
       ...(templateSourceFingerprint ? { templateSourceFingerprint } : {}),
       intent: 'feature-template', sourceContext,
@@ -1867,6 +1871,11 @@
   window.addEventListener('resize', () => {
     refreshResponsiveSpacing()
     if (recovery.hasPrepared && !busy && !loadingRoute) syncPending()
+    // A reopened frame can first mount at a different responsive width.
+    if (recovery.hasUnattachedNativeHeightAtViewport) {
+      recoveryRequested = true
+      queueRecovery()
+    }
   })
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     refreshResponsiveSpacing()
