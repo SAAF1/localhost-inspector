@@ -29,7 +29,7 @@ function candidates(file, code, tree, repeatedCalls) {
         repeatedCalls?.push({n,child})
         return
       }
-      const imported = !repeated && imports.get(name)
+      const imported = repeated ? undefined : imports.get(name)
       if (imported?.from.startsWith('.') && !locals.has(name) &&
           !opening.attributes.some(a => a.type === 'JSXSpreadAttribute')) {
         const fields = opening.attributes.filter(a => a.value?.type === 'StringLiteral' &&

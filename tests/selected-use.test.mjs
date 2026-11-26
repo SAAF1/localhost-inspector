@@ -21,6 +21,7 @@ test('selected component invocation survives a value repeat and rejects changed 
     parseAuthoredJsx(out.toString())
     return out.toString()
   }
+  await compile(code.replace('x=><Action label="Item"/>','x=><li><Action label="Item"/></li>'))
   const compiled=await compile(code)
   assert.match(compiled,/__liSelectedCall\(<Action label="Item"\/>\)/)
   const match=compiled.match(/__liSelectedCall\(<Action label="Create"\/>,(\{[^}]+\}),\["label"\]\)/)
