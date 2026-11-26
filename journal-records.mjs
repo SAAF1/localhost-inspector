@@ -73,7 +73,7 @@ export function journalValidators(journalRoute) {
     const recordScope = record?.recordScope
     const recordFill = recordScope?.kind === 'state-record' && recordScope.operation === 'background-color' &&
       record.property === 'background-color' && record.requested === record.observed && /^rgb\(\d+, \d+, \d+\)$/.test(record.requested)
-    const recordRadius = record.property === 'border-radius' && /^\d+(?:\.\d+)?px$/.test(record.requested) &&
+    const recordRadius = record?.property === 'border-radius' && /^\d+(?:\.\d+)?px$/.test(record.requested) &&
       (recordScope?.kind !== 'state-record' || recordScope.operation === record.property)
     if (recordScope !== undefined && ((!recordRadius && !recordFill) || record.restore !== 'unique' ||
       record.intent !== 'selected occurrence only' || record.target?.key !== recordScope?.key ||

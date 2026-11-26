@@ -1137,7 +1137,7 @@
     const selectedUse = selectedUseHeight && authoredUse && selectionOnly && property === 'height' && /^\d+(?:\.\d+)?px$/.test(requested) && ui.selectedUse(node)
     let recordScope
     const recordFill = property === 'background-color' && !tokenOptions?.colorToken && !tokenOptions?.pendingColor &&
-      /^rgb\(\d+, \d+, \d+\)$/.test(requested)
+      /^rgb\(\d+, \d+, \d+\)$/.test(ui.normalizeSolidColor(requested))
     if (authoredUse && selectionOnly && (property === 'border-radius' || recordFill) && !node.hasAttribute('data-li-record-scope')) {
       recordScope=await ui.recordContracts.prepare(node,property)
       if(recordScope){
