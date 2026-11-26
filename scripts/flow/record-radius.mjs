@@ -26,6 +26,7 @@ export function planRecordRadii(root, changes) {
       throw Error('Only a fixed corner radius is qualified for one record.')
     const record = change.recordScope
     const source = verifyRecordSource(root, record)
+    if (record.resource) throw Error('Use the coding-agent source handoff for a selected public-data record. Verify the key, complete backing collection, record freshness and protected peers before accepting.')
     if (record.id !== proof.id || values.has(record.value) ||
       (verified && (verified.code !== source.code || verified.ownerCode !== source.ownerCode)))
       throw Error('Overlapping record edits do not have distinct values at one verified render site.')
@@ -52,7 +53,7 @@ export function planRecordRadii(root, changes) {
   if (host.presentation.prop) return new Map([[proof.caller, { original: code, updated: caller.toString() }]])
   if ([code, ownerCode].some((source) => new RegExp('\\b' + prop + '\\b').test(source)))
     throw Error('The record presentation prop is already in use. Review its existing owner.')
-  const owner = new MagicString(ownerCode)
+  const owner = proof.caller === proof.file ? caller : new MagicString(ownerCode)
   const annotation = host.params.typeAnnotation?.typeAnnotation
   if (annotation) {
     const name = annotation.type === 'TSTypeReference' && annotation.typeName?.name

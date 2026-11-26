@@ -224,3 +224,58 @@ test('an unrelated memo component with effect statements is left untouched', () 
   assert.equal(markRecordHost(tree, node, fn, 'Search.jsx', out), undefined)
   assert.equal(out.toString(), source)
 })
+
+test('a checked-in complete data source qualifies typed keys across projections and refuses recycled or ambiguous records', async t => {
+  const { mkdirSync } = await import('node:fs')
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'record-public-')))
+  t.after(() => rmSync(root, {recursive:true,force:true}))
+  mkdirSync(join(root,'public'))
+  const data = [{code: 8, title: 'River'}, {code: 19, title:'Bay'}]
+  const resource = join(root,'public','inventory.json')
+  const publish = rows => writeFileSync(resource,JSON.stringify(rows))
+  publish(data)
+  const source = `import {useRef,useState} from 'react';
+    function Catalog(){
+      const [visible,show]=useState([]); const all=useRef([]);
+      async function load(){const response=await fetch('/inventory.json');const rows=await response.json();
+        all.current=rows;show(rows)}
+      return <main>{visible.map(row=><Panel key={row.code} item={row}/>)}</main>
+    }
+    function Panel({item}){return <><section>{item.title}</section></>}`
+  const file='Catalog.jsx'
+  const trace = async (code=source) => {
+    writeFileSync(join(root,file),code)
+    const tree=parseAuthoredJsx(code),out=new MagicString(code)
+    const marked=await markRecordCallers({root,file,code,tree,out,allowPublic:true,resolveImport:()=>null})
+    if (!marked) return
+    parseAuthoredJsx(out.toString())
+    const proof=JSON.parse(out.toString().match(/map\(__liRecordIdentity\((\{[^}]*\}),/)[1])
+    const entries=JSON.parse(out.toString().match(/const __liRecordRows[a-f0-9]+ = (.*);/)[1])
+    return {proof,entries}
+  }
+  const {proof,entries}=await trace()
+  const original=globalThis.document, where=globalThis.location
+  globalThis.document={baseURI:'http://localhost/',addEventListener(){}}
+  globalThis.location={origin:'http://localhost'}
+  t.after(()=>{globalThis.document=original;globalThis.location=where})
+  const {recordIdentity}=await import('../integrations/prepared-registry.mjs')
+  const keys=(visible,all=data)=>recordIdentity(proof,visible,'code',lookup=>visible.map(item=>JSON.parse(lookup(item))),all,entries)
+  const [one,two]=keys(data)
+  assert.equal(one.value,8);assert.ok(one.key);assert.ok(two.key)
+  verifyRecordSource(root,one)
+  assert.deepEqual(keys([data[1],data[0]]),[two,one])
+  assert.deepEqual(keys([data[0]]),[one])
+  assert.equal(keys([{...data[0]}])[0].key,undefined)
+  assert.equal(keys([data[0]],[data[0],{...data[1],code:'8'}])[0].key,undefined)
+  const reused={...data[0],title:'different'}
+  assert.equal(keys([reused],[reused,data[1]])[0].key,undefined)
+  publish(data.toReversed());verifyRecordSource(root,one)
+  for (const rows of [[reused,data[1]], [data[1]], [data[0], {...data[1],code:'8'}]]) {
+    publish(rows);assert.throws(()=>verifyRecordSource(root,one))
+  }
+  publish(data)
+  assert.equal(await trace(source.replace('all.current=rows','all.current=[]')),undefined)
+  assert.equal(await trace(source.replace('/inventory.json','https://example.org/inventory.json')),undefined)
+  assert.equal(await trace(source.replace('</section></>','</section><hr/></>')),undefined)
+  assert.equal(await trace(source.replace('return <main>','const Panel=Other;return <main>')),undefined)
+})

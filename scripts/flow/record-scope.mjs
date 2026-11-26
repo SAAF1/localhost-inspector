@@ -8,6 +8,8 @@ import {
   lookupCorroboration,
   backingCollection,
 } from './record-render-path.mjs'
+import { onlyElement } from './component-surface.mjs'
+import { publicRecordCollection, publicRows } from './public-records.mjs'
 import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
@@ -19,7 +21,7 @@ const digest = (value) => createHash('sha256').update(value).digest('hex').slice
 const markerProp = '__inspectorRecordScope'
 const scalar = /^[^\x00-\x1F\x7F]{1,70}$/u
 const names = /^[A-Za-z_$][\w$]*$/
-function mappedUses(tree) {
+function mappedUses(tree, allowPublic) {
   const imports = authoredImports(tree)
   const locals = localBindingNames(tree)
   const uses = []
@@ -35,11 +37,13 @@ function mappedUses(tree) {
     )
       return
     const opening = returnedValue(fn).openingElement
-    const imported = imports.get(opening.name.name)
+    const name = opening.name.name
+    const local = allowPublic && scope && name && componentFunction(tree, name, true) &&
+      !localBindingNames({ program: scope }).has(name) && { local: true, exported: name }
+    const imported = local || imports.get(name)
     if (
       !imported ||
-      locals.has(opening.name.name) ||
-      !imported.specifier.startsWith('.') ||
+      (!local && (locals.has(name) || !imported.specifier.startsWith('.'))) ||
       opening.attributes.some((a) => a.type === 'JSXSpreadAttribute' || a.name?.name === markerProp)
     )
       return
@@ -65,10 +69,12 @@ function mappedUses(tree) {
     })
     const proof = !corroborated && lookupCorroboration(tree, scope, fn, opening, item, field, locals)
     const backing = backingCollection(scope, node.callee.object.name)
-    if (backing && (corroborated || proof))
+    const authority = allowPublic && (!backing || !(corroborated || proof)) && publicRecordCollection(tree, scope, node.callee.object.name, locals)
+    if ((backing && (corroborated || proof)) || authority)
       uses.push({
-        proof: [...(proof || []), ...(backing.source ? [backing.source] : [])],
-        backing: backing.name,
+        proof: authority ? authority.spans : [...(proof || []), ...(backing.source ? [backing.source] : [])],
+        resource: authority?.url,
+        backing: authority?.name ?? backing.name,
         fn,
         opening,
         imported,
@@ -81,8 +87,8 @@ function mappedUses(tree) {
   return uses
 }
 
-function componentRoot(tree, exported, prop) {
-  const fn = componentFunction(tree, exported)
+function componentRoot(tree, exported, prop, local = false) {
+  const fn = componentFunction(tree, exported, local)
   const params = fn?.params[0]
   if (
     params?.type !== 'ObjectPattern' ||
@@ -92,7 +98,8 @@ function componentRoot(tree, exported, prop) {
     return
   const record = params.properties.find((p) => p.key.name === prop && identifier(p.value))?.value.name
   if (!record) return
-  const jsx = returnedValue(fn)
+  const returned = returnedValue(fn)
+  const jsx = returned?.type === 'JSXFragment' ? onlyElement(returned.children) : returned
   if (jsx?.type !== 'JSXElement') return
   const root = jsx.openingElement
   if (
@@ -136,30 +143,36 @@ function useIdentity(caller, file, code, use, ownerSource, root) {
 }
 
 // Source-derived identity is a hint for selection; source handoff rechecks it independently.
-export async function markRecordCallers({ root, file, code, tree, out, resolveImport }) {
-  if (code.includes('__liRecordIdentity') || code.includes('__liScope')) return false
+export async function markRecordCallers({ root, file, code, tree, out, resolveImport, allowPublic = false, watchFile }) {
+  if (code.includes('__liRecordIdentity') || code.includes('__liScope') || code.includes('__liRecordRows')) return false
   const candidates = []
-  for (const use of mappedUses(tree)) {
-    const resolved = await resolveImport(use.imported.specifier)
+  for (const use of mappedUses(tree, allowPublic)) {
+    const resolved = use.imported.local ? resolve(root,file) : await resolveImport(use.imported.specifier)
     if (!resolved) continue
     const ownerFile = relative(root, resolved)
     let ownerCode, host
     try {
       ownerCode = checkedSource(root, ownerFile)
-      host = componentRoot(parseAuthoredJsx(ownerCode), use.imported.exported, use.prop)
+      host = componentRoot(parseAuthoredJsx(ownerCode), use.imported.exported, use.prop, use.imported.local)
     } catch {
       continue
     }
     if (!host || !recordBranches(use, host.presentation.prop)) continue
     const id = useIdentity(file, ownerFile, code, use, ownerCode, host.root)
-    candidates.push({ use, ownerFile, id })
+    const dataset = use.resource && publicRows(root,use.resource,use.field)
+    if (use.resource && !dataset) continue
+    if (dataset) watchFile?.(dataset.file)
+    candidates.push({ use, ownerFile, id, dataset })
   }
   let marked = false
-  for (const { use, ownerFile, id } of candidates) {
+  for (const { use, ownerFile, id, dataset } of candidates) {
     if (candidates.filter((c) => c.id === id).length !== 1) continue
+    const table = '__liRecordRows' + id
+    if (dataset) out.prepend('const ' + table + ' = ' + JSON.stringify(dataset.entries) + ';\n')
     const proof = JSON.stringify({
       id,
       caller: file,
+      ...(dataset ? {resource:use.resource} : {}),
       file: ownerFile,
       owner: use.imported.exported,
       prop: use.prop,
@@ -177,7 +190,7 @@ export async function markRecordCallers({ root, file, code, tree, out, resolveIm
         JSON.stringify(use.field) +
         ', __liScope => (',
     )
-    out.appendLeft(use.fn.end, use.backing === use.collection ? '))' : '), ' + use.backing + ')')
+    out.appendLeft(use.fn.end, use.backing === use.collection ? '))' : '), ' + use.backing + (dataset ? ', ' + table : '') + ')')
     out.appendLeft(use.opening.name.end, ' ' + markerProp + '={__liScope(' + use.item + ')}')
     marked = true
   }
@@ -187,10 +200,10 @@ export async function markRecordCallers({ root, file, code, tree, out, resolveIm
 }
 
 export function markRecordHost(tree, node, owner, file, out, requireInput = false) {
-  const props = componentFunction(tree, owner.id?.name)?.params?.[0]
+  const props = componentFunction(tree, owner.id?.name, true)?.params?.[0]
   if (props?.type !== 'ObjectPattern') return
   for (const p of props.properties) {
-    const host = p.key && componentRoot(tree, owner.id.name, p.key.name)
+    const host = p.key && componentRoot(tree, owner.id.name, p.key.name, true)
     if (host?.root !== node || (requireInput && !host.presentation.prop)) continue
     const proof = '__liRecordProof'
     out.appendLeft(props.start + 1, markerProp + ': ' + proof + ', ')
@@ -207,20 +220,20 @@ export function verifyRecordSource(root, proof) {
     !proof ||
     !scalar.test(proof.value) ||
     !String(proof.value).trim() ||
-    typeof proof.value !== 'string' ||
+    !(typeof proof.value === 'string' || (proof.resource && Number.isSafeInteger(proof.value))) ||
     !/^[a-f0-9]{24}$/.test(proof.id) ||
     !names.test(proof.owner) ||
     !names.test(proof.prop) ||
-    proof.key !== 'record:' + proof.id + ':' + proof.value
+    proof.key !== 'record:' + proof.id + ':' + (proof.resource ? proof.rowRevision : proof.value)
   )
     throw Error('Invalid record identity.')
   const code = checkedSource(root, proof.caller),
     ownerCode = checkedSource(root, proof.file)
   const tree = parseAuthoredJsx(ownerCode)
-  const host = componentRoot(tree, proof.owner, proof.prop)
+  const host = componentRoot(tree, proof.owner, proof.prop, proof.caller === proof.file)
   if (!host) throw Error('The selected component no longer has a unique native root.')
-  const matches = mappedUses(parseAuthoredJsx(code)).filter((use) => {
-    const base = resolve(root, proof.caller, '..', use.imported.specifier)
+  const matches = mappedUses(parseAuthoredJsx(code), Boolean(proof.resource) || proof.caller === proof.file).filter((use) => {
+    const base = use.imported.local ? resolve(root,proof.caller) : resolve(root, proof.caller, '..', use.imported.specifier)
     // Resolve exactly one conventional local JSX module; ambiguous candidates are unsupported.
     const options = [base, base + '.tsx', base + '.jsx', resolve(base, 'index.tsx'), resolve(base, 'index.jsx')]
     const paths = options.filter((path) => {
@@ -232,6 +245,8 @@ export function verifyRecordSource(root, proof) {
       }
     })
     return (
+      use.resource === proof.resource &&
+      (!use.resource || publicRows(root,use.resource,use.field)?.entries.some(entry => entry.value === proof.value && entry.revision === proof.rowRevision)) &&
       paths.length === 1 &&
       relative(root, paths[0]) === proof.file &&
       use.imported.exported === proof.owner &&

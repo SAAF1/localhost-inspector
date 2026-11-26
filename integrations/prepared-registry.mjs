@@ -21,7 +21,36 @@ function recordCounts(records, field) {
     }
   return counts
 }
-export function recordIdentity(proof, records, field, render, backing = records) {
+// A visible projection must contain the actual objects in the complete local
+// data set. Compare serialized JSON as loaded, never infer membership from a
+// position or a displayed name. An unavailable source simply omits the key.
+function publicRecordKeys(proof, records, field, backing, entries) {
+  const keys = new Map()
+  if (!Array.isArray(backing) || !Array.isArray(records) || backing.length !== entries.length ||
+      records.length > backing.length || new Set(records).size !== records.length) return keys
+  try {
+    if (new URL(proof.resource, document.baseURI).href !== new URL(proof.resource, location.origin + '/').href) return keys
+    const rows = new Map(entries.map(entry => [entry.value, entry]))
+    const owners = new Map()
+    for (const record of backing) {
+      const value = record?.[field], entry = rows.get(value)
+      if (!entry || owners.has(value) || JSON.stringify(record) !== entry.json) return keys
+      owners.set(value, record)
+    }
+    if (!records.every(record => owners.get(record?.[field]) === record)) return keys
+    for (const record of records) {
+      const entry = rows.get(record[field])
+      keys.set(record, { ...proof, value:entry.value, rowRevision:entry.revision, key:'record:' + proof.id + ':' + entry.revision })
+    }
+  } catch { keys.clear() }
+  return keys
+}
+
+export function recordIdentity(proof, records, field, render, backing = records, entries) {
+  if (proof.resource) {
+    const keys = publicRecordKeys(proof, records, field, backing, entries)
+    return render(record => JSON.stringify(keys.get(record) ?? proof))
+  }
   const counts = recordCounts(records, field)
   const owners = backing === records ? counts : recordCounts(backing, field)
   const members = backing !== records && new Set(Array.isArray(backing) ? backing : [])

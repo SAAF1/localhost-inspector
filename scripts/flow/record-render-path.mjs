@@ -14,7 +14,7 @@ export function walk(node, visit, scope) {
   }
 }
 
-function reactReference(tree, node, name, locals) {
+export function reactReference(tree, node, name, locals) {
   for (const stmt of tree.program.body) {
     if (stmt.type !== 'ImportDeclaration' || stmt.source.value !== 'react' || stmt.importKind === 'type') continue
     for (const spec of stmt.specifiers) {
@@ -43,9 +43,9 @@ export function returnedValue(fn) {
     return last.argument
 }
 
-export function componentFunction(tree, exported) {
+export function componentFunction(tree, exported, local = false) {
   for (const s of tree.program.body) {
-    const decl = s.type === 'ExportNamedDeclaration' && s.declaration
+    const decl = s.type === 'ExportNamedDeclaration' ? s.declaration : local && s
     if (decl?.type === 'FunctionDeclaration' && decl.id.name === exported) return decl
     if (decl?.type !== 'VariableDeclaration' || decl.kind !== 'const') continue
     const entry = decl.declarations.find((d) => identifier(d.id, exported))

@@ -270,6 +270,11 @@ if (mode === 'handoff' || mode === 'proposal-readiness') {
     try { verifySelectedUse(binding.source, op.changes[0].selectedUse) }
     catch { op.status='blocked'; op.reason='selected-source-changed' }
   }
+  for (const op of handoff.operations.filter(op => op.scope === 'selected-record' && op.changes[0].recordScope.resource)) {
+    const { verifyRecordSource } = await import('./scripts/flow/record-scope.mjs')
+    try { verifyRecordSource(binding.source, op.changes[0].recordScope) }
+    catch { op.status = 'blocked'; op.reason = 'record-source-changed' }
+  }
   if (journal.textStyleDefinitions?.length) {
     const catalog = await readCatalog(binding, 'text-styles')
     const pending = journal.textStyleDefinitions.filter(style =>

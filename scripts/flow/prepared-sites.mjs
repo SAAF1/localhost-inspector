@@ -25,6 +25,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
   const read = () => JSON.parse(readFileSync(manifest, 'utf8'))
   const runtimeKey = ({ sites, retiredSites, utilityEntry, buttonAdapter, preparation }) =>
     JSON.stringify([sites, retiredSites, utilityEntry, buttonAdapter, preparation?.preparedStyles])
+  let publicRecordData = false
   let manifestData = read()
   // Watch the inputs directly. Making generated CSS an import of every
   // prepared component makes an ordinary CSS update recreate React contexts.
@@ -46,6 +47,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
       return { optimizeDeps: { include: ['react', 'react-dom'] } }
     },
     configResolved(config) {
+      publicRecordData = config.root === root && config.publicDir === join(root,'public') && config.base === '/'
       const path = '@/components/ui/button'
       const alias = config.resolve.alias.find(({ find }) =>
         typeof find === 'string' ? path === find || path.startsWith(find + '/') : find.test(path),
@@ -418,7 +420,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             }
           }
           if (recordRoots.size) out.prepend('import { recordAttributes as __liRecordAttrs } from "virtual:inspector-prepared-registry";\n')
-          const records = manifestData.panelBindings && await markRecordCallers({ root, file, code, tree, out,
+          const records = manifestData.panelBindings && await markRecordCallers({ root, file, code, tree, out, allowPublic:publicRecordData, watchFile:path => this.addWatchFile(path),
             resolveImport: async specifier => (await this.resolve(specifier, id))?.id })
           const calls = manifestData.panelBindings && await markSelectedCalls(root,file,code,tree,out,
             async spec => (await this.resolve(spec,id))?.id)
