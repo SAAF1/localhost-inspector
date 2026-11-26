@@ -1,6 +1,23 @@
 (() => {
   const ui=window.LocalhostInspector
   const known=new Map()
+  let subscription = ''
+  function publish() {
+    if (subscription) document.dispatchEvent(new CustomEvent('li-watch-records',{detail:subscription}))
+  }
+  document.addEventListener('li-read-record-watch',publish)
+  function watch(proofs) {
+    const anchors = new Set(), files = new Set(), hooks = new Set()
+    for (const proof of proofs) {
+      anchors.add(proof.anchor.id)
+      hooks.add(proof.authority.id)
+      for (const source of [proof.anchor,proof.part,proof.authority,...(proof.renderPath ?? []),...(proof.statePath ?? [])]) files.add(source.file)
+    }
+    const next = JSON.stringify({anchors:[...anchors],files:[...files],hooks:[...hooks]})
+    if (next===subscription) return
+    subscription=next
+    publish()
+  }
   function read(node,mode) {
     let proof
     const receive=e=>{try{proof=JSON.parse(e.detail)}catch{/* Unavailable development evidence. */}}
@@ -55,6 +72,6 @@
     return nodes.length>128?[]:[...nodes].filter(n=>matches(n,key))
   }
   function available(node){return read(node,'admit')?.kind==='state-record'}
-  ui.recordContracts={prepare,remember,matches,candidates,available}
+  ui.recordContracts={watch,prepare,remember,matches,candidates,available}
 })()
 

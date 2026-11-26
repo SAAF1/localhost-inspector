@@ -1633,6 +1633,7 @@
     })
   }
   function reportRecovery() {
+    ui.recordContracts.watch(recovery.activeStateRecords)
     syncPending()
     const notice = get('status')
     if (notice.hasAttribute('data-error')) return
@@ -1853,6 +1854,11 @@
   window.addEventListener('popstate', onRouteChange)
   window.addEventListener('hashchange', onRouteChange)
   window.navigation?.addEventListener('currententrychange', onRouteChange)
+  document.addEventListener('li-record-rendered', () => {
+    if (!recovery.activeStateRecords.length) return
+    recoveryRequested = true
+    queueRecovery()
+  })
   document.addEventListener('li-prepared-revisions', () => {
     if (!loadingRoute && host.isConnected && recovery.hasRecords) reportRecovery()
   })

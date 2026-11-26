@@ -13,12 +13,38 @@ export function registerRenderOwners(file, owners) {
     renderOrigins.set(component, {file, owner})
   }
 }
+// A committed React update can change record membership without mutating
+// any DOM text or attributes. Ask the extension to re-read the mounted fiber.
+// Only watched records schedule work; multiple renders share one notification.
+let watchedAnchors = new Set(), watchedFiles = new Set(), watchedHooks = new Map()
+let notification = 0
+function recordChanged() {
+  if (notification) return
+  notification = requestAnimationFrame(() => {
+    notification = 0
+    document.dispatchEvent(new Event('li-record-rendered'))
+  })
+}
+document.addEventListener('li-watch-records', event => {
+  try {
+    const {anchors,files,hooks} = JSON.parse(event.detail)
+    watchedAnchors = new Set(anchors)
+    watchedFiles = new Set(files)
+    watchedHooks = new Map(hooks.map(id=>[id,watchedHooks.get(id)]))
+  } catch { /* Ignore an unavailable optional subscription. */ }
+})
+document.dispatchEvent(new Event('li-read-record-watch'))
 export function selectedModule(url,file,revision,semanticRevision) {
   modules.set(new URL(url).pathname,{file,revision})
+  if (watchedFiles.has(file) && moduleRevisions.get(file)!==semanticRevision) recordChanged()
   moduleRevisions.set(file,semanticRevision)
 }
 export function recordState(tuple,site) {
   const value=tuple?.[0]
+  if (watchedHooks.has(site.id) && watchedHooks.get(site.id)!==value) {
+    watchedHooks.set(site.id,value)
+    recordChanged()
+  }
   if(value && typeof value==='object' && typeof tuple?.[1]==='function'){
     const previous=stateOrigins.get(value)
     if(previous===undefined)stateOrigins.set(value,site)
@@ -28,6 +54,7 @@ export function recordState(tuple,site) {
 }
 export function selectedCall(element, basis, fields, site, record) {
   if (element?.props) {
+    if (site && watchedAnchors.has(site.id)) recordChanged()
     if(site && record && typeof record==='object'){
       const descriptor=Object.getOwnPropertyDescriptor(record,site.field)
       if(descriptor && Object.hasOwn(descriptor,'value') && String(descriptor.value)===element.key)

@@ -887,6 +887,10 @@
         return edits.length === saved.size && edits.every(edit => saved.get(edit.id)?.before === edit.before &&
           saved.get(edit.id)?.sourceState === edit.sourceState && saved.get(edit.id)?.prepared?.revision === edit.prepared?.revision)
       },
+      get activeStateRecords() {
+        return Array.from(saved.values()).filter(edit=>!edit.previewHidden && edit.recordScope?.kind==='state-record')
+          .map(edit=>edit.recordScope)
+      },
       get hasSessionPreview() {
         return Array.from(attached).some(([id, entry]) => saved.get(editId(id, entry))?.restore !== 'unique')
       },
