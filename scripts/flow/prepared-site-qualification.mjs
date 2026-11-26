@@ -50,6 +50,32 @@ export function matchesPreparedOpening(site, code, node) {
       panelOpening(code, node) === site.opening)
 }
 
+// A finite control subscribes once in its owning component, before conditional
+// returns. Only direct, named component functions have an insertion point.
+export function preparedInputFunction(tree, owner) {
+  if (owner?.type === 'FunctionDeclaration') return owner
+  if (owner?.type !== 'VariableDeclarator' || !/^[A-Z]/.test(owner.id?.name) ||
+      owner.init?.type !== 'ArrowFunctionExpression' || owner.init.async) return
+  const declared = tree.program.body.some(statement => {
+    const declaration = statement.declaration ?? statement
+    return declaration.kind === 'const' && declaration.declarations.includes(owner)
+  })
+  if (declared) return owner.init
+}
+
+export function insertInputSubscriptions(out, fn, declarations) {
+  const body = fn.body
+  if (body.type === 'BlockStatement') {
+    out.appendLeft(body.directives?.at(-1)?.end ?? body.start + 1, declarations)
+    return
+  }
+  // Babel excludes the containing parentheses from body.start/end. Keep them,
+  // including comments, and wrap the entire concise return exactly once.
+  const start = body.extra?.parenStart ?? body.start
+  out.prependLeft(start, '{' + declarations + 'return (')
+  out.appendRight(fn.end, ');}')
+}
+
 export function preparedOpenings(tree) {
   const openings = []
   walk(tree.program, (node, owner) => {

@@ -246,3 +246,35 @@ test('a prepared column gap measures the children without admitting the horizont
   styles.flexWrap = 'wrap'
   assert.equal(ui.authoredUsePreview.separation(node, true), null)
 })
+
+test('finite subscriptions preserve block and concise component arrows, early returns and multiple uses', async t => {
+  const {preparedSites} = await import('../scripts/flow/prepared-sites.mjs')
+  const {parseAuthoredJsx} = await import('../scripts/flow/authored-forwarding.mjs')
+  const root=realpathSync(mkdtempSync(join(tmpdir(),'finite-arrow-')))
+  t.after(()=>rmSync(root,{recursive:true,force:true}))
+  const name='Scene', file='Scene.jsx', openings=['<Badge tone="soft"/>','<Badge tone="firm"/>']
+  const input=base=>({field:'tone',attribute:'tone',base,component:'fixture',options:['soft','firm'],
+    verify:{soft:{tokens:['soft']},firm:{tokens:['firm']}}})
+  const sites=openings.map((opening,i)=>({id:'finite-'+i,file,owner:name,opening,dependencies:[],input:input(i?'firm':'soft')}))
+  const manifest=join(root,'prepared.json');writeFileSync(manifest,JSON.stringify({namespace:'fixture',sites}))
+  const plugin=preparedSites(root,manifest)
+  const group='<main>'+openings.join('')+'</main>'
+  for (const [source,expected] of [
+    ['export const Scene = () => ('+group+')',2],
+    ['export const Scene = enabled => ((enabled ? '+group+' : null))',2],
+    ['export const Scene = () => '+openings[0],1],
+    ['export const Scene = enabled => {"use strict"; if (!enabled) return null; return '+group+'}',2],
+    ['export let Scene = () => '+group,0],
+    ['export const Scene = wrap(() => '+group+')',0],
+  ]){
+    const generated=(await plugin.transform.handler.call({},source,join(root,file))).code
+    const tree=parseAuthoredJsx(generated)
+    assert.equal((generated.match(/ = __liUse\(/g)??[]).length,expected)
+    if (expected){
+      const fn=tree.program.body.find(s=>s.type==='ExportNamedDeclaration').declaration.declarations[0].init
+      assert.equal(fn.body.type,'BlockStatement')
+      assert.ok(fn.body.body.slice(0,expected).every(s=>s.type==='VariableDeclaration'))
+      assert.equal(fn.body.body.at(-1).type,'ReturnStatement')
+    }
+  }
+})

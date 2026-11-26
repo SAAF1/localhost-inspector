@@ -14,7 +14,7 @@ import { parse } from '@babel/parser'
 import { cssInput, cssReady, paddingParts, sides } from './prepared-css.mjs'
 import MagicString from 'magic-string'
 import { addAuthoredUseMarkers, localBindingNames } from './authored-use.mjs'
-import { moduleReference, matchesPreparedOpening, preparedOpenings, preparedStyleTargets, preparedRevision } from './prepared-site-qualification.mjs'
+import { moduleReference, matchesPreparedOpening, preparedInputFunction, insertInputSubscriptions, preparedOpenings, preparedStyleTargets, preparedRevision } from './prepared-site-qualification.mjs'
 
 const runtime = 'virtual:inspector-prepared'
 const runtimeSource = new URL('../../integrations/prepared-input.mjs', import.meta.url)
@@ -219,7 +219,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
         const revisions = {}
         const registrationsForModule = new Set()
         const dependencies = new Map()
-        let usesInput = false
+        const subscriptions = new Map()
         const recordRoots = new Set()
         const reserved = new Set()
         const preparedAtOpening = new Map()
@@ -253,7 +253,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           if (site.input) {
             const { options, base, attribute, child, choices, verify } = site.input
             if (
-              owner.type !== 'FunctionDeclaration' ||
+              !preparedInputFunction(tree, owner) ||
               (!attr(attribute)?.value && !child) ||
               !Array.isArray(options) ||
               !options.includes(base) ||
@@ -338,24 +338,14 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             const value = attr(attribute)?.value
             const child = site.input.child
             const state = '__liInput' + index
-            out.appendLeft(
-              owner.body.directives?.at(-1)?.end ?? owner.body.start + 1,
-              '\nconst ' + state + ' = __liUse(' + JSON.stringify(revision) + ');\n',
-            )
+            const fn = preparedInputFunction(tree,owner)
+            let declarations = (subscriptions.get(fn) ?? '') +
+              '\nconst ' + state + ' = __liUse(' + JSON.stringify(revision) + ');\n'
             if (child) {
               const slot = '__LiSlot' + index
-              out.appendLeft(
-                owner.body.start + 1,
-                '\nconst ' +
-                  slot +
-                  ' = ({' +
-                  options.map((key) => JSON.stringify(key) + ':' + choices[key]).join(',') +
-                  '})[' +
-                  state +
-                  '] ?? ' +
-                  slotTag.name +
-                  ';\n',
-              )
+              declarations += 'const ' + slot + ' = ({' +
+                options.map(key => JSON.stringify(key) + ':' + choices[key]).join(',') + '})[' +
+                state + '] ?? ' + slotTag.name + ';\n'
               out.overwrite(slotTag.start, slotTag.end, slot)
             } else {
               const original =
@@ -379,7 +369,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             }
             markers += ' data-li-choice={' + state + ' ?? ' + JSON.stringify(base) + '}'
             fields.input = { field, options, base, verify: site.input.verify, ...(site.input.component ? {component:site.input.component} : {}) }
-            usesInput = true
+            subscriptions.set(fn, declarations)
           }
           if (fields.local) {
             // Kept on the qualified part so projection also works after a remount.
@@ -444,7 +434,8 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           styles.set(moduleId, css)
           out.prepend('import ' + JSON.stringify(moduleId) + ';\n')
         }
-        if (usesInput) out.prepend('import { usePreparedInput as __liUse } from "' + runtime + '";\n')
+        for (const [fn, declarations] of subscriptions) insertInputSubscriptions(out, fn, declarations)
+        if (subscriptions.size) out.prepend('import { usePreparedInput as __liUse } from "' + runtime + '";\n')
         return { code: out.toString(), map: out.generateMap({ hires: true, source: id }) }
       },
     },
