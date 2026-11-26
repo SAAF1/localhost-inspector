@@ -273,7 +273,28 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
       }
     }
 
+    const pathKeys = new Set([...(outline?.pathKeys ?? []), ...previewBranches])
     function appendOutline(items, container, level, parent) {
+      // A wide tree still offers every sibling. Reveal the selected range by
+      // default and build other ranges only when the user expands them.
+      if (outline?.large && items.length > 128) {
+        let pageSize = 64
+        while (Math.ceil(items.length / pageSize) > 128) pageSize *= 64
+        for (let start = 0; start < items.length; start += pageSize) {
+          const range = items.slice(start, start + pageSize)
+          const first = range[0], last = range.at(-1)
+          const key = 'range:' + JSON.stringify([first.key, last.key])
+          const onPath = range.some(item => pathKeys.has(item.key))
+          if (onPath && (activeChanged || selectionChanged)) outlineDisclosure.delete(key)
+          const expanded = outlineDisclosure.get(key) ?? (onPath && defaultExpanded !== false)
+          const toggle = () => { outlineDisclosure.set(key, !expanded); paint() }
+          const record = addLayerRow(rowContext, { node: key, container, level, parent,
+            label: first === last ? first.label : first.label + ' – ' + last.label,
+            icon: 'section', branch: true, expanded, outlineKind: 'group', onSelect: toggle, onToggle: toggle })
+          if (expanded) appendOutline(range, record.group, level + 1, record)
+        }
+        return
+      }
       for (const item of items) {
         const section = item.kind === 'section'
         const children = item.children || []
@@ -285,7 +306,8 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
         const openForSelection = (active || containsActive) && (activeChanged || revealNode)
           || selectionChanged && (direct || containsSelected)
         if (openForSelection && item.key !== request?.key) outlineDisclosure.delete(item.key)
-        const expanded = branch && hover.expand(item.key, (section || active) && (previewBranches.includes(item.key) || (outlineDisclosure.get(item.key) ?? true)))
+        const defaultOpen = !outline?.large || active || pathKeys.has(item.key)
+        const expanded = branch && hover.expand(item.key, (section || active) && (previewBranches.includes(item.key) || (outlineDisclosure.get(item.key) ?? defaultOpen)))
         const record = addLayerRow(rowContext, { node: item.key, container, level, parent, label: item.label, icon: item.kind,
           direct, branch, expanded: Boolean(expanded), outlineKind: item.kind,
           onSelect() { onOpenOutline(item.key, Boolean(expanded)) },

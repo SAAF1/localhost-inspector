@@ -1,9 +1,11 @@
+import { VariantOverview } from './variant-overview.mjs'
 import './tooltip.js'
+import { VariantWindow, WindowedVariant } from './variant-window.mjs'
 import { prepareWorkspaceInspector } from './inspector-request.mjs'
-import { mountVariantSections, sectionColumns } from './variant-sections.mjs'
-import { addLinkedFrame, addVariantFrame, proposalEntry, resolveProposalFrame, trackContext } from './proposal-view.mjs'
+import { mountVariantSections, sectionBounds, sectionColumns } from './variant-sections.mjs'
+import { addLinkedFrame, addVariantFrame, localPreviewUrl, proposalEntry, resolveProposalFrame, trackContext } from './proposal-view.mjs'
 import { connectSidebar } from './workspace-sidebar.mjs'
-import { frameGap, flowHeadingSpace, groupFlowFrames, renderFrames } from './render-frames.mjs'
+import { canvasCamera, frameGap, flowHeadingSpace, groupFlowFrames, renderFrames } from './render-frames.mjs'
 import { flowRoute, observeSurfaces } from './page-state.mjs'
 import { matchesCheckpoint, replayFrame, waitFor } from './replay.mjs'
 import { contentOverflow, fitFrame, framePresets, sizeFrame } from './frame-view.mjs'
@@ -20,6 +22,7 @@ document.adoptedStyleSheets.push(theme)
 window.LocalhostInspector.bindTooltips(document.querySelector('#workspace-toolbar'), '#frame-view-menu:not([hidden])')
 
 const map = document.querySelector('#map')
+const projectCamera = canvasCamera(map)
 let preview = document.querySelector('#app-preview')
 const viewport = document.querySelector('#viewport')
 const toggle = document.querySelector('#flow-toggle')
@@ -28,7 +31,7 @@ const zoomPreset = document.querySelector('#zoom-preset')
 const notice = document.querySelector('#notice')
 const dock = document.querySelector('#localhost-inspector-dock')
 const background = connectCanvasBackground(dock, viewport)
-const data = await fetch('./map.json').then(response => response.json())
+const data = await fetch('./map.json', { headers: { 'X-Inspector-Preview-Origins': 'on-demand' } }).then(response => response.json())
 if (data.origin !== location.origin) throw Error('This flow map belongs to a different app origin')
 const presets = framePresets(data.viewport)
 let device = 'desktop'
@@ -49,6 +52,8 @@ const groupByFrame = new Map(groups.flatMap(group => group.frames.map(frame => [
 let flowFrameId = groups[0]?.frames[0]?.id
 let linkedFrame
 const variantFrames = new Map()
+const variantWindow = new VariantWindow()
+variantWindow.overview = new VariantOverview(map, schedulePreviewUpdate)
 let layoutVariantSections
 let focusedVariant
 let outlinesByFlow
@@ -68,11 +73,28 @@ function layout() {
   const extras = linkedFrame ? [linkedFrame, ...variantFrames.values()] : [...variantFrames.values()]
   const byAnchor = Map.groupBy(extras, frame => frame.id)
   layoutFrames(card => {
-    const groups = Map.groupBy(byAnchor.get(card.id) ?? [], frame => frame.section?.closest('#map > .variant-section') ?? frame.section ?? frame)
-    const slotWidth = Math.max(card.width, ...(byAnchor.get(card.id) ?? []).map(frame => frame.customWidth ?? 0))
+    const members = byAnchor.get(card.id) ?? []
+    const roots = new Map()
+    const groups = Map.groupBy(members, frame => {
+      const section = frame.section
+      if (!section) return frame
+      if (!roots.has(section)) roots.set(section, section.closest('#map > .variant-section') ?? section)
+      return roots.get(section)
+    })
+    const slotWidth = members.reduce((widest, frame) => Math.max(widest, frame.customWidth ?? 0), card.width)
+    const perRow = Number.isSafeInteger(data.variantGroupsPerRow) && data.variantGroupsPerRow > 0
+      ? data.variantGroupsPerRow : Infinity
     let columns = 0
+    let widestRow = 0
+    let groupsInRow = 0
+    let rowTop = 0
     let extraHeight = 0
     for (const frames of groups.values()) {
+      if (groupsInRow === perRow) {
+        rowTop = extraHeight + card.height + frameGap
+        groupsInRow = columns = 0
+      }
+      groupsInRow++
       let width = 1
       let row = 0
       let noteOffset = 0
@@ -91,7 +113,7 @@ function layout() {
           if (index && index % size === 0) { noteOffset += rowNoteHeight; rowNoteHeight = 0 }
           const localRow = Math.floor(index / size)
           const hidden = ancestors.some(group => group.hasAttribute('data-collapsed') && row + localRow > firstRows.get(group))
-          const offset = (row + localRow) * (card.height + frameGap) + noteOffset
+          const offset = rowTop + (row + localRow) * (card.height + frameGap) + noteOffset
           frame.place(card, columns + 1 + index % size, offset, hidden, slotWidth)
           if (!hidden) {
             visibleRows = localRow + 1
@@ -103,10 +125,14 @@ function layout() {
         row += visibleRows
       }
       columns += width
+      widestRow = Math.max(widestRow, columns)
     }
-    return { columns, extraHeight, slotWidth }
+    return { columns: widestRow, extraHeight, slotWidth }
   })
   layoutVariantSections?.()
+  variantWindow.rebuild(variantFrames.values())
+  if (variantFrames.size >= 512) variantWindow.overview.prepare()
+  schedulePreviewUpdate()
 }
 const updateSharpPreviews = createSharpPreviews(cards)
 const framesById = new Map(data.frames.map(frame => [frame.id, frame]))
@@ -228,31 +254,156 @@ function message(text) {
 
 let gestureIdleTimer
 let deferredHover
-let pinchFrame
-let lastPinchDirection
-let lastPinchSample
+let wheelFrame
+let lastWheelKind
+let lastWheelX = 0
+let lastWheelY = 0
+let packetStart = 0
+let packetDuration = 0
+let packetFrom
+let displayInterval = 16.67
+let packetInterval
+let measuringRefresh = false
+
+// Measure the active display when a gesture starts. No sampling loop runs at rest.
+function sampleDisplayRefresh() {
+  if (measuringRefresh) return
+  measuringRefresh = true
+  requestAnimationFrame(first => requestAnimationFrame(second => {
+    const elapsed = second - first
+    if (elapsed >= 4 && elapsed <= 25) displayInterval = elapsed
+    measuringRefresh = false
+  }))
+}
 const displayedCamera = { ...camera }
 
+let lastPictureUpdate = -Infinity
+let pictureViewportWidth = 0
+let pictureViewportHeight = 0
 function schedulePreviewUpdate() {
-  if (previewUpdate || gestureIdleTimer) return
+  if (previewUpdate || (gestureIdleTimer && performance.now() - lastPictureUpdate < 50)) return
   previewUpdate = requestAnimationFrame(() => {
     previewUpdate = null
-    if (gestureIdleTimer) return
-    updateSharpPreviews(expanded, camera, viewport.clientWidth - dock.offsetWidth, viewport.clientHeight)
+    lastPictureUpdate = performance.now()
+    // Reading layout during a gesture can synchronize the entire transformed board.
+    if (!gestureIdleTimer || !pictureViewportWidth) {
+      pictureViewportWidth = viewport.clientWidth - dock.offsetWidth
+      pictureViewportHeight = viewport.clientHeight
+      updateSharpPreviews(expanded, camera, pictureViewportWidth, pictureViewportHeight)
+    }
+    updateVariantPictures(pictureViewportWidth, pictureViewportHeight)
   })
 }
 
+// Spend spare decode capacity on nearby cards so a short pan can reveal sharp text immediately.
+let previousPictureView
+function updateVariantPictures(width, height) {
+  const view = displayedCamera
+  layoutVariantSections?.updateVisibility(view, width, height)
+  const prior = previousPictureView
+  const dt = lastPictureUpdate - (prior?.time ?? 0)
+  const moving = gestureIdleTimer && prior && dt >= 16 && dt <= 180
+  const panning = moving && prior.scale === view.scale
+  // Project the last measured camera displacement by 160 ms. Limit the reach so
+  // a fling or a navigation jump cannot start a board-wide decode.
+  const leadX = panning ? Math.max(-width, Math.min(width, (view.x - prior.x) * 160 / dt)) : 0
+  const leadY = panning ? Math.max(-height, Math.min(height, (view.y - prior.y) * 160 / dt)) : 0
+  // While zooming out, the viewport expands in canvas coordinates. Prepare
+  // the edges it is about to reveal before the next picture update.
+  let lookahead = 0
+  if (moving && view.scale < prior.scale) {
+    // Limit the forecast to 100 ms, two measured intervals, and the remaining
+    // expansion before minimum zoom. Viewport width is proportional to 1 / scale.
+    const intervalsToMinZoom = (view.scale / minZoom - 1) / (1 - view.scale / prior.scale)
+    lookahead = Math.min(2, 100 / dt, intervalsToMinZoom)
+  }
+  previousPictureView = { ...view, time: lastPictureUpdate }
+  const detailCandidates = []
+  const overviewCandidates = []
+  let started = false
+  let deferred = false
+  for (const frame of variantWindow.pictures(view, width, height, expanded, prior, lookahead)) {
+    if ((!frame.hasPicture && !frame.needsLivePreview) || !frame.bounds) continue
+    const b = frame.bounds
+    const left = view.x + b.x * view.scale
+    const top = view.y + (b.y + b.labelHeight) * view.scale
+    const w = Math.max(0, Math.min(width, left + b.width * view.scale) - Math.max(0, left))
+    const h = Math.max(0, Math.min(height, top + b.height * view.scale) - Math.max(0, top))
+    const right = left + b.width * view.scale
+    const bottom = top + b.height * view.scale
+    const dx = Math.max(0, -right, left - width)
+    const dy = Math.max(0, -bottom, top - height)
+    const readable = expanded && b.width * view.scale * devicePixelRatio > 320 && !frame.hidden
+    if (frame.needsLivePreview) {
+      if (readable && w > 0 && h > 0) frame.showLivePreview()
+      continue
+    }
+    const projectedX = Math.max(0, -right - leadX, left + leadX - width)
+    const projectedY = Math.max(0, -bottom - leadY, top + leadY - height)
+    const ahead = Boolean(leadX || leadY) && projectedX < 64 && projectedY < 64
+    const area = w * h
+    if (readable && ((dx < width && dy < height) || (projectedX < width && projectedY < height))) {
+      frame.warmOverview()
+    } else if (expanded && !frame.hidden && b.width * view.scale >= 64 && frame.canWarmOverview) {
+      // Near overview zoom, prepare a row beyond the current and predicted edges.
+      // At Fit the browser handles the many very small cards through native lazy loading.
+      const marginX = Math.min(width / 3, b.width * view.scale * 2)
+      const marginY = Math.min(height / 3, b.height * view.scale)
+      if ((dx < marginX && dy < marginY) || (projectedX < marginX && projectedY < marginY)) {
+        overviewCandidates.push({ frame, area, distance: Math.min(dx + dy, projectedX + projectedY) })
+      }
+    }
+    if (readable && ((dx < 180 && dy < 180) || ahead)) {
+      // Visible pixels take precedence, followed by predicted arrivals and then neighbors.
+      const tier = area > 0 ? 2 : ahead ? 1 : 0
+      // A sliver of a desktop card at reading zoom needs the same pixel density as its center.
+      const visibleAtReadingSize = area > 0 && (view.scale >= 0.5 || b.width * view.scale >= 480)
+      detailCandidates.push({ frame, tier, area, distance: dx + dy, ahead, visibleAtReadingSize, bytes: b.width * b.height * 16 })
+    } else frame.useSharpPicture(false)
+  }
+  overviewCandidates.sort((a, b) => b.area - a.area || a.distance - b.distance)
+  for (const { frame } of overviewCandidates.slice(0, 8)) frame.warmOverview()
+  detailCandidates.sort((a, b) => b.tier - a.tier || b.area - a.area || a.distance - b.distance)
+  const detailBudget = 48 * 1024 * 1024
+  let remaining = detailBudget
+  // Reading-size visible cards own their detail until they leave view. Spend the
+  // rest of the usual working set on neighbors, with one predicted arrival when full.
+  let predictedAllowance = Boolean(leadX || leadY)
+  for (const { frame, bytes, area, distance, ahead, visibleAtReadingSize } of detailCandidates) {
+    if (bytes > remaining && !visibleAtReadingSize) {
+      if (area > 0 || !ahead || !predictedAllowance || bytes > detailBudget) {
+        frame.useSharpPicture(false)
+        continue
+      }
+      predictedAllowance = false
+    }
+    remaining = Math.max(0, remaining - bytes)
+    if (frame.hasDetail) continue
+    if (distance > 64 && gestureIdleTimer && !ahead) continue
+    if (started) { deferred = true; continue }
+    started = frame.useSharpPicture(true, area > 0) === true
+  }
+  if (deferred && !gestureIdleTimer) schedulePreviewUpdate()
+}
+
 function position() {
-  if (pinchFrame) cancelAnimationFrame(pinchFrame)
-  pinchFrame = null
-  lastPinchDirection = null
+  if (wheelFrame) cancelAnimationFrame(wheelFrame)
+  wheelFrame = null
+  lastWheelKind = null
   drawCamera(camera)
+}
+
+function updateMapLayer(scale) {
+  // Promoting the entire map during a pinch can stall presentation. Reuse its
+  // current layer through reversals, but release it when zoomed far out.
+  const density = scale * window.devicePixelRatio
+  if (!gestureIdleTimer || density < .25) map.toggleAttribute('data-detail-scale', density >= .6)
 }
 
 function drawCamera(view) {
   Object.assign(displayedCamera, view)
-  map.toggleAttribute('data-detail-scale', view.scale * window.devicePixelRatio >= .6)
-  map.style.transform = 'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.scale + ')'
+  updateMapLayer(view.scale)
+  projectCamera(view)
   if (expanded && active) {
     const card = cards.get(active)
     const x = view.x + card.x * view.scale
@@ -273,20 +424,23 @@ function getOutline() {
   if (!expanded) return null
   if (!outlinesByFlow) {
     const byAnchor = new Map()
+    const childrenBySection = new Map()
     for (const frame of variantFrames.values()) {
       if (!byAnchor.has(frame.id)) byAnchor.set(frame.id, [])
       const siblings = byAnchor.get(frame.id)
       const row = { kind: 'frame', label: frame.label, key: 'variant:' + frame.variant, children: [] }
+      let section = frame.section
       const ancestors = []
-      for (let section = frame.section; section; section = section.parentElement.closest('.variant-section')) ancestors.unshift(section)
-      let children = siblings
-      for (const section of ancestors) {
-        let parent = children.find(item => item.key === section.dataset.sectionKey)
-        if (!parent) {
-          parent = { kind: 'section', label: section.getAttribute('aria-label'), key: section.dataset.sectionKey, children: [] }
-          children.push(parent)
-        }
+      while (section && !childrenBySection.has(section)) {
+        ancestors.push(section)
+        section = section.parentElement.closest('.variant-section')
+      }
+      let children = childrenBySection.get(section) ?? siblings
+      for (const ancestor of ancestors.reverse()) {
+        const parent = { kind: 'section', label: ancestor.getAttribute('aria-label'), key: ancestor.dataset.sectionKey, children: [] }
+        children.push(parent)
         children = parent.children
+        childrenBySection.set(ancestor, children)
       }
       children.push(row)
     }
@@ -299,9 +453,12 @@ function getOutline() {
         if (linkedFrame?.id === id) rows.push({ kind: 'frame', label: linkedFrame.label, key: 'comparison:' + id, children: [] })
         return rows.concat(variants)
       })
-      const keys = new Set()
-      function collect(item) { keys.add(item.key); item.children.forEach(collect) }
-      items.forEach(collect)
+      const keys = new Map()
+      function collect(item, parent) {
+        keys.set(item.key, parent)
+        for (const child of item.children) collect(child, item.key)
+      }
+      for (const item of items) collect(item, null)
       return [group.key, { key: group.key, label: group.label, items, keys }]
     }))
   }
@@ -317,7 +474,14 @@ function getOutline() {
   if (selectedSection) selectedKey = selectedSection.dataset.sectionKey
   if (selectedFlow) selectedKey = 'flow:' + selectedFlow.key
   const isFlowKey = key => groups.length > 1 && key?.startsWith('flow:') && outlinesByFlow.has(key.slice(5))
-  return { items: scope?.items ?? [], flows: [...outlinesByFlow.values()].map(({ key, label, items }) => ({ key, label, items })), flowKey, flowFrameId, activeKey, sourceKey, disclosureRequest,
+  const large = (scope?.keys.size ?? 0) > 1000
+  const pathKeys = new Set()
+  if (large) {
+    for (let key of [sourceKey, selectedKey, hoverKey]) {
+      while (key && !pathKeys.has(key)) { pathKeys.add(key); key = scope.keys.get(key) }
+    }
+  }
+  return { large, pathKeys: [...pathKeys], items: scope?.items ?? [], flows: [...outlinesByFlow.values()].map(({ key, label, items }) => ({ key, label, items })), flowKey, flowFrameId, activeKey, sourceKey, disclosureRequest,
     hoverKey: scope?.keys.has(hoverKey) || isFlowKey(hoverKey) ? hoverKey : null,
     selectedKey: scope?.keys.has(selectedKey) || isFlowKey(selectedKey) ? selectedKey : null }
 }
@@ -339,6 +503,7 @@ function sectionPaint(section) {
   if (sectionPaints.has(section)) return sectionPaints.get(section)
   const surface = section.firstElementChild
   const paint = { element: surface, key: section.dataset.sectionKey, kind: 'Section', color: () => getComputedStyle(surface).backgroundColor,
+    get bounds() { return sectionBounds.get(surface) },
     render(color) { surface.style.backgroundColor = color ?? '' } }
   sectionPaints.set(section, paint)
   return paint
@@ -376,10 +541,8 @@ async function onOpenOutline(key, expandedRow) {
     sidebar?.changed()
     sidebar?.refreshOutline()
     const heading = headings.get(group) ?? cards.get(flowFrameId).button.firstElementChild
-    const point = heading.getBoundingClientRect()
-    const board = map.getBoundingClientRect()
-    focusSidebarPoint((point.left + point.width / 2 - board.left) / camera.scale,
-      (point.top + point.height / 2 - board.top) / camera.scale)
+    const first = cards.get(flowFrameId)
+    focusSidebarPoint(first.x + heading.offsetWidth / 2, first.y - flowHeadingSpace + heading.offsetHeight / 2)
     return
   }
   if (!outlinesByFlow) getOutline()
@@ -389,7 +552,8 @@ async function onOpenOutline(key, expandedRow) {
     selectSection(key)
     if (selectedSection?.dataset.sectionKey === key) {
       const surface = selectedSection.querySelector('.variant-section-surface')
-      focusSidebarPoint(surface.offsetLeft + surface.offsetWidth / 2, surface.offsetTop + surface.offsetHeight / 2)
+      const bounds = sectionBounds.get(surface)
+      if (bounds) focusSidebarPoint((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2)
     }
     return
   }
@@ -798,6 +962,9 @@ async function activate(frame, expectedState, hoverOnly = false) {
 function refreshVariants() {
   if (!expanded || data.comparison?.role === 'proposal') return
   const definitions = data.variants ?? []
+  const windowPictures = definitions.length >= 100
+  const savedSurfaces = background.savedSurfaceKeys()
+  const createFrame = (parent, item) => addVariantFrame(parent, item, frameGap, inspectVariant, layout)
   const ids = new Set(definitions.map(item => item.id))
   for (const [id, frame] of variantFrames) {
     if (!ids.has(id)) {
@@ -810,18 +977,29 @@ function refreshVariants() {
   layoutVariantSections = mountVariantSections(map, definitions, framesById, (parent, item) => {
     const existing = variantFrames.get(item.id)
     if (existing) {
+      existing.updateSnapshot(item)
       existing.placeIn(parent)
       return existing
     }
-    const frame = addVariantFrame(parent, item, frameGap, inspectVariant, layout)
+    // Authored notes and wrapped titles contribute measured height to the layout.
+    // Keep those, live-only apps and persisted custom geometry on their existing path.
+    const lazy = windowPictures && item.id && item.snapshot && item.label && localPreviewUrl(item.route, item.deferredOrigin ? location.origin : item.origin) &&
+      !item.note && !item.reviewNote && item.label.length * 32 < item.snapshot.width &&
+      !savedSurfaces.has('frame:' + item.id)
+    const frame = lazy ? new WindowedVariant(parent, item, frameGap, createFrame, variantWindow.mounted, variantWindow.overview)
+      : createFrame(parent, item)
     if (frame) {
       variantFrames.set(item.id, frame)
-      background.restore(frame.paintSurface)
+      if (!lazy) background.restore(frame.paintSurface)
     }
     return frame
   }, selectSection, layout)
   if (selectedSection && !selectedSection.isConnected) markSection(null)
-  for (const section of map.querySelectorAll('.variant-section')) background.restore(sectionPaint(section))
+  if (savedSurfaces.size) {
+    for (const section of map.querySelectorAll('.variant-section')) {
+      if (savedSurfaces.has(section.dataset.sectionKey)) background.restore(sectionPaint(section))
+    }
+  }
   outlinesByFlow = null
   layout()
   sidebar?.refreshOutline()
@@ -862,25 +1040,21 @@ function zoomCamera(scale, x, y) {
   camera.scale = next
 }
 
-// Average successive frame samples to soften uneven wheel packet delivery.
-// The trailing sample lands exactly on the input position on the next frame.
-function drawPinchFrame() {
-  pinchFrame = null
-  const previous = lastPinchSample
-  if (camera.scale === previous.scale) {
-    position()
+// Spread a packet across the shorter of its observed cadence and one 60 Hz frame.
+function drawWheelFrame() {
+  wheelFrame = null
+  const elapsed = performance.now() - packetStart
+  const share = Math.min(1, .25 + .75 * elapsed / packetDuration)
+  if (share >= 1) {
+    drawCamera(camera)
     return
   }
-  lastPinchSample = { ...camera }
-  // Show most of this frame's movement now. Carry the rest for one frame
-  // only, using the same blend for translation to keep the pinch anchored.
-  const share = .65
   drawCamera({
-    x: previous.x + (camera.x - previous.x) * share,
-    y: previous.y + (camera.y - previous.y) * share,
-    scale: previous.scale + (camera.scale - previous.scale) * share,
+    x: packetFrom.x + (camera.x - packetFrom.x) * share,
+    y: packetFrom.y + (camera.y - packetFrom.y) * share,
+    scale: packetFrom.scale + (camera.scale - packetFrom.scale) * share,
   })
-  pinchFrame = requestAnimationFrame(drawPinchFrame)
+  wheelFrame = requestAnimationFrame(drawWheelFrame)
 }
 
 // Chromium reports trackpad pinches as Ctrl-wheel without a finger count.
@@ -895,8 +1069,8 @@ function consumePinchTail(event) {
 function zoomAt(event, x, y, card) {
   event.preventDefault()
   if (consumePinchTail(event)) return
-  const nextScale = camera.scale * Math.exp(-event.deltaY * pinchSensitivity)
-  if (event.metaKey && event.deltaY < 0 && card && !resizing && !pendingCard && (nextScale >= .55 || fillsCanvas(card))) {
+  if (event.metaKey && event.deltaY < 0 && card && !resizing && !pendingCard &&
+      (camera.scale * Math.exp(-event.deltaY * pinchSensitivity) >= .55 || fillsCanvas(card))) {
     const id = card.dataset.frame
     if (!cards.get(id).hiddenControl) {
       lastTransitionWheel = performance.now()
@@ -907,23 +1081,65 @@ function zoomAt(event, x, y, card) {
       return
     }
   }
-  const direction = Math.sign(event.deltaY)
-  const continuing = gestureIdleTimer && direction === lastPinchDirection
+  applyWheelMotion(event, x, y)
+}
+
+function applyWheelMotion(event, x, y) {
+  const kind = event.ctrlKey ? 'pinch' : 'pan'
+  const dx = event.ctrlKey ? 0 : event.deltaX
+  const dy = event.deltaY
+  if (!dx && !dy) return
+  const now = performance.now()
+  const sameGesture = gestureIdleTimer && lastWheelKind === kind
+  const continuing = sameGesture && lastWheelX * dx + lastWheelY * dy > 0
+  const scaleFactor = event.ctrlKey ? Math.exp(-dy * pinchSensitivity) : 1
+  const panX = -dx * panSensitivity
+  const panY = -dy * panSensitivity
+  if (wheelFrame && !continuing) {
+    // Keep the full input distance when it already moves the visible camera
+    // in the requested direction. Discard pending motion that would oppose it.
+    const progress = event.ctrlKey
+      ? -dy * (camera.scale * scaleFactor - displayedCamera.scale)
+      : panX * (camera.x + panX - displayedCamera.x) + panY * (camera.y + panY - displayedCamera.y)
+    if (!sameGesture || progress <= 0) Object.assign(camera, displayedCamera)
+  }
   deferGestureWork()
-  zoomCamera(nextScale, x, y)
-  if (!continuing) {
+  if (event.ctrlKey) {
+    zoomCamera(camera.scale * scaleFactor, x, y)
+  } else {
+    camera.x += panX
+    camera.y += panY
+  }
+  const interval = now - packetStart
+  if (!continuing) packetInterval = null
+  else if (interval > 1) packetInterval = packetInterval ? .7 * packetInterval + .3 * interval : interval
+  packetStart = now
+  // A sparse input stream leaves unused refreshes between packets. Start each
+  // step immediately and use those refreshes to finish it. At display cadence,
+  // each new wheel sample already supplies the next screen position.
+  if (continuing && interval > 1 && packetInterval > displayInterval * 1.4) {
+    if (wheelFrame) cancelAnimationFrame(wheelFrame)
+    packetFrom = { ...displayedCamera }
+    packetDuration = Math.min(16, packetInterval)
+    drawWheelFrame()
+  } else {
+    if (!sameGesture) sampleDisplayRefresh()
     position()
-    lastPinchSample = { ...camera }
-    lastPinchDirection = direction
-  } else if (!pinchFrame) pinchFrame = requestAnimationFrame(drawPinchFrame)
+  }
+  lastWheelKind = kind
+  lastWheelX = dx
+  lastWheelY = dy
 }
 
 function fitCards(board, width, height) {
   if (!board.length) return
-  const left = Math.min(...board.map(card => card.x))
-  const top = Math.min(...board.map(card => card.y)) - flowHeadingSpace
-  const right = Math.max(...board.map(card => card.x + card.width))
-  const bottom = Math.max(...board.map(card => card.y + card.height + card.labelHeight))
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity
+  for (const card of board) {
+    left = Math.min(left, card.x)
+    top = Math.min(top, card.y - flowHeadingSpace)
+    right = Math.max(right, card.x + card.width)
+    bottom = Math.max(bottom, card.y + card.height + card.labelHeight)
+  }
   camera.scale = Math.min(1, Math.max(minZoom, Math.min((width - 48) / (right - left), (height - 48) / (bottom - top))))
   camera.x = (width - (left + right) * camera.scale) / 2
   camera.y = (height - (top + bottom) * camera.scale) / 2
@@ -1000,8 +1216,16 @@ dock.addEventListener('open-inspector-edit-route', event => {
 
 // Keep preview decoding, hit testing and speculative frame loads off the
 // gesture path. Apply the camera transform immediately, then refine at rest.
+// Native Tab traversal and browser Find include offscreen section controls.
+window.addEventListener('keydown', event => {
+  if (event.key === 'Tab' || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f')) {
+    map.toggleAttribute('data-read-all-sections', true)
+    if (variantWindow.overview.region) updateVariantPictures(pictureViewportWidth, pictureViewportHeight)
+  }
+}, true)
 function deferGestureWork() {
   if (!gestureIdleTimer) {
+    map.removeAttribute('data-read-all-sections')
     clearHoverTimers()
     inspectHover = null
   }
@@ -1009,6 +1233,7 @@ function deferGestureWork() {
   deferredHover = null
   gestureIdleTimer = setTimeout(() => {
     gestureIdleTimer = null
+    updateMapLayer(displayedCamera.scale)
     schedulePreviewUpdate()
     if (expanded && deferredHover && viewport.matches(':hover')) {
       warmAt(deferredHover.x, deferredHover.y, deferredHover.inspect)
@@ -1020,10 +1245,7 @@ function deferGestureWork() {
 function panByWheel(event) {
   event.preventDefault()
   if (!gestureIdleTimer) clearHover()
-  deferGestureWork()
-  camera.x -= event.deltaX * panSensitivity
-  camera.y -= event.deltaY * panSensitivity
-  position()
+  applyWheelMotion(event)
 }
 
 viewport.addEventListener('wheel', event => {
@@ -1144,6 +1366,33 @@ function updateInspectModifier(event) {
   }
 }
 
+// Promote only the pointed tiny picture before normal input handling. A click
+// without a preceding move (touch or a stationary mouse after zoom) works too.
+function overviewFrameAt(event) {
+  const overview = variantWindow.overview
+  if (!overview.region || event.target.closest('.linked-frame, .flow-frame, button, iframe')) return
+  const rect = viewport.getBoundingClientRect()
+  const view = displayedCamera
+  const x = (event.clientX - rect.left - view.x) / view.scale
+  const y = (event.clientY - rect.top - view.y) / view.scale
+  for (const frame of variantWindow.intersect(x, y, x, y)) {
+    if (!overview.drawn.has(frame)) continue
+    const b = frame.bounds
+    if (y < b.y + b.labelHeight - 52 || y > b.y + b.labelHeight + b.height) continue
+    return frame
+  }
+}
+viewport.addEventListener('click', event => {
+  const frame = overviewFrameAt(event)
+  if (!frame) return
+  frame.mount()
+  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest('.linked-frame button')
+  if (target) {
+    event.stopImmediatePropagation()
+    target.dispatchEvent(new MouseEvent('click', event))
+  }
+}, true)
+
 viewport.addEventListener('click', event => {
   if (event.isTrusted && !event.composedPath().some(node => node.matches?.('.flow-frame, .linked-frame, .variant-section-surface, #workspace-toolbar, #localhost-inspector-dock, #variant-properties'))) {
     clearCanvasSelection()
@@ -1163,7 +1412,8 @@ viewport.addEventListener('pointermove', event => {
   if (event.pointerType !== 'mouse') return
   const card = event.target.closest('.flow-frame')
   pointer = { x: event.clientX, y: event.clientY }
-  setHoverKey(expanded && event.metaKey ? hoverTargetKey(event.target) : null)
+  const tiny = expanded && event.metaKey && !gestureIdleTimer && overviewFrameAt(event)
+  setHoverKey(tiny ? 'variant:' + tiny.variant : expanded && event.metaKey ? hoverTargetKey(event.target) : null)
   if (gestureIdleTimer || (event.metaKey && card && card !== inspectHover && card.dataset.frame !== active)) {
     warmAt(event.clientX, event.clientY, event.metaKey)
   }
@@ -1425,25 +1675,30 @@ function updateComparison(next) {
 }
 if (data.proposalEvents && comparison?.role !== 'proposal') {
   const { watchProposalLink } = await import('./proposal-link.mjs')
-  watchProposalLink(updateComparison, origins => {
+  watchProposalLink(updateComparison, event => {
+    const origins = Array.isArray(event) ? event : event.variants
+    const restarted = event.session && event.session !== data.previewOriginSession
+    if (event.session) data.previewOriginSession = event.session
     const current = new Map(origins.map(frame => [frame.id, frame]))
     for (const item of data.variants ?? []) {
       const saved = current.get(item.id)
       if (!saved) continue
       item.hasEdits = saved.hasEdits === true
-      if (saved.origin && saved.origin !== item.origin) {
+      if ((saved.origin && saved.origin !== item.origin) || (restarted && saved.deferredOrigin)) {
+        item.deferredOrigin = saved.deferredOrigin
         item.origin = saved.origin
         variantFrames.get(item.id)?.setPreviewOrigin(saved.origin)
       }
     }
   }, ({ activity, variants }) => {
+    data.activity = activity
     sidebar.updateActivity(activity)
     const changed = JSON.stringify(data.variants ?? []) !== JSON.stringify(variants)
     if (!changed) return
     data.variants = variants
     layoutVariantSections = undefined
     refreshVariants()
-  })
+  }, data.previewOrigins === 'on-demand', data.activityVersion)
 }
 const entry = new URLSearchParams(location.search).get('page')
 async function openContext(link, variantId) {

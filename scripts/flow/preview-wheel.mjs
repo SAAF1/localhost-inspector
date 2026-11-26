@@ -15,9 +15,18 @@ export function forwardPreviewWheel(frameWindow, receiver, origin) {
 // A direct app preview opts in only when its local canvas identifies itself.
 if (window.parent !== window) {
   function connect(event) {
-    if (event.data !== 'connect-canvas-wheel' || event.source !== window.parent) return
+    if (event.source !== window.parent ||
+        (event.data !== 'connect-canvas-wheel' && event.data?.type !== 'connect-canvas-wheel')) return
     if (!/^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(event.origin)) return
     window.removeEventListener('message', connect)
+    // Compile the editor while the pictured app first renders. Execution still
+    // belongs to mountVariantEditor after its dock and bridge are in place.
+    if (event.data?.prepareEditor) {
+      const link = document.createElement('link')
+      link.rel = 'modulepreload'
+      link.href = new URL('./variant-runtime.mjs', import.meta.url).href
+      document.head.append(link)
+    }
     forwardPreviewWheel(window, window.parent, event.origin)
     const origin = event.origin
     const sheet = new CSSStyleSheet()
@@ -37,4 +46,10 @@ if (window.parent !== window) {
     })
   }
   window.addEventListener('message', connect)
+  if (document.referrer) {
+    const parent = new URL(document.referrer)
+    if (['127.0.0.1', 'localhost', '[::1]'].includes(parent.hostname)) {
+      window.parent.postMessage('variant-bridge-listening', parent.origin)
+    }
+  }
 }

@@ -12,9 +12,10 @@ body { margin: 0; }
 .frame-caption { position: absolute; inset: auto 0 100%; padding-bottom: 12px; overflow-wrap: anywhere; }
 .frame-caption h2 { margin: 0; font: 500 27px/1.2 system-ui; }
 .frame-caption h2 button { font: inherit; color: inherit; text-align: left; background: transparent; border: 0; padding: 0; cursor: pointer; }
-.linked-frame[data-paint-selected] iframe { outline: 2px solid #007be5; }
+.linked-frame[data-paint-selected] :is(iframe, .variant-picture, .variant-detail) { outline: 2px solid #007be5; }
 .frame-caption p { margin: 4px 0 0; font: 400 20px/1.35 system-ui; }
-.linked-frame iframe { display: block; width: 100%; height: 100%; box-sizing: border-box; border: 2px solid #d5d8d1; background: white; }
+.linked-frame :is(iframe, .variant-picture, .variant-detail) { display: block; width: 100%; height: 100%; box-sizing: border-box; border: 2px solid #d5d8d1; background: white; }
+.linked-frame :is(.variant-picture, .variant-detail) { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
 .linked-frame > button { position: absolute; inset: 0; width: 100%; background: transparent; border: 0; cursor: pointer; }
 .linked-frame > button:focus-visible, .linked-frame:focus-within iframe { outline: 3px solid #2563c9; }
 #workspace-toolbar button { font: inherit; color: inherit; cursor: pointer; }
@@ -204,6 +205,7 @@ iframe#variant-properties { display:block; height:100%; padding:0; border:0; }
 [data-magnified] #workspace-sidebar { transform-origin: top left; }
 [data-magnified] :is(#zoom, #notice) { transform-origin: bottom left; }
 
+#map[data-window-sections]:not([data-read-all-sections]) .variant-section-surface:not([data-in-view], :focus-within) { display: none; }
 .variant-section-surface {
   position: absolute; box-sizing: border-box;
   border: 2px solid #c5c7c4; border-radius: 14px; background: #e5e6e3;
@@ -244,3 +246,16 @@ iframe#variant-properties { display:block; height:100%; padding:0; border:0; }
 
 #localhost-inspector-dock[data-variant-inspection][data-frame-properties] { visibility: visible; }
 #localhost-inspector-dock[data-frame-properties] ~ #variant-properties { visibility: hidden; }
+
+@keyframes sharpen-variant { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: no-preference) {
+  .variant-detail.sharpen { animation: sharpen-variant 85ms ease-out; }
+}
+
+.variant-overview { position: absolute; pointer-events: none; }
+
+.linked-frame .variant-picture[data-overview-slot] {
+  background-image: var(--overview-image);
+  background-size: 1600% 1600%;
+  background-position: var(--overview-x) var(--overview-y);
+}

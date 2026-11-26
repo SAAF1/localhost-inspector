@@ -531,6 +531,99 @@ test('pinching over a live canvas frame keeps its point fixed through a reversal
   } finally { await h.close() }
 })
 
+test('a sparse pinch starts and reverses immediately and uses the refresh between packets', async () => {
+  const h = await createHarness({ canvas: true, dock: true })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    // A controlled clock gives a 16 ms refresh and a wheel packet every 32 ms.
+    await h.page.clock.install({ time: new Date('2025-01-01T00:00:00Z') })
+    await h.page.clock.pauseAt(new Date('2025-01-01T00:00:01Z'))
+    const viewport = h.page.locator('#viewport')
+    const scale = () => h.page.locator('#map').evaluate(map => new DOMMatrix(map.style.transform).a)
+    const wheel = deltaY => viewport.evaluate((el, dy) => {
+      const map = document.querySelector('#map')
+      el.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: dy, clientX: 200,
+        clientY: 200, bubbles: true, cancelable: true }))
+      return new DOMMatrix(map.style.transform).a
+    }, deltaY)
+    const start = await scale()
+    const first = await wheel(-3)
+    assert.ok(first > start)
+    await h.page.clock.runFor(32)
+    const second = await wheel(-3)
+    assert.ok(second > first, 'the continuous input changes the camera before the handler returns')
+    await h.page.clock.runFor(32)
+    const settled = await scale()
+    assert.ok(settled > second, 'the following refresh carries part of the sparse packet')
+    assert.ok(Math.abs(settled - first * first / start) < .00001)
+    assert.ok(await wheel(3) < settled, 'the first reversed packet contracts immediately')
+    await h.page.clock.runFor(32)
+    await wheel(3)
+    await h.page.clock.runFor(32)
+    assert.ok(Math.abs(await scale() - start) < .00001)
+
+    // Reverse gently before a larger expansion has reached the screen.
+    await wheel(-2)
+    await h.page.clock.runFor(32)
+    const partial = await wheel(-3)
+    const reversed = await wheel(.125)
+    assert.ok(reversed < partial, 'a small reversal cannot finish drawing the old expansion')
+    await h.page.clock.runFor(32)
+    assert.equal(await scale(), reversed)
+  } finally { await h.close() }
+})
+
+
+test('a wide pinch changes the map rendering layer at rest and releases it at overview', async t => {
+  const h = await createHarness({ canvas: true, dock: true })
+  t.after(h.close)
+  const { page } = h
+  await page.locator('#flow-toggle').click()
+  await page.locator('#zoom-preset').selectOption('0.25', { force: true })
+  await page.clock.install({ time: new Date('2025-01-01T00:00:00Z') })
+  await page.clock.pauseAt(new Date('2025-01-01T00:00:01Z'))
+  const promoted = () => page.locator('#map').evaluate(map => getComputedStyle(map).willChange === 'transform')
+  const pinch = deltaY => page.locator('#viewport').dispatchEvent('wheel', {
+    ctrlKey: true, deltaY, clientX: 250, clientY: 250, cancelable: true,
+  })
+  assert.equal(await promoted(), false)
+  await pinch(-24) // 25% to 43% on the harness's 2x display.
+  assert.equal(await promoted(), false)
+  await page.clock.runFor(160)
+  assert.equal(await promoted(), true)
+  await pinch(24)
+  assert.equal(await promoted(), true, 'a short reversal can reuse the reading layer')
+  await pinch(50)
+  await page.clock.runFor(32)
+  assert.equal(await promoted(), false, 'release the large layer during a deep zoom-out')
+})
+
+test('a sparse pan draws between packets and turns immediately from the visible position', async () => {
+  const h = await createHarness({ canvas: true, dock: true })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    await h.page.clock.install({ time: new Date('2025-01-01T00:00:00Z') })
+    await h.page.clock.pauseAt(new Date('2025-01-01T00:00:01Z'))
+    const map = h.page.locator('#map')
+    const position = () => map.evaluate(el => new DOMMatrix(el.style.transform).e)
+    const wheel = dx => h.page.locator('#viewport').evaluate((el, deltaX) => {
+      el.dispatchEvent(new WheelEvent('wheel', { deltaX, bubbles: true, cancelable: true }))
+      return new DOMMatrix(document.querySelector('#map').style.transform).e
+    }, dx)
+    const start = await position()
+    const first = await wheel(12)
+    assert.ok(first < start)
+    await h.page.clock.runFor(32)
+    const partial = await wheel(12)
+    assert.ok(partial < first)
+    await h.page.clock.runFor(32)
+    assert.equal(await position(), first + (first - start))
+    assert.ok(await position() < partial, 'the camera uses the refresh between pan packets')
+    const next = await wheel(12)
+    assert.ok(await wheel(-1) > next, 'the first reversed packet moves in the new direction')
+  } finally { await h.close() }
+})
+
 test('only Command-pinch crosses between the live page and its centered canvas frame', async () => {
   const h = await createHarness({ canvas: true, dock: true })
   try {

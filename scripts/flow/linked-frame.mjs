@@ -5,7 +5,7 @@ import { replayFrame } from './replay.mjs'
 const app = document.querySelector('#app-preview')
 const status = document.querySelector('output')
 try {
-  const map = await fetch('./map.json').then(response => response.json())
+  const map = await fetch('./map.json', { headers: { 'X-Inspector-Preview-Origins': 'on-demand' } }).then(response => response.json())
   const params = new URLSearchParams(location.hash.slice(1))
   const page = params.get('page')
   const frame = resolveProposalFrame(map.frames, params.get('frame'), page, location.origin)

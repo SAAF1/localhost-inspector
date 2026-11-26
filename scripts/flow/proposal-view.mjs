@@ -1,3 +1,6 @@
+import { allowWarmup, finishWarmup } from './variant-warmup.mjs'
+import { positionOnCanvas } from './render-frames.mjs'
+
 // A proposal runs on its own loopback origin. Its app and Inspector stay in the
 // same origin as each other while review and Undo remain separate from the original.
 export function proposalEntry(data, query) {
@@ -91,7 +94,7 @@ export function addLinkedFrame(map, comparison, frame, route, gap, selectCompari
   return previewFrame(map, frame.id, frame.label + ' · ' + name, name, url, gap, null, null, null, selectComparison)
 }
 
-function localPreviewUrl(route, origin) {
+export function localPreviewUrl(route, origin) {
   if (typeof route !== 'string' || !route.startsWith('/') || typeof origin !== 'string') return
   let url
   try { url = new URL(route, origin) } catch { return }
@@ -102,7 +105,7 @@ function localPreviewUrl(route, origin) {
 export function addVariantFrame(map, variant, gap, inspect, relayout) {
   if (!variant.id || !variant.label) return
   const url = localPreviewUrl(variant.route, variant.origin)
-  if (!url) return
+  if (!url && !(variant.deferredOrigin && localPreviewUrl(variant.route, location.origin))) return
   return previewFrame(map, variant.anchor, variant.label, variant.label, url, gap, variant.id, inspect, variant, null, relayout)
 }
 
@@ -125,18 +128,112 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
   app.inert = true
   app.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals')
   let ready = false
+  let restored = false
   let point
-  const inspection = variant && { variant, app, origin: url.origin, label, editable: definition?.editable === true, stop: () => stop(false) }
+  const inspection = variant && { variant, app, origin: url?.origin, label, editable: definition?.editable === true, stop: () => stop(false) }
   if (variant) app.loading = 'lazy'
-  if (variant) app.addEventListener('load', () => {
-    ready = false
-    app.contentWindow.postMessage('connect-canvas-wheel', url.origin)
-  })
-  app.src = url.href
+  function connectPreview() {
+    if (!url) return
+    app.contentWindow?.postMessage(picture && inspection.editable
+      ? { type: 'connect-canvas-wheel', prepareEditor: true } : 'connect-canvas-wheel', url.origin)
+  }
+  if (variant) app.addEventListener('load', connectPreview)
+  if (url) app.src = url.href
   const cover = document.createElement('button')
   cover.type = 'button'
   cover.setAttribute('aria-label', 'Interact with ' + name)
-  wrapper.append(caption, app, cover)
+  let snapshot = definition?.snapshot
+  let needsLivePreview = !snapshot && !url
+  let picture
+  let detail
+  let failedDetail
+  function clearDetail() {
+    if (!detail) return
+    detail.remove()
+    detail.removeAttribute('src')
+    detail = undefined
+  }
+  let revealTimer
+  let speculative = false
+  let waitingForColdPoint = false
+  function removePicture() {
+    speculative = false
+    waitingForColdPoint = false
+    finishWarmup(cover, true)
+    clearTimeout(revealTimer)
+    wrapper.removeAttribute('aria-busy')
+    clearDetail()
+    picture?.remove()
+    picture = null
+  }
+  let originRequest
+  async function resolveOrigin() {
+    if (originRequest || url) return
+    const request = new AbortController()
+    originRequest = request
+    try {
+      const response = await fetch('./preview-origin?id=' + encodeURIComponent(variant), { signal: request.signal })
+      if (!response.ok) throw Error('Preview unavailable')
+      const result = await response.json()
+      const next = result.id === variant && localPreviewUrl(definition.route, result.origin)
+      if (!next || next.origin === location.origin) throw Error('Invalid preview origin')
+      if (request.signal.aborted) return
+      url = next
+      inspection.origin = next.origin
+      app.src = next.href
+      if (app.isConnected && !app.inert) inspect?.(inspection, 'start')
+    } catch {
+      if (request.signal.aborted || !app.isConnected) return
+      app.inert = true
+      app.remove()
+      unlisten()
+      clearTimeout(revealTimer)
+      wrapper.removeAttribute('aria-busy')
+      cover.hidden = false
+      cover.title = 'Preview unavailable. Click to retry.'
+    } finally {
+      if (originRequest === request) originRequest = undefined
+    }
+  }
+  function mountLive(interactive = false) {
+    if (app.isConnected) return
+    needsLivePreview = false
+    if (interactive) app.loading = 'eager'
+    if (picture) app.style.cssText = picture.style.cssText
+    cover.before(app)
+    listen()
+    if (!url) void resolveOrigin()
+  }
+  if (snapshot) {
+    picture = new Image()
+    picture.className = 'variant-picture'
+    picture.alt = ''
+    picture.loading = 'lazy'
+    picture.decoding = 'async'
+    picture.src = './variant-previews/' + snapshot.small + '.webp'
+    allowWarmup(cover, () => {
+      if (!picture || app.isConnected) return
+      speculative = true
+      mountLive(true)
+      return () => {
+        if (!speculative) return
+        inspect?.(inspection, 'dispose')
+        app.remove()
+        speculative = restored = ready = false
+        unlisten()
+      }
+    })
+    picture.onerror = () => {
+      if (!wrapper.isConnected) return
+      mountLive()
+      removePicture()
+    }
+  }
+  // An uncaptured step on a large canvas has no live origin until the card
+  // is readable in the viewport or the user opens it directly.
+  wrapper.append(caption)
+  if (!needsLivePreview) wrapper.append(picture ?? app)
+  wrapper.append(cover)
   let review
   if (typeof definition?.reviewNote === 'string' && definition.reviewNote.trim()) {
     review = document.createElement('aside')
@@ -149,37 +246,62 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
 
   function stop(focus) {
     if (!app.inert && variant) {
-      app.contentWindow.postMessage('stop-inspecting-variant', url.origin)
-      inspect?.(inspection, 'stop')
+      if (url) {
+        app.contentWindow.postMessage('stop-inspecting-variant', url.origin)
+        inspect?.(inspection, 'stop')
+      }
     }
     if (!app.inert) selectComparison?.(false)
     point = undefined
+    if (waitingForColdPoint) removePicture()
     app.inert = true
     cover.hidden = false
     if (focus) cover.focus({ preventScroll: true })
   }
+  function showLiveState() {
+    return ready && (!snapshot || !definition.hasEdits || restored)
+  }
+  function sendPoint() {
+    if (!url || app.inert || !showLiveState()) return
+    app.contentWindow.postMessage({ type: 'inspect-canvas-variant', point, waitForContent: waitingForColdPoint }, url.origin)
+    point = undefined
+  }
   function open(event) {
+    waitingForColdPoint = Boolean(picture && event?.metaKey && event.detail)
+    speculative = false
+    cover.removeAttribute('title')
+    finishWarmup(cover, true)
+    mountLive(true)
+    if (picture) {
+      if (showLiveState() && !waitingForColdPoint) removePicture()
+      else {
+        wrapper.setAttribute('aria-busy', 'true')
+        // Expose the actual document even if its Inspector handshake fails.
+        clearTimeout(revealTimer)
+        revealTimer = setTimeout(removePicture, 3000)
+      }
+    }
     selectComparison?.(true)
     if (variant) {
       const rect = app.getBoundingClientRect()
       point = event?.metaKey && event.detail ? {
-        x: (event.clientX - rect.left) * app.offsetWidth / rect.width,
-        y: (event.clientY - rect.top) * app.offsetHeight / rect.height,
+        x: (event.clientX - rect.left) * app.offsetWidth / rect.width - app.clientLeft,
+        y: (event.clientY - rect.top) * app.offsetHeight / rect.height - app.clientTop,
       } : undefined
-      inspect?.(inspection, 'start')
-      if (ready) app.contentWindow.postMessage({ type: 'inspect-canvas-variant', point }, url.origin)
+      if (url) inspect?.(inspection, 'start')
     }
     app.inert = false
+    if (variant) sendPoint()
     cover.hidden = true
     app.focus({ preventScroll: true })
   }
   cover.onclick = open
   let frameFill = null
-  let defaultFill = 'white'
+  let defaultFill = CSS.supports('color', snapshot?.background ?? '') ? snapshot.background : 'white'
   let customWidth
   let customHeight
   const paintSurface = variant && {
-    element: app,
+    get element() { return app.isConnected ? app : picture ?? app },
     resize(width, height) {
       customWidth = width ?? customWidth
       customHeight = height ?? customHeight
@@ -187,6 +309,7 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
     },
     key: 'frame:' + variant, kind: 'Frame', color: () => defaultFill,
     render(color) {
+      if (color && picture) { mountLive(); removePicture() }
       frameFill = color
       app.style.backgroundColor = color ?? ''
       if (ready) app.contentWindow.postMessage({ type: 'canvas-frame-backdrop', active: color !== null }, url.origin)
@@ -202,7 +325,12 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
     title.replaceChildren(select)
   }
   function exit(event) {
-    if (event.origin !== url.origin || event.source !== app.contentWindow) return
+    if (!url || !app.isConnected || event.origin !== url.origin || event.source !== app.contentWindow) return
+    if (variant && event.data === 'variant-bridge-listening') {
+      restored = ready = false
+      connectPreview()
+      return
+    }
     if (variant && event.data?.type === 'canvas-frame-default') {
       const color = event.data.color
       if (typeof color === 'string' && CSS.supports('color', color)) defaultFill = color
@@ -210,18 +338,26 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
     }
     if (variant && event.data === 'variant-inspection-ready') {
       ready = true
+      if (!speculative && !waitingForColdPoint && showLiveState()) removePicture()
       if (frameFill !== null) paintSurface.render(frameFill)
       if (inspection.editable) inspect?.(inspection, definition.hasEdits ? 'restore' : 'ready')
       if (!app.inert) {
         inspect?.(inspection, 'reload')
-        app.contentWindow.postMessage({ type: 'inspect-canvas-variant', point }, url.origin)
+        sendPoint()
       }
-      point = undefined
+      return
+    }
+    if (variant && event.data === 'variant-edits-restored') {
+      restored = true
+      if (snapshot && definition.hasEdits) {
+        if (!speculative && !waitingForColdPoint) removePicture()
+        sendPoint()
+      }
       return
     }
     if (app.inert) return
     if (variant && event.data?.type === 'variant-selection') {
-      point = undefined
+      if (waitingForColdPoint && event.data.details && showLiveState()) removePicture()
       inspect?.(inspection, 'selection', event.data.details)
       return
     }
@@ -246,12 +382,71 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
     if (!app.inert && !wrapper.contains(event.target) &&
         !(variant && event.composedPath().some(node => node.matches?.('#workspace-sidebar,#variant-properties,#localhost-inspector-dock')))) stop(false)
   }
-  window.addEventListener('message', exit)
-  document.addEventListener('pointerdown', outside, true)
+  // Inactive pictures cannot send app messages or own a selection.
+  function listen() {
+    window.addEventListener('message', exit)
+    document.addEventListener('pointerdown', outside, true)
+  }
+  function unlisten() {
+    window.removeEventListener('message', exit)
+    document.removeEventListener('pointerdown', outside, true)
+  }
+  if (!picture && !needsLivePreview) listen()
 
   return {
     id: anchor,
     variant, label, open, paintSurface,
+    get canRelease() {
+      return Boolean(picture) && !app.isConnected && !wrapper.contains(document.activeElement) &&
+        !wrapper.hasAttribute('data-paint-selected') && !paintSurface.savedGeometry
+    },
+    get needsLivePreview() { return needsLivePreview },
+    showLivePreview: mountLive,
+    get hasPicture() { return Boolean(picture) && !app.isConnected },
+    useOverviewPlaceholder(src, slot) {
+      if (!picture || picture.complete) return
+      const target = picture
+      target.style.setProperty('--overview-image', 'url("' + src + '")')
+      target.style.setProperty('--overview-x', (slot % 16) / 15 * 100 + '%')
+      target.style.setProperty('--overview-y', Math.floor(slot / 16) / 15 * 100 + '%')
+      target.toggleAttribute('data-overview-slot', true)
+      target.addEventListener('load', () => target.removeAttribute('data-overview-slot'), { once: true })
+    },
+    get canWarmOverview() { return Boolean(picture && !picture.complete && picture.loading === 'lazy') },
+    warmOverview() {
+      if (this.canWarmOverview) picture.loading = 'eager'
+    },
+    get hasDetail() { return Boolean(detail) },
+    useSharpPicture(wanted, fade = true) {
+      if (!wanted) { clearDetail(); return }
+      if (!picture || detail || failedDetail === snapshot.sharp || app.isConnected) return
+      const image = new Image()
+      detail = image
+      image.alt = ''
+      image.className = fade ? 'variant-detail sharpen' : 'variant-detail'
+      image.decoding = 'async'
+      image.src = './variant-previews/' + snapshot.sharp + '.webp'
+      void image.decode().then(() => {
+        if (detail === image && picture?.isConnected) picture.after(image)
+      }).catch(() => {
+        if (detail !== image) return
+        failedDetail = snapshot.sharp
+        clearDetail()
+      })
+      return true
+    },
+    updateSnapshot(item) {
+      definition = item
+      if (!picture) return
+      if (!item.snapshot || item.snapshot.width !== snapshot.width || item.snapshot.height !== snapshot.height) {
+        mountLive()
+        removePicture()
+      } else if (snapshot.small !== item.snapshot.small || snapshot.sharp !== item.snapshot.sharp) {
+        clearDetail()
+        snapshot = item.snapshot
+        picture.src = './variant-previews/' + snapshot.small + '.webp'
+      }
+    },
     get customWidth() { return customWidth },
     markSurface(selected) { wrapper.toggleAttribute('data-paint-selected', selected) },
     get section() { return wrapper.closest('.variant-section') },
@@ -262,14 +457,22 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
     get reviewHeight() { return review?.offsetHeight ?? 0 },
     get captionHeight() { return caption.offsetHeight },
     setPreviewOrigin(origin) {
-      const next = localPreviewUrl(url.pathname + url.search + url.hash, origin)
-      if (!variant || !next || next.origin === url.origin) return
-      stop(false)
-      ready = false
-      inspect?.(inspection, 'dispose')
+      if (!variant) return
+      const next = localPreviewUrl(definition.route, origin)
+      if (origin && (!next || next.origin === url?.origin)) return
+      originRequest?.abort()
+      originRequest = undefined
+      if (url && app.isConnected) {
+        stop(false)
+        inspect?.(inspection, 'dispose')
+      }
+      ready = restored = false
       url = next
-      inspection.origin = next.origin
-      app.src = next.href
+      inspection.origin = next?.origin
+      if (next) {
+        app.src = next.href
+        if (app.isConnected && !app.inert) inspect?.(inspection, 'start')
+      } else if (app.isConnected) void resolveOrigin()
     },
     get hidden() { return wrapper.hidden },
     place(card, column, rowOffset = 0, hidden = false, slotWidth = card.width) {
@@ -277,13 +480,20 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
       const x = card.x + card.width + gap + (slotWidth + gap) * (column - 1)
       const y = card.y + rowOffset
       this.bounds = { ...card, x, y, width: customWidth ?? card.width, height: customHeight ?? card.height }
-      Object.assign(wrapper.style, { left: x + 'px',
-        top: y + card.labelHeight + 'px', width: this.bounds.width + 'px', height: this.bounds.height + 'px' })
+      if (picture && (this.bounds.width !== snapshot.width || this.bounds.height !== snapshot.height)) {
+        mountLive()
+        removePicture()
+      }
+      positionOnCanvas(wrapper, x, y + card.labelHeight)
+      Object.assign(wrapper.style, { width: this.bounds.width + 'px', height: this.bounds.height + 'px' })
     },
     remove() {
-      if (inspection) inspect?.(inspection, 'dispose')
-      window.removeEventListener('message', exit)
-      document.removeEventListener('pointerdown', outside, true)
+      originRequest?.abort()
+      if (url && inspection && app.isConnected) inspect?.(inspection, 'dispose')
+      clearDetail()
+      finishWarmup(cover, false)
+      clearTimeout(revealTimer)
+      unlisten()
       wrapper.remove()
     },
   }

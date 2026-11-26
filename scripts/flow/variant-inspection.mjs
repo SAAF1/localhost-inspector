@@ -4,6 +4,7 @@ export function connectVariantSelection(receiver, origin) {
   let active = false
   let mounting
   let inspector
+  let cancelReplay
   const attribute = 'data-localhost-inspector-selected'
   const hoverAttribute = 'data-localhost-inspector-hovered'
   let pointed
@@ -60,14 +61,43 @@ export function connectVariantSelection(receiver, origin) {
     } : null }, origin)
   }
   function select(node) {
+    cancelReplay?.()
     const target = node?.closest('svg') || node
     if (inspector && target && !target.dispatchEvent(new Event('select-inspector-variable-use',
       { bubbles: true, composed: true, cancelable: true }))) return
     mark(target)
   }
+  // A saved picture can show the completed app before its live document has
+  // mounted. Only retry a cold click that hit an empty or explicitly busy shell.
+  function selectPoint(point, waitForContent) {
+    const hit = () => document.elementFromPoint(point.x, point.y)
+    const waiting = node => !node || node === document.body || node === document.documentElement ||
+      node.matches('body > :is(div,main):empty') || node.closest('[aria-busy="true"], [role="progressbar"]')
+    const first = hit()
+    if (!waitForContent || !waiting(first)) { select(first); return }
+    let frame
+    const changes = new MutationObserver(() => {
+      frame ??= requestAnimationFrame(() => {
+        frame = undefined
+        const node = hit()
+        if (!waiting(node)) select(node)
+      })
+    })
+    changes.observe(document.documentElement, { subtree: true, childList: true, attributes: true,
+      attributeFilter: ['hidden', 'class', 'style', 'aria-busy', 'role'] })
+    // A deliberate click on the actual page background must still finish.
+    const deadline = setTimeout(() => select(hit()), 2000)
+    cancelReplay = () => {
+      changes.disconnect()
+      cancelAnimationFrame(frame)
+      clearTimeout(deadline)
+      cancelReplay = undefined
+    }
+  }
   // Inspector-side selection (e.g. Select parent or a saved edit) drives Layers too.
   document.addEventListener('workspace-inspector-selection', event => {
     const node = event.composedPath()[0]
+    if (node !== document) cancelReplay?.()
     mark(node === document ? null : node)
   }, true)
   async function mount(index) {
@@ -83,6 +113,7 @@ export function connectVariantSelection(receiver, origin) {
         doc.querySelector('output').textContent = 'Could not open the variant inspector. Reload the preview to retry.'
         return
       }
+      receiver.postMessage('variant-edits-restored', origin)
       clearPointer()
       // Native Inspector outlines now own painting, including hover and multi-selection.
       document.adoptedStyleSheets = document.adoptedStyleSheets.filter(item => item !== sheet)
@@ -96,6 +127,7 @@ export function connectVariantSelection(receiver, origin) {
     if (selected && !selected.isConnected) select(null)
   })
   function commandClick(event) {
+    if (event.isTrusted && event.type === 'pointerdown') cancelReplay?.()
     if (!active || !event.isTrusted || !event.metaKey || event.button !== 0) return
     event.preventDefault()
     event.stopImmediatePropagation()
@@ -124,6 +156,7 @@ export function connectVariantSelection(receiver, origin) {
       return
     }
     if (event.data?.type === 'inspect-canvas-variant') {
+      cancelReplay?.()
       if (!active) {
         observer.observe(document.documentElement, { childList: true, subtree: true })
         if (inspector) inspector.dispatchEvent(new Event('open-workspace-inspector'))
@@ -131,8 +164,9 @@ export function connectVariantSelection(receiver, origin) {
       }
       active = true
       const point = event.data.point
-      if (Number.isFinite(point?.x) && Number.isFinite(point?.y)) select(document.elementFromPoint(point.x, point.y))
+      if (Number.isFinite(point?.x) && Number.isFinite(point?.y)) selectPoint(point, event.data.waitForContent === true)
     } else if (event.data === 'stop-inspecting-variant' && active) {
+      cancelReplay?.()
       active = false
       clearPointer()
       observer.disconnect()

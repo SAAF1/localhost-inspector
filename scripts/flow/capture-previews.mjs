@@ -28,7 +28,7 @@ export async function verifyCaptureState(page, frame, origin) {
     surfaces.some(surface => surface.role === check.role && surface.label === check.label))
 }
 
-async function capture(page, encoder, output, file) {
+export async function capture(page, encoder, output, file, overviewWidth) {
   await page.evaluate(settleVisuals)
   const { width, height } = page.viewportSize()
   const sharp = width * height * 4 <= 8_000_000
@@ -47,7 +47,8 @@ async function capture(page, encoder, output, file) {
       return canvas.toDataURL('image/webp', .94).split(',')[1]
     }
     return [encode(width, height), sharp && encode(image.width, image.height)]
-  }, { base64: png.toString('base64'), width, height, sharp })
+  }, { base64: png.toString('base64'), width: overviewWidth ?? width,
+    height: overviewWidth ? Math.max(1, Math.round(height * overviewWidth / width)) : height, sharp })
   const sharpFile = file.replace(/\.webp$/, '-2x.webp')
   for (const [name, encoded] of [[file, images[0]], [sharpFile, images[1]]]) {
     if (!encoded) continue

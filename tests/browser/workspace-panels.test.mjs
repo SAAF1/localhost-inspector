@@ -2,6 +2,46 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHarness } from './harness.mjs'
 
+test('a long Inbox keeps its position and opens a late activity row from the keyboard', async () => {
+  const entries = Array.from({ length: 10_000 }, (_, id) => ({
+    id: 'draft-' + id, label: 'Draft ' + id, created: id, respondedAt: null,
+  }))
+  const h = await createHarness({ canvas: true, dock: true,
+    flowActivity: [...entries, { id: 'response', label: 'Reviewed', created: 1, respondedAt: 2 }],
+    flowVariants: [{ id: 'draft-500', label: 'Draft 500', route: '/', anchor: 'first' }] })
+  try {
+    const panel = h.page.getByRole('tabpanel', { name: 'Inbox' })
+    const rows = h.page.locator('.activity-row')
+    assert.equal(await rows.count(), 0, 'closed workspace creates no activity rows')
+    await h.page.locator('#flow-toggle').click()
+    await h.open()
+    await panel.getByRole('button', { name: 'Draft 9999', exact: true }).waitFor()
+    assert.ok(await rows.count() < 30)
+    const late = panel.getByRole('button', { name: 'Draft 501', exact: true })
+    await panel.evaluate(node => { node.scrollTop = 9498 * 30 })
+    await late.waitFor()
+    await late.focus()
+    await h.page.keyboard.press('Tab')
+    const focused = () => panel.evaluate(node => node.getRootNode().activeElement?.textContent)
+    assert.equal(await focused(), 'Draft 500')
+    const before = await panel.evaluate(node => node.scrollTop)
+    await h.page.getByRole('tab', { name: 'Recent' }).click()
+    await h.page.getByRole('button', { name: 'Reviewed' }).waitFor()
+    await h.page.getByRole('tab', { name: 'Inbox' }).click()
+    assert.equal(await panel.evaluate(node => node.scrollTop), before)
+    await h.page.getByRole('separator', { name: 'Resize activity' }).press('ArrowDown')
+    // A focused button stays reachable even when a manual scroll moves away.
+    await late.focus()
+    await panel.evaluate(node => { node.scrollTop = 0 })
+    await panel.getByRole('button', { name: 'Draft 9998' }).waitFor()
+    await h.page.keyboard.press('Tab')
+    assert.equal(await focused(), 'Draft 500')
+    await h.page.keyboard.press('Enter')
+    await h.page.locator('#localhost-inspector-dock[data-canvas-paint-target="frame:draft-500"]').waitFor()
+    assert.ok(await rows.count() < 30)
+  } finally { await h.close() }
+})
+
 test('the workspace Inspector action brings both panels to the advertised state', async () => {
   const h = await createHarness({ canvas: true, dock: true })
   try {
@@ -87,7 +127,7 @@ test('canvas Command-click reserves tab buttons and links even before Inspector 
 })
 
 test('both panel controls stay reachable after the browser magnifies the canvas', async () => {
-  const h = await createHarness({ canvas: true, dock: true })
+  const h = await createHarness({ canvas: true, dock: true, hasTouch: true })
   try {
     await h.page.locator('#flow-toggle').click()
     await h.page.locator('#inspector-toggle').click()
@@ -95,10 +135,11 @@ test('both panel controls stay reachable after the browser magnifies the canvas'
     const physicalWidth = locator => locator.evaluate(node => node.getBoundingClientRect().width * visualViewport.scale)
     const controls = ['workspace-sidebar', 'localhost-inspector-dock', 'flow-toggle', 'inspector-toggle']
     const before = await Promise.all(controls.map(id => physicalWidth(h.page.locator('#' + id))))
-    const { width, height } = h.page.viewportSize()
-    await client.send('Input.synthesizePinchGesture', {
-      x: width / 2, y: height / 2, scaleFactor: 1.6, gestureSourceType: 'touch',
-    })
+    // Exercise native page magnification regardless of the runner's gesture settings.
+    await client.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1.6 })
+    await h.page.waitForFunction(() => visualViewport.scale > 1.4 &&
+      Math.abs(parseFloat(document.documentElement.style.getPropertyValue('--chrome-scale')) * visualViewport.scale - 1) < 0.001,
+    null, { timeout: 3000 })
     const withinView = async locator => locator.evaluate(node => {
       const r = node.getBoundingClientRect(), v = visualViewport
       return v.scale > 1.4 && r.left >= v.offsetLeft - 1 && r.right <= v.offsetLeft + v.width + 1 &&
@@ -106,7 +147,9 @@ test('both panel controls stay reachable after the browser magnifies the canvas'
     })
     for (const [index, id] of controls.entries()) {
       const control = h.page.locator('#' + id)
-      assert.ok(await withinView(control), id)
+      assert.ok(await withinView(control), id + ' outside magnified viewport: ' + JSON.stringify(await control.evaluate(node => ({
+        bounds: node.getBoundingClientRect().toJSON(), viewport: [visualViewport.offsetLeft, visualViewport.offsetTop, visualViewport.width, visualViewport.height],
+      }))))
       assert.ok(Math.abs(await physicalWidth(control) - before[index]) < 1, id + ' keeps its screen size')
     }
     await h.page.locator('#inspector-toggle').click()

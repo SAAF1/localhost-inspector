@@ -18,7 +18,7 @@ function useDatabase(file, action) {
   } finally { db.close() }
 }
 
-export function variantJournal(directory, id, { seed = 'edits.json', catalogs = variantCatalogs(directory) } = {}) {
+export function variantJournal(directory, id, { seed = 'edits.json', catalogs = variantCatalogs(directory), onEdit } = {}) {
   const file = join(directory, 'edits.sqlite')
   const routeKey = route => route.split('#').map(part => {
     const i = part.indexOf('?')
@@ -40,6 +40,13 @@ export function variantJournal(directory, id, { seed = 'edits.json', catalogs = 
   }
 
   return {
+    async status() {
+      const journal = await read()
+      const hasEdits = Boolean(journal.edits.length || journal.textStyleDefinitions?.length)
+      const fingerprint = hasEdits || journal.revision
+        ? createHash('sha256').update(JSON.stringify(journal)).digest('hex') : null
+      return { hasEdits, revision: journal.revision, fingerprint }
+    },
     async hasEdits() {
       const journal = await read()
       return Boolean(journal.edits.length || journal.textStyleDefinitions?.length)
@@ -64,6 +71,7 @@ export function variantJournal(directory, id, { seed = 'edits.json', catalogs = 
           .run(journal.revision, JSON.stringify(journal), message.expectedRevision)
         if (!result.changes) throw Object.assign(Error('Saved previews changed in another tab. Reload the page and try again.'), { code: 'STALE_JOURNAL' })
       })
+      if (changed) onEdit?.()
       return value
     },
   }
