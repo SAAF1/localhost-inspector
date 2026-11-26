@@ -225,7 +225,13 @@ export function createLayerFlows({ ui, onFlowPopover, onOpenOutline, warmNavigat
     rows = new Map([...tree?.querySelectorAll('[data-outline-key]') ?? []]
       .map(item => [item.dataset.outlineKey, item.firstElementChild]))
     headerButton.hidden = nextFlows.length < 2
-    if (headerButton.hidden) close(false)
+    if (headerButton.hidden) {
+      close(false)
+      if (options.length) list.replaceChildren()
+      options = []
+      menuSignature = undefined
+      return
+    }
     const signature = JSON.stringify(nextFlows.map(flow => [flow.key, flow.label,
       flow.items.map(item => [item.key, item.label, item.variantCount, item.children.map(child => [child.key, child.label])])]))
     if (sourceFlow !== contextKey) {

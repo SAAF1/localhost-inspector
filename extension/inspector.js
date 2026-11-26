@@ -1210,7 +1210,14 @@
       }
     })
   }
+  function updateRestorationState() {
+    if (!dock) return
+    const unavailable = journalRevision === null || buttonSizeRequiresReload || comparing ||
+      recovery.hasConflicts || recovery.hasUnattached || recovery.hasSessionPreview || get('status').hasAttribute('data-error')
+    host.dataset.previewRestoration = loadingRoute ? 'pending' : unavailable ? 'unavailable' : 'ready'
+  }
   function reportRecovery() {
+    updateRestorationState()
     syncPending()
     const notice = get('status')
     if (notice.hasAttribute('data-error')) return
@@ -1259,6 +1266,7 @@
     const requestedRoute = currentRoute
     const version = ++activeRouteVersion
     loadingRoute = true
+    if (dock) host.dataset.previewRestoration = 'pending'
     journalRevision = null
     scopedPreviewTargets = false
     landmarkPreviewTargets = false
@@ -1301,6 +1309,7 @@
     } finally {
       if (isCurrentRoute(requestedRoute, version)) {
         loadingRoute = false
+        updateRestorationState()
         syncPending()
         await pickDestination()
         if (isCurrentRoute(requestedRoute, version)) {

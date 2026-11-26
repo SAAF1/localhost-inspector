@@ -130,7 +130,10 @@ window.addEventListener('message', event => {
     return
   }
   if (event.data?.type === 'variant-outline-hover') {
-    if (outline) outline.hoverKey = event.data.key
+    if (outline) {
+      outline.hoverKey = event.data.key
+      outline.pathKeys = event.data.pathKeys
+    }
     layers.syncOutlineHover()
     return
   }
@@ -144,7 +147,8 @@ window.addEventListener('message', event => {
   let next
   try { next = parent.frames[event.data.index]?.document } catch { /* The preview may still be navigating. */ }
   if (next === document || next?.location.origin !== location.origin || !next.body) next = null
-  outline = event.data.outline
+  outline = event.data.reuse && outline
+    ? { ...event.data.outline, items: outline.items, flows: outline.flows } : event.data.outline
   if (doc !== next) {
     doc?.removeEventListener('canvas-variant-selection', sync)
     doc?.removeEventListener('workspace-inspector-hover', hover, true)

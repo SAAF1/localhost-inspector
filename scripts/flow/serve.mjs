@@ -1,7 +1,8 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { watch } from 'node:fs'
+import { queueVariantCapture } from './variant-capture-queue.mjs'
 import { createServer } from 'node:http'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
@@ -30,7 +31,16 @@ if (comparison && (!['--original-port', '--proposal-port'].includes(compareFlag)
 const appRoot = resolve(builtApp)
 const mapRoot = mapDirectory ? resolve(mapDirectory) : await linkedCanvas(appRoot)
 const durableCanvas = await canvasProject(mapRoot)
-const mergeSavedFrames = durableCanvas && savedPreviewFrames(mapRoot)
+const previewOriginSession = randomUUID()
+const activityListeners = new Set()
+function refreshOpenCanvases() {
+  for (const notify of activityListeners) notify()
+}
+const queueCapture = durableCanvas && queueVariantCapture(mapRoot, refreshOpenCanvases)
+const mergeSavedFrames = durableCanvas && savedPreviewFrames(mapRoot, id => {
+  queueCapture(id)
+  refreshOpenCanvases()
+})
 const editor = durableCanvas && comparison?.role !== 'proposal' && (await canvasHelper(mapRoot, appRoot, 'http://127.0.0.1:' + port, process.env.INSPECTOR_CANVAS_HELPER_STATE) || variantJournal(mapRoot, 'original', {
   seed: 'inspector-state.json', catalogs: variantCatalogs(mapRoot, { canvas: mapRoot, sourceRoot: appRoot }),
 }))
@@ -47,8 +57,18 @@ async function comparisonForOriginal(origin) {
   return null
 }
 
+// Hash the same ordered rows on the map and stream paths without retaining a
+// second complete serialized catalog. JSON strings escape literal newlines.
+function activityVersion(variants, activity) {
+  const hash = createHash('sha256').update(previewOriginSession)
+  for (const row of variants) hash.update(JSON.stringify(row)).update('\n')
+  hash.update('\0')
+  for (const row of activity) hash.update(JSON.stringify(row)).update('\n')
+  return hash.digest('hex')
+}
+
 // Notify open canvases when the launcher publishes or removes its link.
-function streamProposalLink(origin, response) {
+function streamProposalLink(origin, response, deferOrigins, knownVersion) {
   const watcher = watch(mapRoot, (_, name) => {
     if (!name || name === 'proposal-preview.json') void publish()
     if (!name || name === 'map.json' || name === activityFile || name === activityFile + '-journal') scheduleActivity()
@@ -62,16 +82,33 @@ function streamProposalLink(origin, response) {
   }
   let activityRevision = 0
   let activityTimer
+  let firstCatalog = true
   async function publishActivity(sendOrigins = false) {
     const current = ++activityRevision
     try {
       const map = JSON.parse(await readFile(join(mapRoot, 'map.json'), 'utf8'))
-      if (mergeSavedFrames) await mergeSavedFrames(map)
+      if (mergeSavedFrames) await mergeSavedFrames(map, deferOrigins)
       if (current !== activityRevision || response.destroyed) return
       const variants = map.variants ?? []
-      if (sendOrigins && mergeSavedFrames) response.write('event: preview-origins\ndata: ' + JSON.stringify(
-        variants.map(({ id, origin, editable, hasEdits }) => ({ id, origin, editable, hasEdits }))) + '\n\n')
-      response.write('event: activity\ndata: ' + JSON.stringify({ activity: canvasActivity(mapRoot, variants), variants }) + '\n\n')
+      const activity = canvasActivity(mapRoot, variants)
+      if (knownVersion) {
+        const version = activityVersion(variants, activity)
+        if (version !== knownVersion) {
+          const payload = { session: previewOriginSession, variants, activity }
+          response.write('id: ' + version + '\nevent: catalog\ndata: ' + JSON.stringify(payload) + '\n\n')
+          knownVersion = version
+        } else if (firstCatalog) {
+          response.write('id: ' + version + '\nevent: catalog-current\ndata: {}\n\n')
+        }
+        firstCatalog = false
+        return
+      }
+      if (sendOrigins && mergeSavedFrames) {
+        const entries = variants.map(({ id, origin, deferredOrigin, editable, hasEdits }) => ({ id, origin, deferredOrigin, editable, hasEdits }))
+        const payload = deferOrigins ? { session: previewOriginSession, variants: entries } : entries
+        response.write('event: preview-origins\ndata: ' + JSON.stringify(payload) + '\n\n')
+      }
+      response.write('event: activity\ndata: ' + JSON.stringify({ activity, variants }) + '\n\n')
     } catch { if (!response.destroyed) response.end() }
   }
   function scheduleActivity() {
@@ -83,7 +120,13 @@ function streamProposalLink(origin, response) {
   })
   variantsWatcher?.on('error', () => response.end())
   watcher.on('error', () => response.end())
-  response.on('close', () => { watcher.close(); variantsWatcher?.close(); clearTimeout(activityTimer) })
+  activityListeners.add(scheduleActivity)
+  response.on('close', () => {
+    activityListeners.delete(scheduleActivity)
+    watcher.close()
+    variantsWatcher?.close()
+    clearTimeout(activityTimer)
+  })
   void publish().then(() => publishActivity(true))
 }
 
@@ -93,15 +136,49 @@ async function serve(request, response) {
     response.writeHead(404).end()
     return
   }
-  const path = decodeURIComponent(new URL(request.url, origin).pathname)
+  const url = new URL(request.url, origin)
+  const path = decodeURIComponent(url.pathname)
   if (editor && path === flowPath + 'workspace-inspector') return handleVariantInspector(request, response, new URL(origin), editor)
   if (request.method !== 'GET') { response.writeHead(404).end(); return }
   let data
   let type
   if (path.startsWith(flowPath)) {
     const relative = path.slice(flowPath.length)
+    const deferOrigins = url.searchParams.get('previewOrigins') === 'on-demand' ||
+      request.headers['x-inspector-preview-origins'] === 'on-demand'
+    if (mergeSavedFrames && comparison?.role !== 'proposal' && relative === 'preview-origin') {
+      const site = request.headers['sec-fetch-site']
+      if ((site && site !== 'same-origin') || (request.headers.origin && request.headers.origin !== origin) ||
+          (site !== 'same-origin' && request.headers.origin !== origin)) {
+        response.writeHead(403).end()
+        return
+      }
+      const id = url.searchParams.get('id')
+      const preview = await mergeSavedFrames.resolveOrigin(id)
+      if (!preview) { response.writeHead(404).end(); return }
+      response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
+        .end(JSON.stringify({ id, origin: preview }))
+      return
+    }
     if (mapRoot && relative === 'proposal-events' && comparison?.role !== 'proposal') {
-      streamProposalLink(origin, response)
+      const knownVersion = deferOrigins && (request.headers['last-event-id'] || url.searchParams.get('knownVersion'))
+      streamProposalLink(origin, response, deferOrigins, knownVersion)
+      return
+    }
+    if (durableCanvas && relative === 'variant-previews/overview.json') {
+      const file = join(await realpath(mapRoot), relative)
+      if (await realpath(file).catch(() => null) !== file) { response.writeHead(404).end(); return }
+      const bytes = await readFile(file)
+      response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(bytes)
+      return
+    }
+    if (durableCanvas && /^variant-previews\/[0-9a-f]{64}\.webp$/.test(relative)) {
+      const root = await realpath(mapRoot)
+      const file = join(root, relative)
+      if (await realpath(file) !== file) { response.writeHead(404).end(); return }
+      const bytes = await readFile(file)
+      response.writeHead(200, { 'content-type': 'image/webp', 'cache-control': 'private, max-age=31536000, immutable',
+        'x-content-type-options': 'nosniff' }).end(bytes)
       return
     }
     if (await (mapRoot ? serveWorkspaceAsset(path, response, Boolean(editor)) : servePreviewAsset(path, response))) return
@@ -117,8 +194,17 @@ async function serve(request, response) {
         const link = comparison || await comparisonForOriginal(origin)
         const originalOrigin = link?.role === 'proposal' ? link.otherOrigin : origin
         if (!durableCanvas && map.origin !== originalOrigin) throw Error('Map belongs to another app')
-        if (mergeSavedFrames && link?.role !== 'proposal') await mergeSavedFrames(map)
+        if (mergeSavedFrames && link?.role !== 'proposal') {
+          await mergeSavedFrames(map, deferOrigins)
+          if (deferOrigins) {
+            map.previewOrigins = 'on-demand'
+            map.previewOriginSession = previewOriginSession
+          }
+        }
         if (link?.role !== 'proposal') map.activity = canvasActivity(mapRoot, map.variants ?? [])
+        if (deferOrigins && mergeSavedFrames && link?.role !== 'proposal') {
+          map.activityVersion = activityVersion(map.variants, map.activity)
+        }
         if (editor) map.canvasId = createHash('sha256').update(mapRoot).digest('hex')
         map.origin = origin
         map.comparison = link

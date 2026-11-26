@@ -1,14 +1,59 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
 import { handleVariantInspector, variantJournal } from '../scripts/flow/variant-journal.mjs'
+import { savedPreviewFrames, variantSnapshotFile, journalStamp, snapshotJournalKey } from '../scripts/flow/canvas-preview.mjs'
 
 const execute = promisify(execFile)
+
+test('an open canvas rejects pictures from a replaced journal or an earlier Undo revision', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'variant-picture-revision-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const frame = join(root, 'variants', 'draft')
+  const pictures = join(root, 'variant-previews', 'steps')
+  await Promise.all([mkdir(frame, { recursive: true }), mkdir(pictures, { recursive: true })])
+  await writeFile(join(frame, 'frame.json'), JSON.stringify({ id: 'draft', label: 'Draft', anchor: 'home', route: '/' }))
+  const edit = { id: randomUUID(), route: '/', target: { id: 'title', tag: 'h1', slot: null, key: null },
+    property: 'font-size', requested: '20px', observed: '20px', before: '16px', restore: 'unique' }
+  const seed = join(frame, 'edits.json')
+  await writeFile(seed, JSON.stringify({ version: 1, revision: 1, edits: [edit] }))
+  const journal = variantJournal(frame, 'draft')
+  const merge = savedPreviewFrames(root)
+  async function snapshot() {
+    const map = {}
+    await merge(map)
+    return map.variants[0].snapshot
+  }
+  async function picture(digit) {
+    const status = await journal.status()
+    const picture = { route: '/', width: 900, height: 600, small: digit.repeat(64), sharp: digit.repeat(64),
+      revision: status.revision, fingerprint: status.fingerprint }
+    return { picture, record: { ...picture, hasEdits: status.hasEdits, journalKey: snapshotJournalKey('draft', journalStamp(frame), status) } }
+  }
+  const original = await picture('a')
+  await writeFile(join(root, 'variant-previews.json'), JSON.stringify({ draft: original.record }))
+  assert.deepEqual(await snapshot(), original.picture)
+
+  const replacement = { ...edit, requested: '24px', observed: '24px' }
+  await writeFile(seed + '.new', JSON.stringify({ version: 1, revision: 1, edits: [replacement] }))
+  await rename(seed + '.new', seed)
+  assert.equal(await snapshot(), undefined, 'a matching revision alone cannot identify its pixels')
+  const changed = await picture('b')
+  const publish = item => writeFile(join(pictures, variantSnapshotFile('draft', item.record)), JSON.stringify(item.record))
+  await publish(changed)
+  assert.deepEqual(await snapshot(), changed.picture)
+  await journal.handle({ type: 'undo', expectedRevision: 1, id: edit.id })
+  assert.equal(await snapshot(), undefined, 'Undo invalidates the previous image')
+  const undone = await picture('c')
+  await publish(undone)
+  await publish(changed) // A slower capture completes after the Undo capture.
+  assert.deepEqual(await snapshot(), undone.picture)
+})
 
 test('concurrent variant changes conflict, survive archive transfer, and revert independently', async () => {
   const root = await mkdtemp(join(tmpdir(), 'portable-variant-edits-'))

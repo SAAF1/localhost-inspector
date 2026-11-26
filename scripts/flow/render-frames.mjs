@@ -5,6 +5,30 @@ const frameLabelHeight = 45
 export const flowHeadingSpace = 80
 export const frameGap = 240
 
+// Keep CSS lengths small near the camera. Browsers clamp absolute layout
+// positions near 33 million pixels, even when the final screen position is 0.
+export function positionOnCanvas(element, x, y) {
+  element.style.left = 'calc((' + x + ' - var(--canvas-origin-x, 0)) * 1px)'
+  element.style.top = 'calc((' + y + ' - var(--canvas-origin-y, 0)) * 1px)'
+}
+
+export function canvasCamera(map) {
+  const origin = { x: 0, y: 0 }
+  const step = 2 ** 18
+  return view => {
+    for (const axis of ['x', 'y']) {
+      const world = -view[axis] / view.scale
+      if (Math.abs(world - origin[axis]) > step) {
+        origin[axis] = Math.round(world / step) * step
+        map.style.setProperty('--canvas-origin-' + axis, String(origin[axis]))
+      }
+    }
+    const x = view.x + origin.x * view.scale
+    const y = view.y + origin.y * view.scale
+    map.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + view.scale + ')'
+  }
+}
+
 export function groupFlowFrames(frames) {
   // Keep hash-router pages distinct and put query variants under their base screen.
   const paths = new Set(frames.map(frame => flowPath(frame.route)))
@@ -114,7 +138,7 @@ export function renderFrames(map, data, groups, activate, viewOf, previews, swit
     let y = 0
     for (const group of groups) {
       const heading = headings.get(group)
-      if (heading) heading.style.top = y + 'px'
+      if (heading) positionOnCanvas(heading, 0, y)
       y += flowHeadingSpace
       let x = 0
       let rowHeight = 0
@@ -141,7 +165,8 @@ export function renderFrames(map, data, groups, activate, viewOf, previews, swit
             card.unavailable.replaceChildren(reason, detail, action)
           } else card.unavailable.textContent = missingPreview
         }
-        Object.assign(card.button.style, { left: x + 'px', top: y + 'px', width: width + 'px' })
+        positionOnCanvas(card.button, x, y)
+        card.button.style.width = width + 'px'
         const fittingHug = mode === 'hug' && saved?.height === height
         const file = (fittingHug && saved.hug) || saved?.fixed || (preset === 'desktop' && card.desktop)
         const imageFile = fittingHug && saved.hug ? saved.hugSharp : saved?.sharp
@@ -165,8 +190,7 @@ export function renderFrames(map, data, groups, activate, viewOf, previews, swit
       // Route alternate-state links above the row so they read as branches.
       const start = from.x + from.width / 2
       const distance = to.x + to.width / 2 - start
-      wire.style.left = start + 'px'
-      wire.style.top = from.y - 52 + 'px'
+      positionOnCanvas(wire, start, from.y - 52)
       path.setAttribute('d', 'M 0 48 V 0 H ' + distance + ' V 46 m -13 -13 13 13 13 -13')
     }
   }

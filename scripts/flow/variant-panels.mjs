@@ -11,12 +11,18 @@ export function createVariantPanels(pane, dock, changed, { getOutline, onOpenOut
   const editors = createVariantEditorDocks(dock)
   let active
   let layersReady = false
+  let sentItems
   let flowMenu
   function connect() {
     if (!active || !layersReady || !layers.contentWindow) return
     for (let index = 0; index < window.frames.length; index++) {
       if (window.frames[index] === active.app.contentWindow) {
-        layers.contentWindow.postMessage({ type: 'variant-layers-source', index, outline: getOutline?.(), flowMenu }, active.origin)
+        const outline = getOutline?.()
+        // The receiving document can reuse the immutable tree between selections.
+        const reuse = outline?.large && outline.items === sentItems
+        const message = reuse ? { ...outline, items: undefined, flows: undefined } : outline
+        layers.contentWindow.postMessage({ type: 'variant-layers-source', index, outline: message, reuse, flowMenu }, active.origin)
+        sentItems = outline?.items
         flowMenu = undefined
         break
       }
@@ -41,6 +47,7 @@ export function createVariantPanels(pane, dock, changed, { getOutline, onOpenOut
   window.addEventListener('keydown', syncCommand, true)
   window.addEventListener('keyup', syncCommand, true)
   layers.addEventListener('load', () => {
+    sentItems = undefined
     layersReady = true
     connect()
   })
@@ -90,12 +97,16 @@ export function createVariantPanels(pane, dock, changed, { getOutline, onOpenOut
     leave() { active?.stop() },
     refreshOutline: connect,
     setOutlineHover() {
-      if (active && layersReady) layers.contentWindow?.postMessage({ type: 'variant-outline-hover', key: getOutline?.()?.hoverKey }, active.origin)
+      if (active && layersReady) {
+        const outline = getOutline?.()
+        layers.contentWindow?.postMessage({ type: 'variant-outline-hover', key: outline?.hoverKey, pathKeys: outline?.pathKeys }, active.origin)
+      }
     },
     update(frame, action, node) {
       if (action === 'start') {
         if (active !== frame) active?.stop()
         active = frame
+        sentItems = undefined
         layersReady = false
         layers.src = new URL('/__inspector-flow/variant-layers.html', frame.origin).href
         pane.append(layers)

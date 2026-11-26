@@ -13,7 +13,9 @@
 .activity[hidden], .activity-list[hidden], .flow-split[hidden] { display:none; }
 .activity .activity-tabs { flex:none; width:auto; margin:8px; }
 .activity-list { min-height:0; overflow:auto; overscroll-behavior:contain; padding:0 8px 6px; }
-.activity-row { display:flex; align-items:center; gap:var(--li-gap); width:100%; min-height:30px;
+.activity-content { position:relative; }
+.activity-list { overflow-anchor:none; }
+.activity-row { position:absolute; left:0; display:flex; align-items:center; gap:var(--li-gap); width:100%; height:var(--activity-row-height); box-sizing:border-box;
   padding:var(--li-space-small) var(--li-gap); border:0; border-radius:var(--li-radius); background:transparent; color:inherit; text-align:left; font:inherit; }
 .activity-row:hover { background:var(--li-field); }
 .activity-row svg { flex:none; color:var(--li-muted); width:14px; height:14px; }

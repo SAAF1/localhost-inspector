@@ -243,7 +243,9 @@ export function connectCanvasBackground(dock, viewport) {
   function syncGeometry() {
     if (!target) { delete dock.dataset.surfaceGeometry; return }
     const style = getComputedStyle(target.element)
-    const geometry = { width: target.element.offsetWidth, height: target.element.offsetHeight,
+    const bounds = target.bounds
+    const geometry = { width: bounds ? bounds.right - bounds.left : target.element.offsetWidth,
+      height: bounds ? bounds.bottom - bounds.top : target.element.offsetHeight,
       radius: parseFloat(style.borderTopLeftRadius), stroke: style.borderTopColor, weight: parseFloat(style.borderTopWidth) }
     const encoded = JSON.stringify(geometry)
     if (dock.dataset.surfaceGeometry !== encoded) dock.dataset.surfaceGeometry = encoded
@@ -281,5 +283,15 @@ export function connectCanvasBackground(dock, viewport) {
     dock.dataset.canvasPaintTarget = surface?.key ?? ''
     apply()
   }
-  return { restore, select }
+  function savedSurfaceKeys() {
+    const keys = new Set(overrides.keys())
+    try {
+      for (const key of Object.keys(localStorage)) {
+        const prefix = preferenceKey + '/'
+        if (key.startsWith(prefix)) keys.add(key.slice(prefix.length).replace(/^geometry\//, ''))
+      }
+    } catch { /* Storage can be unavailable. */ }
+    return keys
+  }
+  return { restore, select, savedSurfaceKeys }
 }

@@ -4,6 +4,52 @@ import test from 'node:test'
 import { servePreviewAsset } from '../../scripts/flow/workspace-assets.mjs'
 import { createHarness } from './harness.mjs'
 
+test('distant saved cards and nested section surfaces stay aligned and hittable after camera jumps', async () => {
+  const h = await createHarness({ canvas: true, dock: true })
+  try {
+    const samples = await h.page.evaluate(async () => {
+      const { canvasCamera } = await import('./render-frames.mjs')
+      const { addVariantFrame } = await import('./proposal-view.mjs')
+      const { mountVariantSections, sectionBounds } = await import('./variant-sections.mjs')
+      const map = document.createElement('div')
+      map.style.cssText = 'position:fixed;left:0;top:0;z-index:1000;transform-origin:0 0'
+      document.body.append(map)
+      const project = canvasCamera(map)
+      const variants = ['near', 'far'].map(id => ({ id, label: id, section: 'Both', sectionPath: [id],
+        anchor: 'base', route: '/', origin: location.origin }))
+      const frames = new Map()
+      const layout = mountVariantSections(map, variants, new Map([['base', {}]]), (parent, item) => {
+        const frame = addVariantFrame(parent, item, 0)
+        const distance = item.id === 'far' ? 50_396_640 : 0
+        frame.place({ x: distance, y: distance, width: 320, height: 200, labelHeight: 0 }, 1)
+        frames.set(item.id, frame)
+        return frame
+      })
+      layout()
+      const outer = map.querySelector('.variant-section-surface')
+      const result = []
+      for (const id of ['near', 'far', 'near']) {
+        const { x, y } = frames.get(id).bounds
+        project({ x: 200.25 - x * .81, y: 160.5 - y * .81, scale: .81 })
+        const card = map.querySelector('[data-variant="' + id + '"]')
+        const box = card.getBoundingClientRect()
+        const surface = card.parentElement.firstElementChild
+        const local = surface.getBoundingClientRect()
+        const whole = outer.getBoundingClientRect()
+        result.push({ left: box.left, top: box.top, cardHit: document.elementFromPoint(240, 200)?.closest('.linked-frame') === card,
+          sectionHit: document.elementFromPoint(183, 210) === surface, contains: whole.left <= local.left && whole.right >= local.right &&
+            whole.top <= local.top && whole.bottom >= local.bottom, modelWidth: sectionBounds.get(outer).right - sectionBounds.get(outer).left })
+      }
+      map.remove()
+      return result
+    })
+    for (const sample of samples) {
+      assert.ok(Math.abs(sample.left - 200.25) < .1 && Math.abs(sample.top - 160.5) < .1, JSON.stringify(sample))
+      assert.ok(sample.cardHit && sample.sectionHit && sample.contains && sample.modelWidth > 50_000_000, JSON.stringify(sample))
+    }
+  } finally { await h.close() }
+})
+
 test('sidebar navigation centers frames, sections and elements between both open panels at 50%', async t => {
   const server = createServer((request, response) => {
     if (!servePreviewAsset(request.url, response)) response.end('<h1>Draft preview</h1>')

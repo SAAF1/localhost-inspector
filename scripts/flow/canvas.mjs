@@ -132,9 +132,9 @@ async function attachSource(directory, id, source) {
   await register(join(frame, 'source.json'), { path: relative(await realpath(directory), await realpath(source)) })
 }
 
-export async function canvasVariants(directory) {
+export async function canvasVariants(directory, owner) {
   const names = await readdir(join(directory, 'variants'), { withFileTypes: true })
-  const frames = await Promise.all(names.filter(item => item.isDirectory() && validId.test(item.name)).map(async item => {
+  const frames = await Promise.all(names.filter(item => item.isDirectory() && validId.test(item.name) && (!owner || item.name === owner)).map(async item => {
     const frame = await json(join(directory, 'variants', item.name, 'frame.json'))
     if (frame.id !== item.name) throw Error('Mismatched saved frame ID')
     return frame
