@@ -1,3 +1,5 @@
+import { componentFingerprint } from './component-proof.mjs'
+import { literalStyleInput } from './component-parts.mjs'
 import { classMemberExpression } from './class-composition.mjs'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -78,6 +80,18 @@ export function preparedStyleTargets(site, node, code) {
   const targets = []
   for (const style of site.styles ?? (site.style ? [site.style] : [])) {
     const { attribute, property, literal } = style
+    if (style.part === 'surface') {
+      if (!site.surface || site.surface.file!==style.css?.file || site.surface.member!==style.css?.member ||
+          !['background-color','border-radius'].includes(property)) return
+      targets.push({style})
+      continue
+    }
+    if (style.styleInput) {
+      const value = literalStyleInput(node, property)
+      if (property !== 'height' || !value || value.value !== style.base) return
+      targets.push({style,start:value.start,end:value.end})
+      continue
+    }
     if (style.css?.member && site.moduleClass?.file === style.css.file &&
         site.moduleClass.member === style.css.member && styleProperties.has(property)) {
       targets.push({ style })
@@ -131,7 +145,15 @@ export function preparedRevision(root, namespace, site, code, tree, owner, depen
         return null
       }
     }
-    hash.update(dependencies.get(path))
+    const proof = site.componentProof?.[path]
+    if (proof) {
+      const key = 'component:' + path
+      try {
+        if (!dependencies.has(key)) dependencies.set(key,componentFingerprint(dependencies.get(path).toString()))
+      } catch { return null }
+      if (dependencies.get(key) !== proof) return null
+      hash.update(proof)
+    } else hash.update(dependencies.get(path))
   }
   return hash.digest('hex')
 }

@@ -5,8 +5,7 @@ import { join } from 'node:path'
 
 export const classJoinPackages = new Set(['classnames', 'clsx'])
 
-export async function resolvedClassJoin(container, specifier, importer) {
-  if (!classJoinPackages.has(specifier)) return false
+export async function resolvedPackageEntry(container, specifier, importer, major) {
   const result = await container.resolveId(specifier, importer, { scan: true })
   const id = result?.id
   if (!id) return false
@@ -16,9 +15,13 @@ export async function resolvedClassJoin(container, specifier, importer) {
   const root = id.slice(0, boundary + marker.length)
   try {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-    return pkg.name === specifier && /^2\./.test(pkg.version) &&
+    return pkg.name === specifier && pkg.version.split('.')[0] === String(major) &&
       [pkg.main, pkg.module].some(entry => entry && join(root, entry) === id)
   } catch { return false }
+}
+
+export function resolvedClassJoin(container, specifier, importer) {
+  return classJoinPackages.has(specifier) && resolvedPackageEntry(container, specifier, importer, 2)
 }
 
 // Only a flat list of static string arguments and one fixed module member

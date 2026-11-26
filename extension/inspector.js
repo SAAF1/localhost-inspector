@@ -497,9 +497,13 @@
     const preparedStylesUnavailable = document.querySelector('meta[name="inspector-prepared-styles"][content="unavailable"]')
     scope.hidden = !shared.length && editScope.hidden && !(hasSelection && preparedStylesUnavailable)
     const actions = (use?.actions ?? (use ? [use.family] : [])).filter(action => authored.eligible(node, action))
+    let origin
+    try { origin = JSON.parse(node?.getAttribute('data-li-source-use')) } catch { /* Unmarked source. */ }
     const authoredLabel = actions.map(action => action === 'paint' ? 'text color' : 'fixed spacing').join(', ')
     scope.textContent = [authoredUse && hasSelection && (authoredLabel
       ? 'Shared candidate source · ' + authoredLabel : 'Shared candidate source unavailable for text color and fixed spacing'),
+      authoredUse && !shared.length && origin?.file && 'Selected source · ' + origin.file + ' · ' + origin.owner,
+      shared.length && contract.surface && 'Selected envelope and its direct painted surface',
       shared.length && 'Shared source controls · ' + shared.join(', '),
       authoredUse && hasSelection && (editScope.value === 'selected'
         ? 'Selected occurrence preview · separate from source handoff'
@@ -863,7 +867,13 @@
       : []
     function verified(edit) {
       edit.observed = ui.preparedPreview.read(node, edit)
-      return ui.preparedPreview.showsEffect(node, edit, contract, edit.observed)
+      const members = document.querySelectorAll('[data-li-revision="'+contract.revision+'"]')
+      return members.length > 0 && Array.from(members).every(member => {
+        const active = ui.preparedPreview.contract(member)
+        return active?.revision === contract.revision &&
+          (field || active.style === edit.property || active.styles?.includes(edit.property)) &&
+          ui.preparedPreview.showsEffect(member, edit, active)
+      })
     }
     try {
       recovery.projectPrepared(records)

@@ -16,12 +16,31 @@
     const check = input.verify?.[option]
     return check?.self ? node.matches(check.self) : Boolean(check?.child && node.querySelector(check.child))
   }
+  function surfacePart(node, contract, property) {
+    const surface = contract?.surface
+    if (!surface?.ready[property]) return node
+    const part = node.firstElementChild
+    if (node.childElementCount !== 1 || !part || part.localName !== surface.tag ||
+        part.getAttribute('data-li-surface') !== contract.revision ||
+        getComputedStyle(part).getPropertyValue(surface.ready[property]).trim() !== '1') return
+    const outer = node.getBoundingClientRect(), inner = part.getBoundingClientRect()
+    const css = getComputedStyle(node)
+    if (inner.width <= 0 || inner.height <= 0 ||
+        ['top','left','bottom','right'].some(side => Math.abs(inner[side]-outer[side]) >
+          (parseFloat(css.getPropertyValue('border-'+side+'-width')) || 0)+1)) return
+    return part
+  }
   function read(node, edit) {
     return edit.prepared.field ? node.getAttribute('data-li-choice') :
-      getComputedStyle(node).getPropertyValue(edit.property)
+      getComputedStyle(surfacePart(node, contract(node), edit.property) ?? node).getPropertyValue(edit.property)
   }
   function showsEffect(node, edit, prepared, observed = read(node, edit)) {
     const { property, requested, spacingToken, colorToken } = edit
+    if (prepared?.surface) {
+      const part = surfacePart(node, prepared, property)
+      if (!part || (prepared.surface.envelope.includes(property) &&
+          getComputedStyle(node).getPropertyValue(property) !== observed)) return false
+    }
     if (edit.prepared.field)
       return prepared.input?.field === edit.prepared.field && observed === requested &&
         shows(node, prepared.input, requested)
@@ -52,6 +71,11 @@
         revisions[c.site] === c.revision &&
         node.getAttribute('data-li-revision') === c.revision
       ) {
+        if (c.surface) c.styles = c.styles.filter(property => surfacePart(node,c,property))
+        if (c.styleInputs) c.styles = c.styles.filter(property => {
+          const input = c.styleInputs[property]
+          return !input || (node.localName === input.tag && node.style.getPropertyValue(property) === input.expression)
+        })
         if(c.cssReady){
           const computed=getComputedStyle(node)
           const available=key=>!c.cssReady[key] || (!c.logicalInline?.includes(key) || (computed.writingMode==='horizontal-tb' && computed.direction==='ltr')) && computed.getPropertyValue(c.cssReady[key]).trim()==='1'

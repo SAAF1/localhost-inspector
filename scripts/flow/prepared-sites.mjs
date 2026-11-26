@@ -1,3 +1,6 @@
+import { componentFingerprint } from './component-proof.mjs'
+import { markSourceSelections } from './selection-provenance.mjs'
+import { onlyElement } from './component-surface.mjs'
 import { classMemberExpression, classJoinPackages, resolvedClassJoin } from './class-composition.mjs'
 import { prepareProject } from './prepare-project.mjs'
 // Explicit development recipes for qualified JSX sites. An ambiguous opening
@@ -148,6 +151,13 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
         (site) => changedManifest || site.dependencies?.includes(relative(root, file)),
       )
       if (!affected.length) return
+      const path = relative(root,file)
+      if (affected.every(site => site.componentProof?.[path])) {
+        try {
+          const fingerprint=componentFingerprint(readFileSync(file,'utf8'))
+          if (affected.every(site=>site.componentProof[path]===fingerprint)) return
+        } catch { /* Requalify or retire the prior proof below. */ }
+      }
       const dirty = new Set(modules)
       for (const site of affected) {
         for (const mod of server.moduleGraph.getModulesByFile(join(root, site.file)) ?? []) dirty.add(mod)
@@ -262,6 +272,8 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
               continue
             slotTag = slots[0].openingElement.name
           }
+          const surface = site.surface && onlyElement(children)?.openingElement
+          if (site.surface && (!surface || code.slice(surface.start,surface.end)!==site.surface.opening)) continue
           const revision = preparedRevision(root, namespace, site, code, tree, owner, dependencies)
           if (!revision) continue
           revisions[site.id] = revision
@@ -270,12 +282,20 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           const prefix = '--li-' + revision.slice(0, 20)
           const fields = {}
           let markers = ''
+          if(surface){
+            out.appendLeft(surface.attributes.at(-1)?.end ?? surface.name.end, ' data-li-surface="'+revision+'"')
+            fields.surface = {tag:site.surface.tag, ready:{}, envelope:[]}
+          }
           for (const { style, start, end } of targets) {
             const { property, literal, unit = '', utility } = style
             const variable = site.styles ? prefix + '-' + property : prefix
             // Preserve dynamic inline/sx ownership. The variable is consumed at
             // the original declaration, so hover and media rules still compete normally.
-            if (style.local) {
+            if (style.styleInput) {
+              const expression = 'var(' + variable + ', ' + style.base + ')'
+              out.overwrite(start, end, JSON.stringify(expression))
+              ;(fields.styleInputs ??= {})[property] = { tag: style.tag, expression }
+            } else if (style.local) {
               ;(fields.local ??= {})[property] = style.local
             } else if (utility || style.css) {
               const shorthand = style.css?.declaration === 'padding'
@@ -291,13 +311,19 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
                 binding =
                   key + ':var(' + prefix + '-padding);' + prefix + '-base-' + property + ':' + fallback + ';'
               }
-              registrationsForModule.add(registrations + ' [data-li-revision="' + revision + '"]{' + binding + '}')
-              ;(fields.cssReady ??= {})[property] = marker
+              const selected = '[data-li-revision="' + revision + '"]'
+              const selector = style.part === 'surface' ? selected+' > [data-li-surface="'+revision+'"]' : selected
+              registrationsForModule.add(registrations + ' ' + selector + '{' + binding + '}')
+              if (style.part === 'surface') fields.surface.ready[property] = marker
+              else {
+                ;(fields.cssReady ??= {})[property] = marker
+                if (surface) fields.surface.envelope.push(property)
+              }
             } else {
               const fallback = '"var(' + variable + ', " + (' + literal + ') + ' + JSON.stringify(unit + ')')
               out.overwrite(start, end, '(' + fallback + ')')
             }
-            if (site.styles) (fields.styles ??= []).push(property)
+            if (site.styles) { if (!(fields.styles ??= []).includes(property)) fields.styles.push(property) }
             else fields.style = property
           }
           if (site.input) {
@@ -373,11 +399,12 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           )
         }
         if (authoredUseSchema) {
+          const selected = manifestData.panelBindings && markSourceSelections(file,code,openings,out)
           const marked = await addAuthoredUseMarkers({
             root, file, code, tree, out, reserved, schema: authoredUseSchema,
             resolveImport: async (specifier) => (await this.resolve(specifier, id))?.id,
           })
-          if (!recipes.length) return marked ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
+          if (!recipes.length) return (selected || marked) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
         }
         // Report known-but-stale sites separately from an absent scene. The registry
         // contains only mappings for modules loaded in this page.

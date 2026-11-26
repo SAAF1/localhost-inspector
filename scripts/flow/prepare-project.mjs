@@ -8,6 +8,10 @@ import { parse } from '@babel/parser'
 import { baseRule, cssFields, cssParser } from './prepared-css.mjs'
 import { moduleReference, literalColorAttribute, panelOpening } from './prepared-site-qualification.mjs'
 import { localBindingNames } from './authored-use.mjs'
+import { sourceUseId } from './selection-provenance.mjs'
+import { componentSurface } from './component-surface.mjs'
+import { componentProof } from './component-proof.mjs'
+import { componentDefinitions, returnedPart, literalStyleInput } from './component-parts.mjs'
 import { forwardedHost } from './authored-forwarding.mjs'
 import { stylesheetGraph } from './stylesheet-graph.mjs'
 import { typeModule } from '../../component-types.mjs'
@@ -86,7 +90,7 @@ function analyze(code, file, config) {
       const moduleClass = reference && config.css.moduleClasses.get(JSON.stringify([reference.file, reference.member]))
       const moduleUse = moduleClass && /^[a-z]/.test(name)
       const raw = {
-        id: 'use-' + hash(JSON.stringify([file, entry.owner, text])).slice(0, 24),
+        id: sourceUseId(file, entry.owner, text),
         file,
         owner: entry.owner,
         opening: text,
@@ -96,10 +100,24 @@ function analyze(code, file, config) {
       // Keep the existing qualified Button adapter ahead of style discovery.
       const panelHost = host && !(config.button && imports.get(name)?.from === '@/components/ui/button')
       if (panelHost) raw.dependencies = [...raw.dependencies, host.path]
+      const surface = reference && componentSurface(node, {config,file,code,imports,locals,outer:moduleClass,reference})
+      const fixedHeight = config.panelBindings && !locals.has(name) && /^[A-Z]/.test(name) && literalStyleInput(opening,'height')
+      const def = fixedHeight && config.definition(file, imports.get(name))
+      const part = def && returnedPart(def, opening, config.hostLibrary)
+      const styleProp = part && part.host.attributes.find(a=>a.name?.name==='style')?.value?.expression
+      const forwardsStyle = part && styleProp?.type==='Identifier' && styleProp.name === part.props.get('style')
       let reason = 'no qualified operation'
       if (!owner || opening.attributes.some((a) => a.type === 'JSXSpreadAttribute'))
         reason = 'opaque owner or spread'
-      else if (typeof name === 'string' && (/^[a-z]/.test(name) || panelHost) && (typeof classes === 'string' || moduleUse || !attr('className'))) {
+      else if (surface) {
+        found.push({ ...raw, moduleClass:reference, surface:surface.surface, styles:surface.styles, componentProof:config.proof(surface.componentFiles),
+          dependencies:[...new Set([...raw.dependencies,...surface.dependencies,...config.css.tokenFiles])] })
+        reason=null
+      } else if (forwardsStyle) {
+        found.push({ ...raw, componentProof:config.proof(def.files), dependencies:[...new Set([...raw.dependencies,...def.files])],
+          styles:[{property:'height', styleInput:true, tag:part.tag, base:fixedHeight.value}] })
+        reason = null
+      } else if (typeof name === 'string' && (/^[a-z]/.test(name) || panelHost) && (typeof classes === 'string' || moduleUse || !attr('className'))) {
         const tokens = (classes ?? '').split(/\s+/).filter(Boolean)
         const eligible = tokens.flatMap((literal) => {
           const declarations = config.css.classes.get(literal) ?? []
@@ -172,7 +190,7 @@ function analyze(code, file, config) {
         }
         if (styles.some(style => style.local) && /^[a-z]/.test(name)) {
           raw.opening = panelOpening(code, opening)
-          raw.id = 'use-' + hash(JSON.stringify([file, entry.owner, raw.opening])).slice(0, 24)
+          raw.id = sourceUseId(file,entry.owner,raw.opening)
         }
         if (styles.length) {
           found.push({
@@ -236,7 +254,10 @@ function analyze(code, file, config) {
           } else reason = 'no verified direct finite slot or variant'
         }
       }
-      if (reason) rejected.push({ ...entry, reason })
+      if (reason) rejected.push(config.panelBindings ? {
+        ...entry, sourceUse:raw.id, tag:name, importedFrom:imports.get(name)?.from,
+        resolvedFile:config.resolved.get(JSON.stringify([file,imports.get(name)?.from])), reason,
+      } : {...entry,reason})
     }
     for (const value of Object.values(node)) {
       if (Array.isArray(value)) for (const child of value) visit(child, owner, node.type === 'JSXElement' ? node : undefined)
@@ -328,9 +349,14 @@ export async function prepareProject(project, destination, namespace, boundary =
     throw Error('Use an app source subdirectory and an external manifest.')
   const resolved = new Map()
   const classJoins = new Set()
+  const motion = new Set()
   const graph = await stylesheetGraph(root, server, panelBindings ? (file, spec, path) => {
-    if (/\.[jt]sx$|\.module\.css$/.test(path)) resolved.set(JSON.stringify([file, spec]), path)
-  } : undefined, panelBindings ? (file, spec) => classJoins.add(JSON.stringify([file, spec])) : undefined)
+    if (/\.[jt]sx?$|\.module\.css$/.test(path)) resolved.set(JSON.stringify([file, spec]), path)
+  } : undefined, panelBindings ? (file, spec) => classJoins.add(JSON.stringify([file, spec])) : undefined,
+    panelBindings ? (file,spec) => motion.add(JSON.stringify([file,spec])) : undefined)
+  const definition = componentDefinitions(root, resolved)
+  const proof = componentProof(root)
+  const hostLibrary = (file,spec) => motion.has(JSON.stringify([file,spec]))
   const forwarding = new Map()
   function forwarded(file, spec) {
     const path = spec && resolved.get(JSON.stringify([file, spec.from]))
@@ -384,7 +410,7 @@ export async function prepareProject(project, destination, namespace, boundary =
           }
           trees.set(path, cached)
         }
-        const result = analyze(code, file, { theme, button, tailwind, panelBindings, forwarded, resolved, classJoins, dependencies: deps, tree: cached.tree, css })
+        const result = analyze(code, file, { theme, button, tailwind, panelBindings, forwarded, resolved, classJoins, definition, hostLibrary, proof, dependencies: deps, tree: cached.tree, css })
         sites.push(...result.sites)
         unresolved.push(...result.rejected)
         files.push({ file, status: 'indexed', candidates: result.sites.length })
