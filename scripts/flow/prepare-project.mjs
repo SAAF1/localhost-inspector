@@ -9,6 +9,7 @@ import { baseRule, cssFields, panelCssFields, cssParser } from './prepared-css.m
 import { moduleReference, literalColorAttribute, panelOpening } from './prepared-site-qualification.mjs'
 import { localBindingNames } from './authored-use.mjs'
 import { sourceUseId } from './selection-provenance.mjs'
+import { finiteComponentInput } from './finite-component-input.mjs'
 import { componentSurface } from './component-surface.mjs'
 import { componentProof } from './component-proof.mjs'
 import { componentDefinitions, returnedPart, literalStyleInput } from './component-parts.mjs'
@@ -106,6 +107,12 @@ function analyze(code, file, config) {
       const part = def && returnedPart(def, opening, config.hostLibrary)
       const styleProp = part && part.host.attributes.find(a=>a.name?.name==='style')?.value?.expression
       const forwardsStyle = part && styleProp?.type==='Identifier' && styleProp.name === part.props.get('style')
+      const finiteDefinition = config.panelBindings && owner?.type === 'FunctionDeclaration' && /^[A-Z]/.test(name) &&
+        !locals.has(name) && !(config.button && imports.get(name)?.from === '@/components/ui/button') &&
+        opening.attributes.some(a=>a.value?.type==='StringLiteral' && !['className','id','role'].includes(a.name?.name)) &&
+        config.definition(file, imports.get(name))
+      const finite = finiteDefinition && config.hostLibrary(finiteDefinition.file,'class-variance-authority') &&
+        finiteComponentInput(config.root,finiteDefinition,opening)
       let reason = 'no qualified operation'
       if (!owner || opening.attributes.some((a) => a.type === 'JSXSpreadAttribute'))
         reason = 'opaque owner or spread'
@@ -113,6 +120,10 @@ function analyze(code, file, config) {
         found.push({ ...raw, moduleClass:reference, surface:surface.surface, styles:surface.styles, componentProof:config.proof(surface.componentFiles),
           dependencies:[...new Set([...raw.dependencies,...surface.dependencies,...config.css.tokenFiles])] })
         reason=null
+      } else if (finite) {
+        found.push({...raw,input:finite,componentProof:config.proof(finiteDefinition.files),
+          dependencies:[...new Set([...raw.dependencies,...finiteDefinition.files])]})
+        reason = null
       } else if (forwardsStyle) {
         found.push({ ...raw, componentProof:config.proof(def.files), dependencies:[...new Set([...raw.dependencies,...def.files])],
           styles:[{property:'height', styleInput:true, tag:part.tag, base:fixedHeight.value}] })
@@ -360,14 +371,14 @@ export async function prepareProject(project, destination, namespace, boundary =
     throw Error('Use an app source subdirectory and an external manifest.')
   const resolved = new Map()
   const classJoins = new Set()
-  const motion = new Set()
+  const libraries = new Set()
   const graph = await stylesheetGraph(root, server, panelBindings ? (file, spec, path) => {
     if (/\.[jt]sx?$|\.module\.css$/.test(path)) resolved.set(JSON.stringify([file, spec]), path)
   } : undefined, panelBindings ? (file, spec) => classJoins.add(JSON.stringify([file, spec])) : undefined,
-    panelBindings ? (file,spec) => motion.add(JSON.stringify([file,spec])) : undefined)
+    panelBindings ? (file,spec) => libraries.add(JSON.stringify([file,spec])) : undefined)
   const definition = componentDefinitions(root, resolved)
   const proof = componentProof(root)
-  const hostLibrary = (file,spec) => motion.has(JSON.stringify([file,spec]))
+  const hostLibrary = (file,spec) => libraries.has(JSON.stringify([file,spec]))
   const forwarding = new Map()
   function forwarded(file, spec) {
     const path = spec && resolved.get(JSON.stringify([file, spec.from]))
@@ -421,7 +432,7 @@ export async function prepareProject(project, destination, namespace, boundary =
           }
           trees.set(path, cached)
         }
-        const result = analyze(code, file, { theme, button, tailwind, panelBindings, forwarded, resolved, classJoins, definition, hostLibrary, proof, dependencies: deps, tree: cached.tree, css })
+        const result = analyze(code, file, { root, theme, button, tailwind, panelBindings, forwarded, resolved, classJoins, definition, hostLibrary, proof, dependencies: deps, tree: cached.tree, css })
         sites.push(...result.sites)
         unresolved.push(...result.rejected)
         files.push({ file, status: 'indexed', candidates: result.sites.length })

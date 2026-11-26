@@ -24,10 +24,10 @@ function scriptImports(source) {
   visit(ast.program)
   return imports
 }
-export async function stylesheetGraph(root, running, onProjectImport, onClassJoin, onMotion) {
+export async function stylesheetGraph(root, running, onProjectImport, onClassJoin, onLibrary) {
   if (!running && realpathSync(process.cwd()) !== realpathSync(root)) {
     const { discoverProjectStyles } = await import('./project-stylesheet-graph.mjs')
-    return discoverProjectStyles(root,onProjectImport,onClassJoin,onMotion)
+    return discoverProjectStyles(root,onProjectImport,onClassJoin,onLibrary)
   }
   const { createServer } = await projectVite(root)
   const server =
@@ -62,8 +62,9 @@ export async function stylesheetGraph(root, running, onProjectImport, onClassJoi
     }
     if (!served && onClassJoin && classJoinPackages.has(id) && await resolvedClassJoin(container, id, importer))
       onClassJoin(relative(root, importer), id)
-    if (!served && onMotion && id === 'framer-motion' && await resolvedPackageEntry(container,id,importer,12))
-      onMotion(relative(root, importer), id)
+    const major = id === 'framer-motion' ? 12 : id === 'class-variance-authority' ? 0 : undefined
+    if (!served && onLibrary && major !== undefined && await resolvedPackageEntry(container,id,importer,major))
+      onLibrary(relative(root, importer), id)
     if (!resolved.startsWith(root + '/') || resolved.includes('/node_modules/')) return
     const file = relative(root, resolved)
     if (!served) onProjectImport?.(relative(root, importer), id, file)

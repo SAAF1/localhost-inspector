@@ -228,7 +228,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           if (matches.length !== 1) continue
           const adapter = manifestData.buttonAdapter
           if (
-            site.input &&
+            site.input && !site.input.component &&
             adapter &&
             (!compatibleAlias ||
               !statSync(join(root, adapter.file), { throwIfNoEntry: false }) ||
@@ -256,7 +256,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
                 (key) =>
                   typeof key === 'string' &&
                   /^[\w-]{1,60}$/.test(key) &&
-                  (verify?.[key]?.self || verify?.[key]?.child) &&
+                  (verify?.[key]?.self || verify?.[key]?.child || (site.input.component && verify?.[key]?.tokens?.length)) &&
                   (!(choices || child) || /^[A-Z][\w]*$/.test(choices?.[key] ?? '')),
               )
             )
@@ -373,7 +373,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
               )
             }
             markers += ' data-li-choice={' + state + ' ?? ' + JSON.stringify(base) + '}'
-            fields.input = { field, options, base, verify: site.input.verify }
+            fields.input = { field, options, base, verify: site.input.verify, ...(site.input.component ? {component:site.input.component} : {}) }
             usesInput = true
           }
           if (fields.local) {

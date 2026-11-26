@@ -154,7 +154,7 @@ export function preparedStyles(root, manifest) {
       let output = prepared
       if (rendered) {
         try {
-          if (bindRenderedDeclarations(sheet,file,originalValues)) output = sheet.toString()
+          if (bindRenderedDeclarations(sheet,file,originalValues,inventory.sites.some(s=>s.input?.component))) output = sheet.toString()
         } catch (error) {
           this.warn('Rendered declaration preparation unavailable for ' + file + ': ' + error.message)
         }

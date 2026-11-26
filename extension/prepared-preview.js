@@ -12,7 +12,23 @@
   function stale(edit) {
     return Object.hasOwn(revisions, edit.prepared.site) && revisions[edit.prepared.site] !== edit.prepared.revision
   }
+  const choiceProperties = ['background-color','color','font-size','height','width']
+  function choiceFields(node,input,option) {
+    if (!input?.component) return []
+    const live = ui.sourceComponentRequest(node,{type:'inspect'})
+    if (live?.source !== input.component || live.properties.find(p=>p.id===input.field)?.value !== option) return []
+    const tokens = input.verify?.[option]?.tokens ?? []
+    return choiceProperties.filter(property => {
+      const owner = declaration(node,property)
+      return owner && tokens.some(token=>node.classList.contains(token) && owner.selector === '.'+CSS.escape(token))
+    })
+  }
+  function choiceValues(node) {
+    const css=getComputedStyle(node)
+    return Object.fromEntries(choiceProperties.map(property=>[property,css.getPropertyValue(property)]))
+  }
   function shows(node, input, option) {
+    if (input?.component) return choiceFields(node,input,option).length > 0
     const check = input.verify?.[option]
     return check?.self ? node.matches(check.self) : Boolean(check?.child && node.querySelector(check.child))
   }
@@ -133,6 +149,11 @@
       const part = surfacePart(node, prepared, property)
       if (!part || (prepared.surface.envelope.includes(property) &&
           getComputedStyle(node).getPropertyValue(property) !== observed)) return false
+    }
+    if (edit.prepared.effect) {
+      const {property,value} = edit.prepared.effect
+      if (!choiceFields(node,prepared.input,requested).includes(property) ||
+          getComputedStyle(node).getPropertyValue(property) !== value) return false
     }
     if (edit.prepared.field)
       return prepared.input?.field === edit.prepared.field && observed === requested &&
@@ -297,5 +318,5 @@
     const edit = revision && declarations.get(revision + ':' + property)
     return edit?.property === property ? edit.requested : undefined
   }
-  ui.preparedPreview = { membersOf, samePart, contract, project, locate, authored, shows, read, showsEffect, observe }
+  ui.preparedPreview = { choiceFields, choiceValues, membersOf, samePart, contract, project, locate, authored, shows, read, showsEffect, observe }
 })()

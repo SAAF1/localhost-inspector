@@ -5,7 +5,7 @@ import { fork } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { stylesheetGraph } from './stylesheet-graph.mjs'
 
-export function discoverProjectStyles(root, projectImport, classJoin, motion) {
+export function discoverProjectStyles(root, projectImport, classJoin, libraries) {
 	const worker = fork(
 		fileURLToPath(import.meta.url),
 		['--collect', String(Boolean(projectImport))],
@@ -35,7 +35,7 @@ export function discoverProjectStyles(root, projectImport, classJoin, motion) {
 			try {
 				for (const args of response.imports) projectImport?.(...args)
 				for (const args of response.joins) classJoin?.(...args)
-				for (const args of response.motion) motion?.(...args)
+				for (const args of response.libraries) libraries?.(...args)
 				resolve(response.graph)
 			} catch (err) {
 				reject(err)
@@ -50,7 +50,7 @@ if (
 ) {
 	const imports = [],
 		joins = [],
-		motion = []
+		libraries = []
 	const collect = process.argv[3] === 'true'
 	try {
 		const graph = await stylesheetGraph(
@@ -58,9 +58,9 @@ if (
 			undefined,
 			collect ? (...args) => imports.push(args) : undefined,
 			collect ? (...args) => joins.push(args) : undefined,
-			collect ? (...args) => motion.push(args) : undefined,
+			collect ? (...args) => libraries.push(args) : undefined,
 		)
-		process.send({ graph, imports, joins, motion })
+		process.send({ graph, imports, joins, libraries })
 	} catch (error) {
 		process.send({ error: error.message })
 		process.exitCode = 1

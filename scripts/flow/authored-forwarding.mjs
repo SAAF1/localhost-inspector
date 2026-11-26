@@ -42,7 +42,7 @@ export function forwardedHost(code, exported, { requireChildren = false, onHost 
   }
   const statement = fn.body.body[0]
   const root = statement.type === 'ReturnStatement' && statement.argument
-  const opening = root?.type === 'JSXElement' && root.openingElement
+  const opening = root?.type === 'JSXElement' ? root.openingElement : undefined
   const tag = opening?.name.name
   if (!opening || !/^[a-z][a-z0-9]*$/.test(tag ?? '')) return
   const spreads = opening.attributes.filter((attr) => attr.type === 'JSXSpreadAttribute')

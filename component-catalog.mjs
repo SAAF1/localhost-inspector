@@ -21,7 +21,7 @@ function walk(node, visit) {
 export function componentContracts(source, file, onContract, resolveImport) {
   if (!source.includes('<')) return []
   const ast = parse(source, { sourceType: 'unambiguous', plugins: ['jsx', 'typescript', 'decorators-legacy'] })
-  const recipeChoices = new Map()
+  const recipeChoices = new Map(), recipeClasses = new Map()
   const recipeDefaults = new Map()
   const module = typeModule(ast, file)
   const contexts = new Set(), variants = new Map(), functions = []
@@ -62,14 +62,21 @@ export function componentContracts(source, file, onContract, resolveImport) {
         recipeDefaults.set(node.id.name, new Map((defaults?.value?.properties ?? [])
           .filter(p => !p.computed && ['StringLiteral','BooleanLiteral','NumericLiteral'].includes(p.value?.type))
           .map(p => [key(p.key), p.value.value])))
-        const dimensions = new Map()
+        const dimensions = new Map(), classes = new Map()
         for (const dimension of options?.value?.properties ?? []) {
           if (dimension.computed || dimension.value?.type !== 'ObjectExpression') continue
           if (dimension.value.properties.some(p => p.type !== 'ObjectProperty' || p.computed)) continue
           const names = dimension.value.properties.map(p => String(key(p.key)))
+          if (dimension.value.properties.every(p=>p.value?.type==='StringLiteral')) {
+            const choices = dimension.value.properties.map(p=>[key(p.key),p.value.value.trim().split(/\s+/).filter(t=>/^[\w-]+$/.test(t))])
+            classes.set(key(dimension.key),Object.fromEntries(choices.map(([option,tokens])=>[option,{
+              tokens:tokens.filter(t=>choices.every(([other,others])=>other===option || !others.includes(t))),
+            }])))
+          }
           dimensions.set(key(dimension.key), names.map(name => ['true', 'false'].includes(name) ? name === 'true' : name))
         }
         recipeChoices.set(node.id.name, dimensions)
+        recipeClasses.set(node.id.name,classes)
         variants.set(node.id.name, new Set(options?.value?.properties?.map(p => key(p.key))))
       }
     }
@@ -181,7 +188,22 @@ export function componentContracts(source, file, onContract, resolveImport) {
         ...(defaults.size ? { defaults: Object.fromEntries(defaults) } : {}),
         ...(Object.keys(editable).length ? { options: editable } : {}) }
       result.push(contract)
-      onContract?.(contract, fn, roots)
+      if (onContract) {
+        const recipes = new Map()
+        for (const el of roots) {
+          const attr = el.attributes.find(a=>key(a.name)==='className')
+          walk(attr?.value, expression => {
+            if (expression.type !== 'CallExpression') return
+            const recipe = recipeClasses.get(expression.callee.name)
+            if (!recipe) return
+            for (const arg of expression.arguments[0]?.properties ?? []) {
+              const field = propName(arg.value), choices = recipe.get(key(arg.key))
+              if (field && choices) recipes.set(field,recipes.has(field) ? null : {name:expression.callee.name,choices})
+            }
+          })
+        }
+        onContract(contract, fn, roots, recipes)
+      }
     }
   }
   return result

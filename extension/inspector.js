@@ -63,9 +63,10 @@
     if (contract?.input) {
       const { field, options } = contract.input
       const value = node.getAttribute('data-li-choice')
+      const localProperty = component?.properties.find(p=>p.id===field)
       component = { ...(component ?? { name: contract.site }), prepared: contract,
         properties: [...(component?.properties ?? []).filter(p => p.id !== field),
-          { id: field, options, value, prepared: true, unavailableReason: ui.preparedPreview.shows(node, contract.input, value) ? null : 'Unavailable in this state' }] }
+          { id: field, options, value, localProperty, prepared: true, unavailableReason: ui.preparedPreview.shows(node, contract.input, value) ? null : 'Unavailable in this state' }] }
     }
     if (!component) return
     if (request !== componentRead || node !== selection.current || !node.isConnected || route !== currentRoute) return
@@ -78,6 +79,13 @@
     if (selection.current !== node || !node.isConnected || comparing || !isCurrentRoute(path, version)) {
       throw Error('Select the component again before changing its preview.')
     }
+    const selectedOnly = authoredUse && get('authored-edit-scope').value === 'selected'
+    if (property.prepared && selectedOnly) {
+      if (!component.sourcePreview || !property.localProperty) throw Error('This component choice has no selected-occurrence preview.')
+      property = property.localProperty
+    }
+    if (authoredUse && !selectedOnly && !property.prepared)
+      throw Error('Shared source is unavailable for this component choice. Selected element only previews this occurrence.')
     if (property.prepared) {
       if (property.value === next || !property.options.includes(next)) return
       await commitPrepared(node, component.prepared, 'component-' + property.id, next, undefined, property.id)
@@ -864,6 +872,8 @@
       sourceContext: ui.describeSourceContext(node),
       viewport: { width: innerWidth, height: innerHeight },
     }))
+    const previousChoice = field && contract.input?.component ? new Map(
+      [...ui.preparedPreview.membersOf(contract.revision)].map(member=>[member,ui.preparedPreview.choiceValues(member)])) : null
     const boundParts = records.filter(edit => edit.prepared.part)
     if (boundParts.length) {
       const members = ui.preparedPreview.membersOf(contract.revision)
@@ -878,6 +888,18 @@
     function verified(edit) {
       edit.observed = ui.preparedPreview.read(node, edit)
       const members = ui.preparedPreview.membersOf(contract.revision)
+      if (previousChoice) {
+        const fields = ui.preparedPreview.choiceFields(node, contract.input, requested)
+        const property = fields.find(key => [...members].every(member => {
+          const old = previousChoice.get(member)
+          return old && ui.preparedPreview.choiceFields(member,contract.input,requested).includes(key) &&
+            getComputedStyle(member).getPropertyValue(key) === getComputedStyle(node).getPropertyValue(key) &&
+            old[key] !== getComputedStyle(member).getPropertyValue(key) &&
+            !member.getAnimations().some(a=>a.playState==='running' && a.transitionProperty===key)
+        }))
+        if (!property) return false
+        edit.prepared.effect={property,value:getComputedStyle(node).getPropertyValue(property)}
+      }
       return members.length > 0 && Array.from(members).every(member => {
         const active = ui.preparedPreview.contract(member)
         return active?.revision === contract.revision &&

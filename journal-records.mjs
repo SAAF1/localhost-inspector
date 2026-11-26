@@ -42,7 +42,10 @@ export function journalValidators(journalRoute) {
         typeof part.file === 'string' && part.file.length <= 240 && part.file.endsWith('.css') &&
         !part.file.startsWith('/') && !part.file.split('/').includes('..') &&
         typeof part.selector === 'string' && part.selector.length <= 240 && /^(?:\.(?:[\w-]|\\[^\s])+|[a-z][\w-]*)$/.test(part.selector))
-      if (!validPart || !validSite || !validControl || group || pending || record.template || record.frameState ||
+      const effect = prepared?.effect
+      const validEffect = effect === undefined || (Boolean(field) && effect &&
+        ['background-color','color','font-size','height','width'].includes(effect.property) && validValue(effect.property,effect.value))
+      if (!validEffect || !validPart || !validSite || !validControl || group || pending || record.template || record.frameState ||
           record.restore !== 'unique' || record.intent !== featureTemplateScope) throw Error('Invalid prepared contract')
     }
     const validRequest = field ? true : group ? validTextStyleRequest : reference
@@ -93,6 +96,7 @@ export function journalValidators(journalRoute) {
     return {
       id, route: journalRoute(route), property, requested, observed, before, restore,
       ...(prepared ? { prepared: { site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}),
+        ...(prepared.effect ? {effect:{property:prepared.effect.property,value:prepared.effect.value}} : {}),
         ...(prepared.part ? {part:Object.fromEntries(['id','revision','depth','file','selector'].map(k=>[k,prepared.part[k]]))} : {}) } } : {}),
       ...(recordScope ? {recordScope: Object.fromEntries(['id','value','key','caller','file','owner','prop','field','collection'].map(k => [k,recordScope[k]]))} : {}),
       target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,

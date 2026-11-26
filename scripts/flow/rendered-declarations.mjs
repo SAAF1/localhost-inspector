@@ -3,7 +3,7 @@
 // the marked part and only consumed inside the exact declaration.
 import { createHash } from 'node:crypto'
 
-const fields = ['background-color', 'border-radius', 'font-size']
+const partProperties = ['background-color', 'border-radius', 'font-size']
 const color = /^(?:#[\da-f]{3,8}|[a-z]+|(?:var|rgba?|hsla?|oklch|oklab|color)\([^;{}]+\))$/i
 const cssWide = /^(?:inherit|unset|initial|revert(?:-layer)?)$/i
 function affects(property, field) {
@@ -23,7 +23,8 @@ function unconditional(rule) {
   return true
 }
 
-export function bindRenderedDeclarations(sheet, file, originalValues) {
+export function bindRenderedDeclarations(sheet, file, originalValues, finiteChoices = false) {
+  const fields = finiteChoices ? [...partProperties,'color','height','width'] : partProperties
   if (!file || file.startsWith('/') || file.split('/').includes('..') || file.length > 240) return false
   const registered = new Set()
   const candidates = new Map()
