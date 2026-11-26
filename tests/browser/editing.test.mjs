@@ -212,3 +212,63 @@ test('shared source intent refuses an unresolved use before mutation and permits
     assert.equal(await h.host.locator('#authored-edit-scope').inputValue(), 'shared')
   } finally { await h.close() }
 })
+
+test('selected fixed size refuses synchronous sibling resizing and permits normal flow and later app updates', async () => {
+  const h = await createHarness({
+    authoredUse: true,
+    appStyles: '#peer-row button { display: block; box-sizing: border-box; width: 90px; } #size-target { height: 40px; }',
+  })
+  try {
+    await h.app.evaluate(() => {
+      const row = document.createElement('div')
+      row.id = 'peer-row'
+      row.style.display = 'flex'
+      const button = (id, text) => {
+        const node = document.createElement('button')
+        node.id = id
+        node.textContent = text
+        return node
+      }
+      row.append(button('size-target', 'Selected'), button('protected-peer', 'Peer'))
+      document.body.prepend(row)
+    })
+    const target = h.app.locator('#size-target')
+    const peer = h.app.locator('#protected-peer')
+    await h.open()
+    await h.select('#size-target')
+    await h.host.locator('#authored-edit-scope').selectOption('selected')
+    const baseline = await peer.boundingBox()
+    const targetStyle = await target.getAttribute('style')
+    const peerStyle = await peer.getAttribute('style')
+    assert.equal(baseline.height, 40)
+    await h.enter('Height', 52)
+    await h.settled()
+    assert.match(await h.host.locator('#status').innerText(), /resizes a neighboring element/)
+    assert.equal((await target.boundingBox()).height, 40)
+    assert.deepEqual(await peer.boundingBox(), baseline)
+    assert.equal(await target.getAttribute('style'), targetStyle)
+    assert.equal(await peer.getAttribute('style'), peerStyle)
+    assert.deepEqual(await h.journal(), [])
+
+    await h.app.locator('#peer-row').evaluate(node => { node.style.display = 'block' })
+    const stacked = await peer.boundingBox()
+    await h.enter('Height', 52)
+    await h.settled()
+    assert.deepEqual(await peer.boundingBox(), { ...stacked, y: stacked.y + 12 })
+    assert.deepEqual((await h.journal()).map(edit => edit.requested), ['52px'])
+
+    await target.evaluate(node => {
+      node.style.transition = 'height 100ms linear'
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+          setTimeout(() => { document.querySelector('#protected-peer').style.width = '120px' }, 20)
+        }
+      }, { capture: true, once: true })
+    })
+    await h.enter('Height', 64)
+    await h.settled()
+    assert.equal((await target.boundingBox()).height, 64)
+    assert.equal((await peer.boundingBox()).width, 120)
+    assert.deepEqual((await h.journal()).map(edit => edit.requested), ['52px', '64px'])
+  } finally { await h.close() }
+})

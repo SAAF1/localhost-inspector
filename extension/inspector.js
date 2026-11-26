@@ -1130,7 +1130,9 @@
     const sourceContext = ui.describeSourceContext(node)
     const selected = selection.current
     const evidence = ++evidenceVersion
-    const entry = await apply(node, property, requested, isCurrent, tokenOptions)
+    const entry = await apply(node, property, requested, isCurrent, {
+      ...tokenOptions, protectSiblingSizes: authoredUse && selectionOnly,
+    })
     entry.liveTarget = target
     const sameTarget = () => ui.matchesPreviewTarget(node, target) && (!template ||
       (ui.templatePreview.of(node) === template && recovery.templateSource(node, property, entry) === source))

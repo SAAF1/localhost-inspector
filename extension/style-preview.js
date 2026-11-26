@@ -54,7 +54,9 @@
       if (prior) node.style.setProperty(property, prior, priorPriority)
       else node.style.removeProperty(property)
     }
-    async function apply(node, property, requested, isCurrent, { colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle } = {}) {
+    async function apply(node, property, requested, isCurrent, {
+      colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle, protectSiblingSizes,
+    } = {}) {
       const { colorCatalog, spacingCatalog, textStyleCatalog } = catalogs()
       if (colorToken && (
         !ui.supportsColorVariable(node, property) || requested !== ui.colorVariableValue(colorToken.name) ||
@@ -93,10 +95,26 @@
       }
       const dimensions = property === 'width' || property === 'height'
       const beforeSize = dimensions ? measure() : 0
+      // Both reads run in the same task so unrelated async layout is not
+      // attributed to this declaration. Positions may move in normal flow.
+      const siblings = protectSiblingSizes && dimensions && /^\d+(?:\.\d+)?px$/.test(requested)
+        ? [node.previousElementSibling, node.nextElementSibling].filter(Boolean)
+          .map(sibling => ({ sibling, before: sibling.getBoundingClientRect() }))
+          .filter(({ before }) => before.width > 0 && before.height > 0)
+        : []
+      const hadStyle = siblings.length && node.hasAttribute('style')
       node.style.setProperty(property, requested)
       const declared = node.style.getPropertyValue(property)
       const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle }
       temporary.add(entry)
+      if (siblings.some(({ sibling, before }) => {
+        const after = sibling.getBoundingClientRect()
+        return Math.abs(after.width - before.width) > 0.5 || Math.abs(after.height - before.height) > 0.5
+      })) {
+        discardTemporary(entry)
+        if (!hadStyle && node.getAttribute('style') === '') node.removeAttribute('style')
+        throw Error('This size also resizes a neighboring element. No change was saved.')
+      }
       let observed = getComputedStyle(node).getPropertyValue(property)
       const mode = ['100%', 'fit-content'].includes(requested)
       const changedSize = () => Math.abs(measure() - beforeSize) > 0.5
