@@ -66,7 +66,7 @@
       const localProperty = component?.properties.find(p=>p.id===field)
       component = { ...(component ?? { name: contract.site }), prepared: contract,
         properties: [...(component?.properties ?? []).filter(p => p.id !== field),
-          { id: field, options, value, localProperty, prepared: true, unavailableReason: ui.preparedPreview.shows(node, contract.input, value) ? null : 'Unavailable in this state' }] }
+          { id: field, options, value, localProperty, prepared: true, unavailableReason: ui.preparedPreview.receivesChoice(node, contract.input, value) ? null : 'Unavailable in this state' }] }
     }
     if (!component) return
     if (request !== componentRead || node !== selection.current || !node.isConnected || route !== currentRoute) return

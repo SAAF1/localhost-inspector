@@ -13,10 +13,13 @@
     return Object.hasOwn(revisions, edit.prepared.site) && revisions[edit.prepared.site] !== edit.prepared.revision
   }
   const choiceProperties = ['background-color','color','font-size','height','width']
-  function choiceFields(node,input,option) {
-    if (!input?.component) return []
+  function receivesChoice(node,input,option) {
+    if (!input?.component) return shows(node,input,option)
     const live = ui.sourceComponentRequest(node,{type:'inspect'})
-    if (live?.source !== input.component || live.properties.find(p=>p.id===input.field)?.value !== option) return []
+    return live?.source === input.component && live.properties.find(p=>p.id===input.field)?.value === option
+  }
+  function choiceFields(node,input,option) {
+    if (!input?.component || !receivesChoice(node,input,option)) return []
     const tokens = input.verify?.[option]?.tokens ?? []
     return choiceProperties.filter(property => {
       const owner = declaration(node,property)
@@ -322,5 +325,5 @@
     const edit = revision && declarations.get(revision + ':' + property)
     return edit?.property === property ? edit.requested : undefined
   }
-  ui.preparedPreview = { choiceFields, choiceValues, membersOf, samePart, contract, project, locate, authored, shows, read, showsEffect, observe }
+  ui.preparedPreview = { receivesChoice, choiceFields, choiceValues, membersOf, samePart, contract, project, locate, authored, shows, read, showsEffect, observe }
 })()
