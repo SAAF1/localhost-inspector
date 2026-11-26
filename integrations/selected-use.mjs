@@ -8,10 +8,8 @@ const moduleRevisions=new Map()
 const recordCalls=new WeakMap()
 const stateOrigins=new WeakMap()
 const renderOrigins=new WeakMap()
-export function registerRenderOwners(file, owners) {
-  for (const [owner, component] of Object.entries(owners)) {
-    renderOrigins.set(component, {file, owner})
-  }
+export function registerRenderOwner(file, owner, component) {
+  if (!renderOrigins.has(component)) renderOrigins.set(component, {file, owner})
 }
 // A committed React update can change record membership without mutating
 // any DOM text or attributes. Ask the extension to re-read the mounted fiber.

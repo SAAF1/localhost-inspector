@@ -75,9 +75,20 @@ export async function markSelectedCalls(root,file,code,tree,out,resolveImport) {
   out.prepend('import { selectedModule as __liSelectedModule } from "virtual:inspector-selected-use";__liSelectedModule(import.meta.url,'+
     JSON.stringify(file)+','+JSON.stringify(digest(code))+','+JSON.stringify(revision)+');\n')
   const renderOwners = recordRenderOwners(tree)
-  if (renderOwners.length) {
-    out.prepend('import { registerRenderOwners as __liRenderOwners } from "virtual:inspector-selected-use";\n')
-    out.append('\n__liRenderOwners(' + JSON.stringify(file) + ',{' + renderOwners.join(',') + '});\n')
+  if (renderOwners.size) {
+    out.prepend('import { registerRenderOwner as __liRenderOwners } from "virtual:inspector-selected-use";\n')
+    // Keep the observation with the render function when app tooling moves it
+    // into a lazy chunk. A module-level reference can outlive its declaration.
+    for (const [name, body] of renderOwners) {
+      const call = '__liRenderOwners(' + JSON.stringify(file) + ',' + JSON.stringify(name) + ',' + name + ')'
+      if (body.type === 'BlockStatement') {
+        const start = body.directives?.at(-1)?.end ?? body.start + 1
+        out.appendRight(start, ';' + call + ';')
+      } else {
+        out.prependLeft(body.start, '(' + call + ',')
+        out.appendRight(body.end, ')')
+      }
+    }
   }
   function wrap(n,child,args) {
     // Keep the wrapper inside its JSX span. A concise map callback may have

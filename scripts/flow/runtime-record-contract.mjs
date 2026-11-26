@@ -46,17 +46,20 @@ export function markStateAuthorities(file,tree,out) {
 // React can retain a different component's output between the keyed caller
 // and its painted host. Register actual component values from loaded modules.
 export function recordRenderOwners(tree) {
-  const names = []
+  const owners = new Map()
   for (const statement of tree.program.body) {
     const declaration = statement.declaration ?? statement
     const bindings = declaration.declarations ?? [declaration]
     for (const binding of bindings) {
-      if (/^[A-Z]/.test(binding.id?.name ?? '') && renderOwnerFunction(tree, binding)) {
-        names.push(binding.id.name)
+      const name = binding.id?.name
+      if (!name || !/^[A-Z]/.test(name)) continue
+      const fn = renderOwnerFunction(tree, binding)
+      if (fn?.body && !localBindingNames({program:fn}, new Set([fn])).has(name)) {
+        owners.set(name, fn.body)
       }
     }
   }
-  return names
+  return owners
 }
 
 export function recordContractKey(proof, legacy = false) {
@@ -103,7 +106,7 @@ export function verifyRuntimeRecord(root,proof) {
       continue
     }
     if (proof.renderPath.includes(site) || proof.statePath.includes(site)) {
-      if (!recordRenderOwners(tree).includes(site.owner)) throw Error('Record render owner changed.')
+      if (!recordRenderOwners(tree).has(site.owner)) throw Error('Record render owner changed.')
       continue
     }
     let count=0
