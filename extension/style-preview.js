@@ -51,7 +51,23 @@
     function remove(entry) {
       const { node, property, prior, priorPriority } = entry
       if (!ui.ownsPreviewDeclaration(entry)) return
-      if (prior) node.style.setProperty(property, prior, priorPriority)
+      if (entry.background) {
+        const {style} = node
+        // A later authored shorthand supersedes our longhand.
+        if (style.getPropertyValue('background')) return
+        const changes = []
+        for (const name of entry.background.longhands) {
+          if (name === property) continue
+          const value = style.getPropertyValue(name)
+          if (value || !Array.from(style).includes(name))
+            changes.push([name,value,style.getPropertyPriority(name)])
+        }
+        style.setProperty('background',entry.background.value,entry.background.priority)
+        for (const [name,value,priority] of changes) {
+          if (value) style.setProperty(name,value,priority)
+          else style.removeProperty(name)
+        }
+      } else if (prior) node.style.setProperty(property, prior, priorPriority)
       else node.style.removeProperty(property)
     }
     async function apply(node, property, requested, isCurrent, {
@@ -86,6 +102,12 @@
       const baseline = getComputedStyle(node).getPropertyValue(property)
       const prior = node.style.getPropertyValue(property)
       const priorPriority = node.style.getPropertyPriority(property)
+      // A shorthand containing a pending variable can serialize all of its
+      // longhands as empty strings, even when it supplies the visible paint.
+      const background = property === 'background-color' && !prior && node.style.background ? {
+        value:node.style.background, priority:node.style.getPropertyPriority('background'),
+        longhands:Array.from(node.style).filter(name=>name.startsWith('background-')),
+      } : undefined
       if (property === 'padding' && [...node.style].some(key => /^padding-(top|right|bottom|left)$/.test(key))) {
         throw Error('Use individual sides when padding is already set inline')
       }
@@ -105,7 +127,7 @@
       const hadStyle = siblings.length && node.hasAttribute('style')
       node.style.setProperty(property, requested)
       const declared = node.style.getPropertyValue(property)
-      const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle }
+      const entry = { node, property, requested: declared, before: baseline, prior, priorPriority, background, colorToken, pendingColor, spacingToken, textStyleToken, pendingTextStyle }
       temporary.add(entry)
       if (siblings.some(({ sibling, before }) => {
         const after = sibling.getBoundingClientRect()
