@@ -233,7 +233,8 @@
   async function goToEdit(edit) {
     const navigation = ++editNavigation
     status('')
-    if (edit.executor === 'authored-source' || recovery.hasPreparedOperation(edit.id) || edit.template || edit.route === savedRoute) {
+    const needsOriginalView = edit.frameState && edit.frameState !== readFrameState()
+    if (!needsOriginalView && (edit.executor === 'authored-source' || recovery.hasPreparedOperation(edit.id) || edit.template || edit.route === savedRoute)) {
       if (await selectEditTarget(edit.id, navigation)) {
         if (panel.hidden) setOpen(true)
         if (isCanvasExpanded?.()) openEditRoute(route())

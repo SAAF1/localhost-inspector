@@ -307,7 +307,11 @@
     let templateConflicts = new WeakMap()
     const original = new Map()
     let savedRoute
-    const inState = (edit, state) => !edit?.frameState || edit.frameState === state
+    // A verified record follows its source key when a filter changes. Its
+    // saved frame is the navigation destination; DOM lookup still requires
+    // exactly one matching key on this route.
+    const recordKey = edit => edit?.restore === 'unique' && edit.recordScope?.key === edit.target.key && edit.target.key
+    const inState = (edit, state) => !edit?.frameState || edit.frameState === state || Boolean(recordKey(edit))
     const hasScopedEdits = () => Array.from(saved.values()).some(edit => edit.frameState)
     const currentState = () => hasScopedEdits() ? readFrameState() : undefined
     const editId = (id, entry) => entry.templateEditId ?? id
@@ -576,7 +580,8 @@
         return earlier.template === edit.template && earlier.templateSourceFingerprint === edit.templateSourceFingerprint &&
           earlier.target.tag === edit.target.tag && earlier.target.slot === edit.target.slot
       }
-      if (earlier.route !== edit.route || earlier.frameState !== edit.frameState) return false
+      if (earlier.route !== edit.route) return false
+      if (earlier.frameState !== edit.frameState && !(recordKey(edit) && recordKey(earlier) === recordKey(edit))) return false
       const live = original.get(earlier.id)
       if (live?.node.isConnected) return live.node === node && matchesTarget(node, live.target)
       return earlier.restore === 'unique' && edit.restore === 'unique' &&
