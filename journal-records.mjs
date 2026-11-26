@@ -34,6 +34,8 @@ export function journalValidators(journalRoute) {
         typeof field === 'string' && /^[a-zA-Z][a-zA-Z0-9-]{0,59}$/.test(field) && record.property === 'component-' + field &&
         typeof record.requested === 'string' && /^[a-zA-Z0-9_-]{1,60}$/.test(record.requested) &&
         record.observed === record.requested && !reference
+      if (prepared.styleInput !== undefined && (prepared.styleInput !== true || field ||
+          !['height','font-size'].includes(record.property))) throw Error('Invalid prepared inline source input')
       const part = prepared?.part
       const validPart = part === undefined || (!field && ['background-color','border-radius','font-size'].includes(record.property) &&
         /^[a-f0-9]{32}$/.test(part?.id) && /^[a-f0-9]{64}$/.test(part.revision) &&
@@ -111,7 +113,7 @@ export function journalValidators(journalRoute) {
     const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
     return {
       id, route: journalRoute(route), property, requested, observed, before, restore,
-      ...(prepared ? { prepared: { site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}),
+      ...(prepared ? { prepared: { ...(prepared.styleInput ? {styleInput:true} : {}), site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}),
         ...(prepared.effect ? {effect:{property:prepared.effect.property,value:prepared.effect.value,
           ...(prepared.effect.withdrawn ? {withdrawn:prepared.effect.withdrawn} : {})}} : {}),
         ...(prepared.part ? {part:{...Object.fromEntries(['id','revision','depth','file','selector'].map(k=>[k,prepared.part[k]])), ...(prepared.part.cohort ? {cohort:prepared.part.cohort} : {}), ...(prepared.part.cascade ? {cascade:prepared.part.cascade} : {}), ...(prepared.part.site ? {site:prepared.part.site} : {})}} : {}) } } : {}),

@@ -15,8 +15,8 @@ function uniqueStyleUse(site, code, openings) {
 }
 
 // Recheck the original component and the component that paints its selected part.
-export async function recheckRenderedPartOwners(binding, operations, read) {
-  const pending = operations.filter(op => op.status === 'pending' && op.changes.some(edit => edit.prepared?.part))
+export async function recheckPreparedOwners(binding, operations, read) {
+  const pending = operations.filter(op => op.status === 'pending' && op.changes.some(edit => edit.prepared?.part || edit.prepared?.styleInput))
   if (!pending.length) return
   const manifest = binding.authoredUse && await read(join(binding.authoredUse.directory, 'prepared.json'), null)
   const sites = manifest?.namespace && Array.isArray(manifest.sites) ? manifest.sites : []
@@ -75,14 +75,14 @@ export async function recheckRenderedPartOwners(binding, operations, read) {
   for (const op of pending) {
     for (const { prepared, property } of op.changes) {
       const part = prepared?.part
-      if (!part) continue
+      if (!part && !prepared?.styleInput) continue
       if (!await matches(prepared.site, prepared.file, prepared.revision) ||
-          (part.depth && !await matches(part.site, null, part.revision))) {
+          (part?.depth && !await matches(part.site, null, part.revision))) {
         op.status = 'blocked'
-        op.reason = 'prepared-part-owner-changed'
+        op.reason = part ? 'prepared-part-owner-changed' : 'prepared-inline-owner-changed'
         break
       }
-      if (!await cascadeMatches(part,property)) {
+      if (part && !await cascadeMatches(part,property)) {
         op.status = 'blocked'
         op.reason = 'prepared-part-cascade-unverified'
         break
