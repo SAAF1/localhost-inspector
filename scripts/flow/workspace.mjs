@@ -80,7 +80,8 @@ function layout() {
 }
 const updateSharpPreviews = createSharpPreviews(cards)
 const framesById = new Map(data.frames.map(frame => [frame.id, frame]))
-const scenarioRoutes = new Set(data.frames.filter(frame => frame.steps.length).map(frame => frame.route))
+const scenarioRoutes = new Set(data.frames.filter(frame =>
+  frame.steps.length || frame.checkpoint.some(check => check.role === 'pressed-option')).map(frame => frame.route))
 function mappedRoute(route) {
   if (!route || framesByRoute.has(route)) return route
   const address = new URL(route, location.origin)

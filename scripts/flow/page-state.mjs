@@ -57,8 +57,11 @@ export function observePage(doc = document, mode = 'page', find) {
   const links = [...doc.querySelectorAll('a[href]')].filter(visible).map(node => ({ href: node.href, label: label(node) }))
   // Controlled forms may use ordinary buttons as their launchers.
   const openForm = /^(create|add|invite|import|new)(?: |$)/i
-  const triggers = [...(main || doc).querySelectorAll('[role="tab"], button')].filter(node =>
-    options.has(node) || node.matches('[role="tab"], button[aria-haspopup]') || (main && openForm.test(label(node)) && !node.closest('form')))
+  const buttons = [...(main || doc).querySelectorAll('[role="tab"], button')]
+  // Keep existing navigation ahead of optional filter choices within the mapper's action budget.
+  const navigation = buttons.filter(node => node.matches('[role="tab"], button[aria-haspopup]') ||
+    (main && openForm.test(label(node)) && !node.closest('form')))
+  const triggers = [...new Set([...navigation, ...buttons.filter(node => options.has(node))])]
     .filter(node => visible(node) && !node.closest('th') && !node.disabled && node.getAttribute('aria-disabled') !== 'true' &&
       node.getAttribute('aria-selected') !== 'true' && node.getAttribute('aria-expanded') !== 'true' &&
       node.getAttribute('type') !== 'submit')
