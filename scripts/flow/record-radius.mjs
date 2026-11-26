@@ -2,33 +2,54 @@ import MagicString from 'magic-string'
 import { fixedRadius, recordBranches } from './record-presentation.mjs'
 import { verifyRecordSource } from './record-scope.mjs'
 
-// Ordinary frontend output. Emit a conditional style at the matched render site;
-// the record and its backing data are never edited.
-export function planRecordRadius(root, change) {
-  const proof = change.recordScope
-  if (change.property !== 'border-radius' || !fixedRadius(change.requested))
-    throw Error('Only a fixed corner radius is qualified for one record.')
-  const { use, host, tree, code, ownerCode } = verifyRecordSource(root, proof)
-  const prop = host.presentation.prop ?? 'recordCornerRadius'
-  const value = JSON.stringify(proof.value)
+function radiusCondition(use, recordValue) {
+  const value = JSON.stringify(recordValue)
   const unique = (collection) =>
     collection + '.filter(record => record.' + use.field + ' === ' + value + ').length === 1'
   const base = use.item + '.' + use.field + ' === ' + value + ' && ' + unique(use.collection)
-  const condition =
-    use.backing === use.collection
-      ? base
-      : '(' + base + ') && (' + use.backing + '.includes(' + use.item + ') && ' + unique(use.backing) + ')'
-  const expression = condition + ' ? ' + JSON.stringify(change.requested) + ' : undefined'
-  const caller = new MagicString(code)
-  if (host.presentation.prop) {
-    const branches = recordBranches(use, prop)
-    if (!branches) throw Error('The existing radius has a different source condition.')
-    const existing = branches.cases.get(proof.value)
-    if (existing) caller.overwrite(existing.start, existing.end, JSON.stringify(change.requested))
-    else if (branches.tail) caller.overwrite(branches.tail.start, branches.tail.end, expression)
-    else caller.appendLeft(use.opening.name.end, ' ' + prop + '={' + expression + '}')
-    return new Map([[proof.caller, { original: code, updated: caller.toString() }]])
+  return use.backing === use.collection
+    ? base
+    : '(' + base + ') && (' + use.backing + '.includes(' + use.item + ') && ' + unique(use.backing) + ')'
+}
+
+export function planRecordRadius(root, change) {
+  return planRecordRadii(root, [change])
+}
+
+// Verify every operation against the same unmodified render site before writing a single expression.
+export function planRecordRadii(root, changes) {
+  const proof = changes[0]?.recordScope
+  const values = new Map()
+  let verified
+  for (const change of changes) {
+    if (!proof || change.property !== 'border-radius' || !fixedRadius(change.requested))
+      throw Error('Only a fixed corner radius is qualified for one record.')
+    const record = change.recordScope
+    const source = verifyRecordSource(root, record)
+    if (record.id !== proof.id || values.has(record.value) ||
+      (verified && (verified.code !== source.code || verified.ownerCode !== source.ownerCode)))
+      throw Error('Overlapping record edits do not have distinct values at one verified render site.')
+    verified = source
+    values.set(record.value, change.requested)
   }
+  if (!verified) throw Error('No record edit was selected.')
+  const { use, host, tree, code, ownerCode } = verified
+  const prop = host.presentation.prop ?? 'recordCornerRadius'
+  const caller = new MagicString(code)
+  const branches = recordBranches(use, host.presentation.prop)
+  if (!branches) throw Error('The existing radius has a different source condition.')
+  const additions = []
+  for (const [recordValue, radius] of values) {
+    const existing = branches.cases.get(recordValue)
+    if (existing) caller.overwrite(existing.start, existing.end, JSON.stringify(radius))
+    else additions.push(radiusCondition(use, recordValue) + ' ? ' + JSON.stringify(radius))
+  }
+  if (additions.length) {
+    const expression = [...additions, 'undefined'].join(' : ')
+    if (branches.tail) caller.overwrite(branches.tail.start, branches.tail.end, expression)
+    else caller.appendLeft(use.opening.name.end, ' ' + prop + '={' + expression + '}')
+  }
+  if (host.presentation.prop) return new Map([[proof.caller, { original: code, updated: caller.toString() }]])
   if ([code, ownerCode].some((source) => new RegExp('\\b' + prop + '\\b').test(source)))
     throw Error('The record presentation prop is already in use. Review its existing owner.')
   const owner = new MagicString(ownerCode)
@@ -44,7 +65,6 @@ export function planRecordRadius(root, change) {
   } else if (proof.file.endsWith('.tsx')) throw Error('Cannot verify the component prop type.')
   owner.appendLeft(host.params.start + 1, ' ' + prop + ',')
   owner.appendLeft(host.root.name.end, ' style={{ borderRadius: ' + prop + ' }}')
-  caller.appendLeft(use.opening.name.end, ' ' + prop + '={' + expression + '}')
   return new Map([
     [proof.caller, { original: code, updated: caller.toString() }],
     [proof.file, { original: ownerCode, updated: owner.toString() }],

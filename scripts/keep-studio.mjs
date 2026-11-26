@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { planRecordRadius } from './flow/record-radius.mjs'
+import { planRecordRadii } from './flow/record-radius.mjs'
 import { candidateHandoff } from './proposal-journal.mjs'
 import { readProposal } from './proposal.mjs'
 import MagicString from 'magic-string'
@@ -37,22 +37,22 @@ export function keepStudio(dir) {
   const plugin = preparedSites(appRoot, manifest)
   const handoff = candidateHandoff(dir),
     files = new Map()
+  const recordSites = new Map()
   const recordFiles = new Map()
   for (const op of handoff.operations) {
     if (op.status !== 'pending') throw Error('Review blocked operations before retaining this design.')
     for (const change of op.changes) {
       if (op.scope === 'selected-record') {
-        for (const [file, contents] of planRecordRadius(appRoot, change)) {
-          if (files.has(file) || recordFiles.has(file)) throw Error('Overlapping source edits need a combined handoff.')
-          recordFiles.set(file, contents)
-        }
+        const siteKey = change.recordScope?.id
+        const changes = recordSites.get(siteKey) ?? []
+        changes.push(change)
+        recordSites.set(siteKey, changes)
         continue
       }
       const prepared = change.prepared,
         site = sites.find((s) => s.id === prepared?.site)
       if (!site || site.file !== prepared.file || !/^src\/[\w/.$()-]+\.[jt]sx$/.test(site.file))
         throw Error('This operation needs an individual source handoff.')
-      if (recordFiles.has(site.file)) throw Error('Overlapping source edits need a combined handoff.')
       if (!files.has(site.file)) {
         const path = join(appRoot, site.file),
           original = readFileSync(path, 'utf8')
@@ -66,6 +66,12 @@ export function keepStudio(dir) {
       const fields = record.sites.get(site) ?? new Map()
       fields.set(change.property, change.requested)
       record.sites.set(site, fields)
+    }
+  }
+  for (const changes of recordSites.values()) {
+    for (const [file, contents] of planRecordRadii(appRoot, changes)) {
+      if (files.has(file) || recordFiles.has(file)) throw Error('Overlapping source edits need a combined handoff.')
+      recordFiles.set(file, contents)
     }
   }
   const temp = mkdtempSync(join(tmpdir(), 'inspector-retain-'))
