@@ -17,8 +17,11 @@ const trivia = new Set([
 // JSXText and literal values remain significant. Comments and source positions
 // have no bearing on which prop is delivered to which host.
 export function componentFingerprint(code) {
-	const tree = parseAuthoredJsx(code)
-	const syntax = JSON.stringify(tree.program, (key, value) =>
+	return syntaxFingerprint(parseAuthoredJsx(code).program)
+}
+
+export function syntaxFingerprint(node) {
+	const syntax = JSON.stringify(node, (key, value) =>
 		trivia.has(key) ? undefined : value,
 	)
 	return createHash('sha256').update(syntax).digest('hex')

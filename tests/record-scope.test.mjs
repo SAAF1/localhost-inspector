@@ -320,6 +320,16 @@ test('an evaluated project data import corroborates projected records across qua
   assert.equal(keys([{...a,cost:7}])[0].key,undefined)
   assert.equal(keys([a],[{...a}])[0].key,undefined)
   assert.throws(()=>verifyRecordSource(dir,first,undefined))
+  writeFileSync(join(dir,'App.jsx'),source + '\n// Harmless note')
+  verifyRecordSource(dir,first,catalog)
+  for (const changed of [source.replace('read(stock)','read([])'),source.replace('read(stock)','ignore(stock)')]) {
+    writeFileSync(join(dir,'App.jsx'),changed)
+    assert.throws(()=>verifyRecordSource(dir,first,catalog), /data source/)
+  }
+  writeFileSync(join(dir,'App.jsx'),source)
+  registerRecordCatalog(catalog,{},null)
+  assert.equal(keys([a])[0].key,undefined)
+  registerRecordCatalog(catalog,data,null)
   dispose();assert.equal(keys([a])[0].key,undefined)
   writeFileSync(join(dir,'stock.json'),JSON.stringify([{...data[0],name:'Willow'},data[1]]))
   assert.throws(()=>verifyRecordSource(dir,first,catalog))

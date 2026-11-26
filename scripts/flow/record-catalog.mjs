@@ -4,6 +4,7 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { parseAuthoredJsx } from './authored-forwarding.mjs'
 import { localBindingNames } from './authored-use.mjs'
+import { syntaxFingerprint } from './component-proof.mjs'
 import { recordRows } from './public-records.mjs'
 
 export function recordCatalog(root, edges) {
@@ -18,7 +19,10 @@ export function recordCatalog(root, edges) {
     const tree = parseAuthoredJsx(readFileSync(path,'utf8'))
     const bindings = tree.program.body.filter(s=>s.type === 'ImportDeclaration' && s.source.value === specifier &&
       s.importKind !== 'type').flatMap(s=>s.specifiers).filter(s=>s.type === 'ImportDefaultSpecifier')
-    if (bindings.length === 1) return {file,importer,specifier,binding:bindings[0].local.name}
+    if (bindings.length !== 1) return
+    const binding = bindings[0].local.name
+    if (localBindingNames(tree).has(binding) || !catalogExpressions(tree,binding).reads.length) return
+    return {file,importer,specifier,binding,importerRevision:syntaxFingerprint(tree.program)}
   } catch { /* An optional data contract must not break the ordinary app. */ }
 }
 export function recordCatalogRows(root, catalog, field, watchFile) {
@@ -27,12 +31,11 @@ export function recordCatalogRows(root, catalog, field, watchFile) {
     key !== field && ['string','number'].includes(typeof value))) ? data : undefined
 }
 
-export function registerCatalogImport(out,file,catalog,tree) {
-  if (file !== catalog?.importer || localBindingNames(tree).has(catalog.binding)) return false
+function catalogExpressions(tree,binding) {
   const reads = [], copies = []
   function visit(node,parent) {
     if (!node?.type) return
-    if (node.type === 'Identifier' && node.name === catalog.binding && (
+    if (node.type === 'Identifier' && node.name === binding && (
       parent?.type === 'CallExpression' && parent.arguments.includes(node) ||
       parent?.type === 'VariableDeclarator' && parent.init === node ||
       parent?.type === 'MemberExpression' && parent.object === node ||
@@ -46,6 +49,12 @@ export function registerCatalogImport(out,file,catalog,tree) {
     }
   }
   visit(tree.program)
+  return {reads,copies}
+}
+
+export function registerCatalogImport(out,file,catalog,tree) {
+  if (file !== catalog?.importer || syntaxFingerprint(tree.program) !== catalog.importerRevision) return false
+  const {reads,copies} = catalogExpressions(tree,catalog.binding)
   if (!reads.length) return false
   out.prepend('import { registerRecordCatalog as __liRegisterCatalog, derivedRecord as __liDerivedRecord } from "virtual:inspector-prepared-registry";\n')
   for (const ref of reads) {

@@ -140,7 +140,7 @@ function useIdentity(caller, file, code, use, ownerSource, root) {
       use.prop,
       code.slice(use.opening.start, use.opening.end),
       ownerSource.slice(root.start, root.end),
-      ...(use.catalog ? [use.catalog] : []),
+      ...(use.catalog ? [[use.catalog.file,use.catalog.importer,use.catalog.specifier,use.catalog.binding]] : []),
       ...(use.proof ? use.proof.map((span) => code.slice(span.start, span.end)) : []),
     ]),
   )

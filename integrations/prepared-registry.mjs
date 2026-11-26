@@ -56,7 +56,10 @@ export function derivedRecord(original, copy) {
 export function registerRecordCatalog(catalog, rows, hot) {
   const key = JSON.stringify(catalog)
   if (activeCatalogs.get(key) === rows) return rows
-  if (!Array.isArray(rows) || rows.length > 256) return rows
+  if (!Array.isArray(rows) || rows.length > 256) {
+    activeCatalogs.delete(key)
+    return rows
+  }
   activeCatalogs.set(key,rows)
   for (const row of rows) if (row && typeof row === 'object') domainOrigin.set(row,row)
   hot?.dispose(() => {
