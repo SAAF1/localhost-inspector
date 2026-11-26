@@ -6,7 +6,7 @@ import { chromium } from 'playwright'
 const [address, flow, directory] = process.argv.slice(2)
 if (!address || !flow || !directory) throw Error('Usage: npm run review:flow -- CANVAS_URL FLOW_ID OUTPUT_DIRECTORY')
 const canvas = new URL('/__inspector-flow/', address)
-const response = await fetch(new URL('map.json', canvas))
+const response = await fetch(new URL('map.json?previewOrigins=on-demand', canvas))
 if (!response.ok) throw Error('Cannot load canvas manifest: ' + response.status)
 const map = await response.json()
 const steps = (map.variants ?? []).filter(step => step.id.startsWith(flow + '~'))
@@ -36,7 +36,17 @@ try {
       await body.ownerDocument.fonts.ready
       return { text: body.innerText.trim(), address: body.ownerDocument.location.href }
     })
-    if (!content.text || new URL(content.address).origin !== step.origin) throw Error('Missing or incorrect preview for ' + step.id)
+    let expectedOrigin = step.origin
+    if (step.deferredOrigin) {
+      const endpoint = new URL('preview-origin', canvas)
+      endpoint.searchParams.set('id', step.id)
+      const reply = await fetch(endpoint, { headers: { origin: canvas.origin } })
+      if (!reply.ok) throw Error('Cannot verify preview origin for ' + step.id)
+      const verified = await reply.json()
+      if (verified.id !== step.id) throw Error('Incorrect preview identity for ' + step.id)
+      expectedOrigin = verified.origin
+    }
+    if (!content.text || new URL(content.address).origin !== expectedOrigin) throw Error('Missing or incorrect preview for ' + step.id)
     result.textHash = createHash('sha256').update(content.text).digest('hex')
     result.screenshot = String(report.steps.length).padStart(2, '0') + '.png'
     await wrapper.locator('iframe').screenshot({ path: join(output, result.screenshot), animations: 'disabled' })

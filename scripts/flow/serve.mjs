@@ -87,7 +87,7 @@ function streamProposalLink(origin, response, deferOrigins, knownVersion) {
     const current = ++activityRevision
     try {
       const map = JSON.parse(await readFile(join(mapRoot, 'map.json'), 'utf8'))
-      if (mergeSavedFrames) await mergeSavedFrames(map, deferOrigins)
+      const useOnDemand = mergeSavedFrames && await mergeSavedFrames(map, deferOrigins)
       if (current !== activityRevision || response.destroyed) return
       const variants = map.variants ?? []
       const activity = canvasActivity(mapRoot, variants)
@@ -105,7 +105,7 @@ function streamProposalLink(origin, response, deferOrigins, knownVersion) {
       }
       if (sendOrigins && mergeSavedFrames) {
         const entries = variants.map(({ id, origin, deferredOrigin, editable, hasEdits }) => ({ id, origin, deferredOrigin, editable, hasEdits }))
-        const payload = deferOrigins ? { session: previewOriginSession, variants: entries } : entries
+        const payload = useOnDemand ? { session: previewOriginSession, variants: entries } : entries
         response.write('event: preview-origins\ndata: ' + JSON.stringify(payload) + '\n\n')
       }
       response.write('event: activity\ndata: ' + JSON.stringify({ activity, variants }) + '\n\n')
@@ -195,14 +195,13 @@ async function serve(request, response) {
         const originalOrigin = link?.role === 'proposal' ? link.otherOrigin : origin
         if (!durableCanvas && map.origin !== originalOrigin) throw Error('Map belongs to another app')
         if (mergeSavedFrames && link?.role !== 'proposal') {
-          await mergeSavedFrames(map, deferOrigins)
-          if (deferOrigins) {
+          if (await mergeSavedFrames(map, deferOrigins)) {
             map.previewOrigins = 'on-demand'
             map.previewOriginSession = previewOriginSession
           }
         }
         if (link?.role !== 'proposal') map.activity = canvasActivity(mapRoot, map.variants ?? [])
-        if (deferOrigins && mergeSavedFrames && link?.role !== 'proposal') {
+        if (map.previewOriginSession === previewOriginSession) {
           map.activityVersion = activityVersion(map.variants, map.activity)
         }
         if (editor) map.canvasId = createHash('sha256').update(mapRoot).digest('hex')

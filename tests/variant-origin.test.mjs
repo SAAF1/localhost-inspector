@@ -147,6 +147,24 @@ test('a picture-backed step opens one isolated origin on demand while legacy con
   assert.equal(legacy[0].origin, first.origin)
   assert.notEqual(legacy[1].origin, first.origin)
   assert.equal((await load('map.json')).previewOrigins, undefined)
+
+  // Grow the same catalog, then read the plain endpoint before opening a
+  // new preview. Only the three previously used origins should already exist.
+  const more = Array.from({ length: 100 }, (_, i) => ({ key: 'saved-' + i, label: 'Saved ' + i, route: '/saved' }))
+  for (const step of more) pictures['flow~' + step.key] = { ...pictures['flow~one'], route: step.route }
+  await writeFile(join(root, 'variant-previews.json'), JSON.stringify(pictures))
+  await writeFile(join(owner, 'frame.json'), JSON.stringify({ id: 'flow', anchor: 'a', section: 'Flow', steps: steps.concat(more) }))
+  const large = await load('map.json')
+  assert.equal(large.previewOrigins, 'on-demand')
+  assert.equal(large.variants.filter(step => step.origin).length, 3)
+  assert.equal(large.variants.filter(step => step.deferredOrigin).length, 100)
+  assert.match(large.activityVersion, /^[a-f0-9]{64}$/)
+  const largeStream = await publishedOrigins('')
+  assert.equal(largeStream.session, large.previewOriginSession)
+  assert.equal(largeStream.variants.filter(step => step.deferredOrigin).length, 100)
+  const selected = await load(resolver + 'flow~saved-50', { headers })
+  assert.equal(selected.id, 'flow~saved-50')
+  assert.equal((await load('map.json')).variants.filter(step => step.origin).length, 4)
 })
 
 test('a restored page reconnects using its last applied catalog version', t => {
