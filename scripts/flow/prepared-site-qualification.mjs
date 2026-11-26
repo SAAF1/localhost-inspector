@@ -85,7 +85,8 @@ export function preparedStyleTargets(site, node, code) {
     }
     if (style.styleInput) {
       const value = literalStyleInput(node, property)
-      if (property !== 'height' || !value || value.value !== style.base) return
+      if (!['height','font-size'].includes(property) || !value || value.value !== style.base ||
+          (property === 'font-size' && (node.name.name !== style.tag || !/^[a-z][a-z0-9-]*$/.test(style.tag)))) return
       targets.push({style,start:value.start,end:value.end})
       continue
     }

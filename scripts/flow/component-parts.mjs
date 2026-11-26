@@ -164,10 +164,14 @@ export function literalStyleInput(opening, property) {
 		obj.properties.some((p) => p.type !== 'ObjectProperty' || p.computed)
 	)
 		return
+	const name = property === 'font-size' ? 'fontSize' : property
+	if (property === 'font-size' && obj.properties.some(p => ['font','all','font-size'].includes(p.key.name ?? p.key.value))) return
 	const entries = obj.properties.filter(
-		(p) => (p.key.name ?? p.key.value) === property,
+		(p) => (p.key.name ?? p.key.value) === name,
 	)
 	const value = entries.length === 1 && entries[0].value
+	if (property === 'font-size' && value?.type === 'NumericLiteral' && Number.isFinite(value.value) && value.value >= 0)
+		return {...value, value:value.value + 'px'}
 	return value?.type === 'StringLiteral' &&
 		/^\d+(?:\.\d+)?px$/.test(value.value)
 		? value
