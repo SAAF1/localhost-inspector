@@ -855,7 +855,7 @@
       isCurrentRoute(path, version) &&
       ui.preparedPreview.contract(node)?.revision === contract.revision
     const read = (key) => ui.preparedPreview.read(node, { property: key, prepared: { field, part:contract.parts?.[key] } })
-    if (!current() || (field && !ui.preparedPreview.shows(node, contract.input, read(property))))
+    if (!current() || (field && !ui.preparedPreview.receivesChoice(node, contract.input, read(property))))
       throw Error('The prepared part changed. Select it again before editing.')
     const records = properties.map((key) => ({
       id: crypto.randomUUID(),
@@ -880,7 +880,13 @@
     }))
     const originalMembers = new Set(ui.preparedPreview.membersOf(contract.revision))
     const previousChoice = field && contract.input?.component ? new Map(
-      [...originalMembers].map(member=>[member,ui.preparedPreview.choiceValues(member)])) : null
+      [...originalMembers].map(member=>[member,{
+        ...ui.preparedPreview.choiceValues(member),
+        backgroundToken:ui.preparedPreview.choiceBackgroundToken(member,contract.input,read(property)),
+      }])) : null
+    if (previousChoice && [...originalMembers].some(member =>
+      !ui.preparedPreview.receivesChoice(member,contract.input,read(property))))
+      throw Error('The component instances no longer share the original input.')
     const boundParts = records.filter(edit => edit.prepared.part)
     if (boundParts.length) {
       const members = ui.preparedPreview.membersOf(contract.revision)
@@ -905,8 +911,16 @@
             old[key] !== getComputedStyle(member).getPropertyValue(key) &&
             !member.getAnimations().some(a=>a.playState==='running' && a.transitionProperty===key)
         }))
-        if (!property) return false
-        edit.prepared.effect={property,value:getComputedStyle(node).getPropertyValue(property)}
+        if (property) edit.prepared.effect={property,value:getComputedStyle(node).getPropertyValue(property)}
+        else {
+          const withdrawn = previousChoice.get(node)?.backgroundToken
+          if (!withdrawn || ![...members].every(member => {
+            const old = previousChoice.get(member)
+            return old.backgroundToken === withdrawn && old['background-color'] !== 'rgba(0, 0, 0, 0)' &&
+              ui.preparedPreview.withdrawnBackground(member,contract.input,edit.before,requested,withdrawn)
+          })) return false
+          edit.prepared.effect = {property:'background-color',value:'rgba(0, 0, 0, 0)',withdrawn}
+        }
       }
       return members.length > 0 && Array.from(members).every(member => {
         const active = ui.preparedPreview.contract(member)

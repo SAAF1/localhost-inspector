@@ -47,7 +47,9 @@ export function journalValidators(journalRoute) {
         effect.value === record.requested && typeof effect.value === 'string' && /^\d+(?:\.\d+)?px$/.test(effect.value)
       const validEffect = effect === undefined || measuredGap || (Boolean(field) && effect &&
         ['background-color','color','font-size','height','width'].includes(effect.property) && validValue(effect.property,effect.value))
-      if (!validEffect || !validPart || !validSite || !validControl || group || pending || record.template || record.frameState ||
+      const validWithdrawal = effect?.withdrawn === undefined || (field && effect.property === 'background-color' &&
+        effect.value === 'rgba(0, 0, 0, 0)' && typeof effect.withdrawn === 'string' && /^[\w/-]{1,100}$/.test(effect.withdrawn))
+      if (!validWithdrawal || !validEffect || !validPart || !validSite || !validControl || group || pending || record.template || record.frameState ||
           record.restore !== 'unique' || record.intent !== featureTemplateScope) throw Error('Invalid prepared contract')
     }
     const validRequest = field ? true : group ? validTextStyleRequest : reference
@@ -106,7 +108,8 @@ export function journalValidators(journalRoute) {
     return {
       id, route: journalRoute(route), property, requested, observed, before, restore,
       ...(prepared ? { prepared: { site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}),
-        ...(prepared.effect ? {effect:{property:prepared.effect.property,value:prepared.effect.value}} : {}),
+        ...(prepared.effect ? {effect:{property:prepared.effect.property,value:prepared.effect.value,
+          ...(prepared.effect.withdrawn ? {withdrawn:prepared.effect.withdrawn} : {})}} : {}),
         ...(prepared.part ? {part:Object.fromEntries(['id','revision','depth','file','selector'].map(k=>[k,prepared.part[k]]))} : {}) } } : {}),
       ...(selectedUse ? {selectedUse: {
         ...Object.fromEntries(['id','file','owner','callerDigest','component','componentDigest','field'].map(k=>[k,selectedUse[k]])),

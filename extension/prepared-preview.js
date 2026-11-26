@@ -26,6 +26,21 @@
       return owner && tokens.some(token=>node.classList.contains(token) && owner.selector === '.'+CSS.escape(token))
     })
   }
+  function choiceBackgroundToken(node,input,option) {
+    if (!receivesChoice(node,input,option)) return
+    const owner = declaration(node,'background-color')
+    return input.verify?.[option]?.tokens.find(token => node.classList.contains(token) &&
+      owner?.selector === '.' + CSS.escape(token))
+  }
+  function withdrawnBackground(node,input,before,requested,token) {
+    if (!token || !input?.verify?.[before]?.tokens?.includes(token) ||
+        !receivesChoice(node,input,requested) || node.classList.contains(token) ||
+        node.style.getPropertyValue('background-color') || node.style.getPropertyValue('background')) return false
+    const css = getComputedStyle(node)
+    return !css.getPropertyValue('--li-owner-background-color').trim() &&
+      css.backgroundColor === 'rgba(0, 0, 0, 0)' &&
+      !node.getAnimations().some(a => a.playState === 'running' && a.transitionProperty === 'background-color')
+  }
   function choiceValues(node) {
     const css=getComputedStyle(node)
     return Object.fromEntries(choiceProperties.map(property=>[property,css.getPropertyValue(property)]))
@@ -159,12 +174,15 @@
         const distances = ui.authoredUsePreview.separation(node, true)
         if (observed !== value || !distances || distances.some(distance => Math.abs(distance - parseFloat(value)) > 1))
           return false
+      } else if (edit.prepared.effect.withdrawn) {
+        if (property !== 'background-color' || value !== 'rgba(0, 0, 0, 0)' ||
+            !withdrawnBackground(node,prepared.input,edit.before,requested,edit.prepared.effect.withdrawn)) return false
       } else if (!choiceFields(node,prepared.input,requested).includes(property) ||
           getComputedStyle(node).getPropertyValue(property) !== value) return false
     }
     if (edit.prepared.field)
       return prepared.input?.field === edit.prepared.field && observed === requested &&
-        shows(node, prepared.input, requested)
+        (edit.prepared.effect?.withdrawn ? receivesChoice(node,prepared.input,requested) : shows(node, prepared.input, requested))
     if (property === 'width' && ['100%', 'fit-content'].includes(requested)) {
       const parent = node.parentElement
       if (!parent || !ui.widthModes(node).length ||
@@ -329,5 +347,5 @@
     const edit = revision && declarations.get(revision + ':' + property)
     return edit?.property === property ? edit.requested : undefined
   }
-  ui.preparedPreview = { receivesChoice, choiceFields, choiceValues, membersOf, samePart, contract, project, locate, authored, shows, read, showsEffect, observe }
+  ui.preparedPreview = { choiceBackgroundToken, withdrawnBackground, receivesChoice, choiceFields, choiceValues, membersOf, samePart, contract, project, locate, authored, shows, read, showsEffect, observe }
 })()

@@ -281,3 +281,25 @@ test('finite subscriptions preserve block and concise component arrows, early re
     }
   }
 })
+
+test('a finite choice may withdraw a verified background only after the real prop and clear paint settle', async () => {
+  const {runInNewContext}=await import('node:vm')
+  let option='soft', marker='"'+encodeURIComponent(JSON.stringify(['a'.repeat(32),'style.css','.soft-bg']))+'"'
+  let inline='', animation=false, paint='rgb(20, 20, 20)'
+  const tokens=new Set(['soft-bg']), ui={sourceComponentRequest:()=>({source:'Badge',properties:[{id:'variant',value:option}]})}
+  const css={getPropertyValue:()=>marker,get backgroundColor(){return paint}}
+  const node={style:{getPropertyValue:()=>inline},classList:{contains:t=>tokens.has(t)},
+    getAnimations:()=>animation?[{playState:'running',transitionProperty:'background-color'}]:[]}
+  runInNewContext(readFileSync(new URL('../extension/prepared-preview.js',import.meta.url),'utf8'),{
+    window:{LocalhostInspector:ui},document:{addEventListener(){},dispatchEvent(){}},Event,CSS:{escape:s=>s},getComputedStyle:()=>css})
+  const input={component:'Badge',field:'variant',verify:{soft:{tokens:['soft-bg']},outline:{tokens:['outline']}}}
+  assert.equal(ui.preparedPreview.choiceBackgroundToken(node,input,'soft'),'soft-bg')
+  const withdrawn=()=>ui.preparedPreview.withdrawnBackground(node,input,'soft','outline','soft-bg')
+  marker='';paint='rgba(0, 0, 0, 0)';tokens.clear()
+  assert.equal(withdrawn(),false)
+  option='outline';assert.equal(withdrawn(),true)
+  marker='unavailable';assert.equal(withdrawn(),false);marker=''
+  inline='transparent';assert.equal(withdrawn(),false);inline=''
+  animation=true;assert.equal(withdrawn(),false);animation=false
+  tokens.add('soft-bg');assert.equal(withdrawn(),false)
+})
