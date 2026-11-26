@@ -59,13 +59,21 @@ export function recordRenderOwners(tree) {
   return names
 }
 
-export function recordContractKey(proof) {
-  return 'bound:'+createHash('sha256').update(JSON.stringify([proof.part.id,proof.anchor.id,
-    proof.authority.file,proof.authority.id,proof.field,proof.value,proof.witness,
-    proof.part.revision,proof.anchor.revision,proof.authority.revision,proof.renderPath.map(site=>[site.file,site.owner,site.revision])])).digest('hex')
+export function recordContractKey(proof, legacy = false) {
+  const revisions = path => path.map(site=>[site.file,site.owner,site.revision])
+  const identity = [proof.part.id,proof.anchor.id,proof.authority.file,proof.authority.id,
+    proof.field,proof.value,proof.witness,proof.part.revision,proof.anchor.revision,
+    proof.authority.revision,revisions(proof.renderPath)]
+  if (!legacy && proof.statePath) identity.push(revisions(proof.statePath))
+  return 'bound:'+createHash('sha256').update(JSON.stringify(identity)).digest('hex')
 }
 
 export function verifyRuntimeRecord(root,proof) {
+  if (proof?.kind==='state-record' && !Array.isArray(proof.statePath)) {
+    const error = Error('This earlier record edit needs its state path verified. Reapply the edit on the selected record.')
+    error.code = 'record-state-path-unverified'
+    throw error
+  }
   if(proof?.kind!=='state-record' || proof.operation!=='border-radius' ||
       !['string','number'].includes(typeof proof.value) ||
       (typeof proof.value==='number' && !Number.isSafeInteger(proof.value)) ||
@@ -74,10 +82,11 @@ export function verifyRuntimeRecord(root,proof) {
       !/^[a-zA-Z_$][\w$]*$/.test(proof.field) ||
       ![proof.part,proof.anchor,proof.authority].every(site=>site?.file && site.id) ||
       (!Array.isArray(proof.renderPath) || proof.renderPath.length>12 ||
-        !proof.renderPath.every(site=>site?.file && site.owner && site.revision)) ||
+        proof.statePath.length>12 || ![...proof.renderPath,...proof.statePath].every(site=>site?.file && site.owner && site.revision)) ||
+      (proof.requalifiedKey !== undefined && proof.requalifiedKey !== recordContractKey(proof,true)) ||
       proof.key!==recordContractKey(proof)) throw Error('Invalid selected record contract.')
   const sources=new Map()
-  for(const site of [proof.part,proof.anchor,proof.authority,...proof.renderPath]){
+  for(const site of [proof.part,proof.anchor,proof.authority,...proof.renderPath,...proof.statePath]){
     if(!/^[\w./ -]+\.[jt]sx?$/.test(site.file) || site.file.split('/').some(p=>!p||p==='..'||p==='node_modules'))throw Error('Invalid record source path.')
     const path=join(root,site.file)
     if(relative(root,path)!==site.file || realpathSync(path)!==path)throw Error('Record source moved.')
@@ -93,7 +102,7 @@ export function verifyRuntimeRecord(root,proof) {
       if(!stateAuthorities(tree).get(site.id))throw Error('Record state authority changed.')
       continue
     }
-    if (proof.renderPath.includes(site)) {
+    if (proof.renderPath.includes(site) || proof.statePath.includes(site)) {
       if (!recordRenderOwners(tree).includes(site.owner)) throw Error('Record render owner changed.')
       continue
     }

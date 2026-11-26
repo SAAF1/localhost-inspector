@@ -279,7 +279,7 @@ if (mode === 'handoff' || mode === 'proposal-readiness') {
       const catalog = proof.catalog && (await read(join(binding.authoredUse.directory,'prepared.json'),null))?.recordCatalog
       verifyRecordSource(binding.source, proof, catalog)
     }
-    catch { op.status = 'blocked'; op.reason = 'record-source-changed' }
+    catch (error) { op.status = 'blocked'; op.reason = error.code === 'record-state-path-unverified' ? error.code : 'record-source-changed' }
   }
   if (journal.textStyleDefinitions?.length) {
     const catalog = await readCatalog(binding, 'text-styles')

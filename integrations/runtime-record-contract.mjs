@@ -63,16 +63,18 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
       return
     }
   }
-  function renderPath(node, anchor) {
+  function renderPath(start, end) {
     const path = []
-    for (let fiber = currentFiber(node); fiber; fiber = fiber.return) {
+    for (let fiber = start; fiber; fiber = fiber.return) {
       // Host elements and fragments introduce no additional component source.
-      if (typeof fiber.type !== 'string' && fiber.tag !== 7) {
+      const type = fiber.type
+      const contextProvider = fiber.tag === 10 && [Symbol.for('react.provider'),Symbol.for('react.context')].includes(type?.$$typeof)
+      if (typeof type !== 'string' && fiber.tag !== 7 && !contextProvider && type !== Symbol.for('react.strict_mode')) {
         const site = renderOrigins.get(fiber.elementType) ?? renderOrigins.get(fiber.type)
         if (!site || !moduleRevisions.has(site.file) || path.length >= 12) return
         path.push({...site, revision: moduleRevisions.get(site.file)})
       }
-      if (fiber === anchor) return path
+      if (fiber === end) return path
     }
   }
   function inspect(node,expected){
@@ -97,7 +99,7 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
     const fields=witness(record,field,node.textContent)
     if(!fields)return
     const members=new Set(peers.values()),matched=new Set()
-    let authority
+    let authority, authorityFiber
     for(let f=binding.fiber,steps=0;f && steps++<96;f=f.return){
       for(let h=f.memoizedState,i=0;h && i++<64;h=h.next){
         const root=h.memoizedState,site=root && stateOrigins.get(root)
@@ -105,13 +107,15 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
         const table=inspectMembership(root,members,field)
         if(!table)continue
         if([...table.values()].some(other=>other!==record && fields.every(([k,v])=>own(other,k)===v)))return
-        matched.add(root);authority=site
+        matched.add(root);authority=site;authorityFiber=f
         if(matched.size>1)return
       }
     }
-    const path = renderPath(node, binding.fiber)
-    if(!authority || !path)return
-    return {kind:'state-record',operation:'border-radius',value,field,witness:JSON.stringify(fields),members:peers.size,renderPath:path,
+    if (!authority) return
+    const path = renderPath(currentFiber(node), binding.fiber)
+    const statePath = authorityFiber === binding.fiber ? [] : renderPath(binding.fiber.return, authorityFiber)
+    if (!path || (!statePath && !expected?.legacy)) return
+    return {kind:'state-record',operation:'border-radius',value,field,witness:JSON.stringify(fields),members:peers.size,renderPath:path,statePath,
       part:{...part,revision:moduleRevisions.get(part.file)},
       anchor:{id:anchor.id,owner:anchor.owner,file:anchor.file,revision:moduleRevisions.get(anchor.file)},
       authority:{...authority,revision:moduleRevisions.get(authority.file)}}

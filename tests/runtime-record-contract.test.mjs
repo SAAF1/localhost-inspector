@@ -7,6 +7,7 @@ import MagicString from 'magic-string'
 import {parseAuthoredJsx} from '../scripts/flow/authored-forwarding.mjs'
 import {markStateAuthorities,recordKeyInput,recordContractKey,verifyRuntimeRecord} from '../scripts/flow/runtime-record-contract.mjs'
 import {syntaxFingerprint} from '../scripts/flow/component-proof.mjs'
+import {sourceWinners} from '../source-handoff.mjs'
 import {sourceUseId} from '../scripts/flow/selection-provenance.mjs'
 
 test('state-record handoff rechecks the real hook, rendered part, key and current source',t=>{
@@ -20,7 +21,7 @@ test('state-record handoff rechecks the real hook, rendered part, key and curren
   const authority={...JSON.parse(out.toString().match(/__liRecordState\(useRows\(reduce,initial\),(\{.*?\})\)/)[1]),revision}
   function site(opening){return {file:'Board.jsx',owner:'Board',revision,id:sourceUseId('Board.jsx','Board',opening)}}
   const proof={kind:'state-record',operation:'border-radius',part:site('<article>'),
-    anchor:site('<li key={row.uid}>'),field:'uid',value:'oak',authority,witness:'[["title","Oak"]]',members:2,renderPath:[]}
+    anchor:site('<li key={row.uid}>'),field:'uid',value:'oak',authority,witness:'[["title","Oak"]]',members:2,renderPath:[],statePath:[]}
   proof.key=recordContractKey(proof)
   assert.doesNotThrow(()=>verifyRuntimeRecord(root,proof))
   writeFileSync(join(root,'Board.jsx'),code+'\n// harmless')
@@ -44,6 +45,22 @@ test('state-record handoff rechecks the real hook, rendered part, key and curren
   assert.doesNotThrow(()=>verifyRuntimeRecord(root,withRelay))
   writeFileSync(join(root,'Relay.jsx'),intermediate.replace('<Board row={row}/>','<p>Other</p>'))
   assert.throws(()=>verifyRuntimeRecord(root,withRelay))
+  const oldProof={...proof}
+  delete oldProof.statePath
+  oldProof.key=recordContractKey(oldProof)
+  assert.throws(()=>verifyRuntimeRecord(root,oldProof), {code:'record-state-path-unverified'})
+  const renewed={...proof,requalifiedKey:oldProof.key}
+  assert.doesNotThrow(()=>verifyRuntimeRecord(root,renewed))
+  const edits=[oldProof,renewed].map((recordScope,i)=>({id:String(i),property:'border-radius',recordScope}))
+  assert.equal(sourceWinners({edits}).get('0').member,'1')
+  assert.equal(sourceWinners({edits:[edits[0]]}).get('0').member,'0')
+  assert.throws(()=>verifyRuntimeRecord(root,{...renewed,requalifiedKey:proof.key}))
+  writeFileSync(join(root,'Relay.jsx'),intermediate)
+  const dataBridge={...proof,statePath:withRelay.renderPath}
+  dataBridge.key=recordContractKey(dataBridge)
+  assert.doesNotThrow(()=>verifyRuntimeRecord(root,dataBridge))
+  writeFileSync(join(root,'Relay.jsx'),intermediate.replace('row={row}','row={{...row}}'))
+  assert.throws(()=>verifyRuntimeRecord(root,dataBridge))
   const shadow=code.replace('function Board()','function Board(useRows)')
   assert.equal(markStateAuthorities('Board.jsx',parseAuthoredJsx(shadow),new MagicString(shadow)),false)
   const lookalike=code.replace("from 'react'","from './react-like'")

@@ -94,7 +94,7 @@ export function sourceWinners(journal) {
     // The eye temporarily hides a preview. Undo removes the design intent.
     if ((!record.prepared && !record.recordScope && !record.selectedUse) || record.undone || record.executor === 'authored-source') continue
     const edit = effectivePreparedEdit(record, journal)
-    const key = edit.selectedUse ? JSON.stringify(['selected-use',edit.route,edit.selectedUse,edit.property]) : edit.recordScope ? JSON.stringify(['selected-record',edit.recordScope.key,edit.property]) :
+    const key = edit.selectedUse ? JSON.stringify(['selected-use',edit.route,edit.selectedUse,edit.property]) : edit.recordScope ? JSON.stringify(['selected-record',edit.recordScope.requalifiedKey ?? edit.recordScope.key,edit.property]) :
       JSON.stringify([edit.prepared.site, edit.prepared.revision, edit.prepared.field ?? edit.property])
     keys.set(edit.id, key)
     winners.set(key, { operation: edit.group ?? edit.id, member: edit.id })

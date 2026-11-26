@@ -9,8 +9,9 @@
     finally{node.removeEventListener('li-record-contract',receive)}
     return proof
   }
-  function same(a,b){
+  function same(a,b,legacy=false){
     return a && b && a.kind===b.kind && a.operation===b.operation && a.field===b.field &&
+      (legacy || JSON.stringify(a.statePath)===JSON.stringify(b.statePath)) &&
       JSON.stringify(a.renderPath)===JSON.stringify(b.renderPath) && a.value===b.value && a.witness===b.witness &&
       ['anchor','part','authority'].every(k=>a[k].id===b[k].id && a[k].file===b[k].file &&
         a[k].revision===b[k].revision)
@@ -28,17 +29,22 @@
     }
     const state=JSON.stringify([proof.part.id,proof.anchor.id,proof.authority.file,proof.authority.id,
       proof.field,proof.value,proof.witness,proof.part.revision,proof.anchor.revision,proof.authority.revision,
-      proof.renderPath.map(site=>[site.file,site.owner,site.revision])])
+      proof.renderPath.map(site=>[site.file,site.owner,site.revision]),proof.statePath.map(site=>[site.file,site.owner,site.revision])])
     const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(state))
     proof.key='bound:'+Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('')
-    if(!same(proof,read(node,'admit')))return
+    if(!same(proof,read(node,'admit')))throw Error('The selected record changed during verification. No change was saved.')
+    // An explicit edit on the same live record can renew a pre-state-path
+    // receipt. Its old ID and values remain available to Undo.
+    for (const previous of known.values()) {
+      if (!previous.statePath && same(previous,proof,true)) proof.requalifiedKey=previous.key
+    }
     proof.preparation='prepared'
     remember(proof)
     return proof
   }
   function matches(node,key) {
     const expected=known.get(key)
-    return Boolean(expected && node && same(expected,read(node,{mode:'restore',anchor:expected.anchor.id,value:expected.value})))
+    return Boolean(expected && node && same(expected,read(node,{mode:'restore',anchor:expected.anchor.id,value:expected.value,legacy:!expected.statePath}),!expected.statePath))
   }
   function candidates(key){
     const expected=known.get(key)
