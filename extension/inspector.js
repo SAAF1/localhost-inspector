@@ -61,12 +61,16 @@
       }
     }
     if (contract?.input) {
-      const { field, options } = contract.input
-      const value = node.getAttribute('data-li-choice')
-      const localProperty = component?.properties.find(p=>p.id===field)
-      component = { ...(component ?? { name: contract.site }), prepared: contract,
-        properties: [...(component?.properties ?? []).filter(p => p.id !== field),
-          { id: field, options, value, localProperty, prepared: true, unavailableReason: ui.preparedPreview.receivesChoice(node, contract.input, value) ? null : 'Unavailable in this state' }] }
+      const inputs = [contract.input,...(contract.additionalInputs ?? [])]
+      const properties = inputs.map(input => {
+        const {field, options} = input
+        const value = ui.preparedPreview.read(node,{prepared:{field}})
+        const localProperty = component?.properties.find(p=>p.id===field)
+        return {id:field, options:input.component ? (localProperty?.options ?? options) : options, value, localProperty, input, prepared:true,
+          unavailableReason:ui.preparedPreview.receivesChoice(node,input,value) ? null : 'Unavailable in this state'}
+      })
+      component = {...(component ?? {name:contract.site}),prepared:contract,
+        properties:[...(component?.properties ?? []).filter(p=>!inputs.some(i=>i.field===p.id)),...properties]}
     }
     if (!component) return
     if (request !== componentRead || node !== selection.current || !node.isConnected || route !== currentRoute) return
@@ -88,7 +92,8 @@
       throw Error('Shared source is unavailable for this component choice. Selected element only previews this occurrence.')
     if (property.prepared) {
       if (property.value === next || !property.options.includes(next)) return
-      await commitPrepared(node, component.prepared, 'component-' + property.id, next, undefined, property.id)
+      if (!property.input.options.includes(next)) throw Error('Shared source has no verified effect for this option.')
+      await commitPrepared(node, {...component.prepared,input:property.input}, 'component-' + property.id, next, undefined, property.id)
       await inspectSelectedComponent(node, path)
       return
     }
@@ -502,7 +507,7 @@
     const node = selection.current
     const hasSelection = Boolean(node?.isConnected)
     const contract = hasSelection && ui.preparedPreview.contract(node)
-    const shared = contract ? [...(contract.styles ?? (contract.style ? [contract.style] : [])), ...(contract.input ? [contract.input.field] : [])] : []
+    const shared = contract ? [...(contract.styles ?? (contract.style ? [contract.style] : [])), ...(contract.input ? [contract.input.field,...(contract.additionalInputs ?? []).map(i=>i.field)] : [])] : []
     const scope = get('prepared-scope')
     const use = authoredUse && hasSelection ? authored.binding(node) : null
     const editScope = get('authored-edit-scope')

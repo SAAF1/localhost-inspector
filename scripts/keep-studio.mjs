@@ -91,8 +91,8 @@ export function keepStudio(dir) {
         const attr = (name) => node.attributes.find((a) => a.name?.name === name)?.value
         let classes = attr('className')?.value
         for (const [property, value] of fields) {
-          const input = site.input
-          if (input && property === 'component-' + input.field && input.options.includes(value)) {
+          const input = [site.input,...(site.additionalInputs ?? [])].find(input=>input && property==='component-'+input.field)
+          if (input?.options.includes(value)) {
             if (input.attribute) {
               const literal = attr(input.attribute)
               if (literal?.value !== input.base) throw Error('The component input changed.')

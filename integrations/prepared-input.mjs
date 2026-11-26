@@ -17,16 +17,24 @@ document.addEventListener('li-prepared-input', (event) => {
     (request.value !== null && !/^[a-zA-Z0-9_-]{1,60}$/.test(request.value))
   )
     return
-  const { revision, value } = request
-  if (values.get(revision) === value) return
-  if (value == null) values.delete(revision)
-  else values.set(revision, value)
+  const { revision, field, value } = request
+  if (field !== undefined && !/^[a-zA-Z][a-zA-Z0-9-]{0,59}$/.test(field)) return
+  // Single-input sites subscribe to the original revision. Multi-input sites
+  // subscribe independently so one field can be undone while the other stays.
+  const channels = field ? [revision, revision + ':' + field] : [revision]
+  const changed = channels.filter(channel => (values.get(channel) ?? null) !== value)
+  if (!changed.length) return
+  for (const channel of changed) {
+    if (value == null) values.delete(channel)
+    else values.set(channel, value)
+  }
   flushSync(() => {
-    for (const notify of listeners.get(revision) ?? []) notify()
+    for (const channel of changed) for (const notify of listeners.get(channel) ?? []) notify()
   })
 })
 document.dispatchEvent(new Event('li-prepared-ready'))
-export function usePreparedInput(revision) {
+export function usePreparedInput(site, field) {
+  const revision = field ? site + ':' + field : site
   return useSyncExternalStore(
     (notify) => {
       if (!listeners.has(revision)) listeners.set(revision, new Set())

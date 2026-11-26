@@ -254,23 +254,19 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           const attr = (name) => node.attributes.find((a) => a.name?.name === name)
           const targets = preparedStyleTargets(site, node, code)
           if (!targets) continue
-          if (site.input) {
-            const { options, base, attribute, child, choices, verify } = site.input
-            if (
-              !renderOwnerFunction(tree, owner) ||
-              (!attr(attribute)?.value && !child) ||
-              !Array.isArray(options) ||
-              !options.includes(base) ||
-              !options.every(
-                (key) =>
-                  typeof key === 'string' &&
-                  /^[\w-]{1,60}$/.test(key) &&
-                  (verify?.[key]?.self || verify?.[key]?.child || (site.input.component && verify?.[key]?.tokens?.length)) &&
-                  (!(choices || child) || /^[A-Z][\w]*$/.test(choices?.[key] ?? '')),
-              )
-            )
-              continue
-          }
+          const inputs = site.input ? [site.input, ...(site.additionalInputs ?? [])] : []
+          if (inputs.length > 4 || new Set(inputs.map(input=>input.field)).size !== inputs.length ||
+              (inputs.length > 1 && !inputs.every(input=>input.component && !input.child && !input.choices &&
+                /^[a-zA-Z][a-zA-Z0-9-]{0,59}$/.test(input.field) && input.attribute===input.field &&
+                attr(input.attribute)?.value?.value===input.base))) continue
+          if (!inputs.every(input => {
+            const { options, base, attribute, child, choices, verify } = input
+            return renderOwnerFunction(tree, owner) && (attr(attribute)?.value || child) &&
+              Array.isArray(options) && options.includes(base) && options.every(key =>
+                typeof key === 'string' && /^[\w-]{1,60}$/.test(key) &&
+                (verify?.[key]?.self || verify?.[key]?.child || (input.component && verify?.[key]?.tokens?.length)) &&
+                (!(choices || child) || /^[A-Z][\w]*$/.test(choices?.[key] ?? '')))
+          })) continue
           let slotTag
           if (site.input?.child) {
             const slots = children.filter(
@@ -337,14 +333,15 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             if (site.styles) { if (!(fields.styles ??= []).includes(property)) fields.styles.push(property) }
             else fields.style = property
           }
-          if (site.input) {
-            const { field, options, base, attribute, choices } = site.input
+          const choiceValues = []
+          for (const [position,input] of inputs.entries()) {
+            const { field, options, base, attribute, choices } = input
             const value = attr(attribute)?.value
-            const child = site.input.child
-            const state = '__liInput' + index
+            const child = input.child
+            const state = '__liInput' + index + (position ? '_' + position : '')
             const fn = renderOwnerFunction(tree,owner)
             let declarations = (subscriptions.get(fn) ?? '') +
-              '\nconst ' + state + ' = __liUse(' + JSON.stringify(revision) + ');\n'
+              '\nconst ' + state + ' = __liUse(' + JSON.stringify(revision) + (inputs.length > 1 ? ',' + JSON.stringify(field) : '') + ');\n'
             if (child) {
               const slot = '__LiSlot' + index
               declarations += 'const ' + slot + ' = ({' +
@@ -371,10 +368,15 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
                 '{' + state + ' == null ? (' + original + ') : ' + override + '}',
               )
             }
-            markers += ' data-li-choice={' + state + ' ?? ' + JSON.stringify(base) + '}'
-            fields.input = { field, options, base, verify: site.input.verify, ...(site.input.component ? {component:site.input.component} : {}) }
+            const choice = state + ' ?? ' + JSON.stringify(base)
+            const descriptor = {field,options,base,verify:input.verify,...(input.component ? {component:input.component} : {})}
+            if (position === 0) fields.input = descriptor
+            else (fields.additionalInputs ??= []).push(descriptor)
+            if (inputs.length === 1) markers += ' data-li-choice={' + choice + '}'
+            else choiceValues.push(JSON.stringify(field) + ':' + choice)
             subscriptions.set(fn, declarations)
           }
+          if (choiceValues.length) markers += ' data-li-choices={JSON.stringify({' + choiceValues.join(',') + '})}'
           if (fields.local) {
             // Kept on the qualified part so projection also works after a remount.
             for (const layer of ['ordinary', 'utilities']) {

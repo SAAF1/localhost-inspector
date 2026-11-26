@@ -11,7 +11,7 @@ import { baseRule, cssFields, panelCssFields, cssParser } from './prepared-css.m
 import { moduleReference, literalColorAttribute, panelOpening } from './prepared-site-qualification.mjs'
 import { localBindingNames } from './authored-use.mjs'
 import { sourceUseId } from './selection-provenance.mjs'
-import { finiteComponentInput } from './finite-component-input.mjs'
+import { finiteComponentInputs } from './finite-component-input.mjs'
 import { componentSurface } from './component-surface.mjs'
 import { componentProof } from './component-proof.mjs'
 import { componentDefinitions, returnedPart, literalStyleInput } from './component-parts.mjs'
@@ -114,7 +114,7 @@ function analyze(code, file, config) {
         opening.attributes.some(a=>a.value?.type==='StringLiteral' && !['className','id','role'].includes(a.name?.name)) &&
         config.definition(file, imports.get(name))
       const finite = finiteDefinition && config.hostLibrary(finiteDefinition.file,'class-variance-authority') &&
-        finiteComponentInput(config.root,finiteDefinition,opening)
+        finiteComponentInputs(config.root,finiteDefinition,opening)
       let reason = 'no qualified operation'
       if (!owner || opening.attributes.some((a) => a.type === 'JSXSpreadAttribute'))
         reason = 'opaque owner or spread'
@@ -123,7 +123,7 @@ function analyze(code, file, config) {
           dependencies:[...new Set([...raw.dependencies,...surface.dependencies,...config.css.tokenFiles])] })
         reason=null
       } else if (finite) {
-        found.push({...raw,input:finite,componentProof:config.proof(finiteDefinition.files),
+        found.push({...raw,input:finite[0],...(finite.length > 1 ? {additionalInputs:finite.slice(1)} : {}),componentProof:config.proof(finiteDefinition.files),
           dependencies:[...new Set([...raw.dependencies,...finiteDefinition.files])]})
         reason = null
       } else if (forwardsStyle) {

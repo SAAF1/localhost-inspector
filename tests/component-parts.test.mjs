@@ -88,7 +88,7 @@ test('only an unshadowed public recipe reaching the returned class can prepare a
   const {join}=await import('node:path')
   const {tmpdir}=await import('node:os')
   const {typeModule}=await import('../component-types.mjs')
-  const {finiteComponentInput}=await import('../scripts/flow/finite-component-input.mjs')
+  const {finiteComponentInputs}=await import('../scripts/flow/finite-component-input.mjs')
   const root=await mkdtemp(join(tmpdir(),'finite-recipe-'))
   t.after(()=>rm(root,{recursive:true,force:true}))
   const file='Badge.jsx', caller=parseAuthoredJsx('function Page(){return <Badge tone="quiet"/>}')
@@ -102,8 +102,21 @@ test('only an unshadowed public recipe reaching the returned class can prepare a
       'export function Badge({tone,...rest}){return <b {...rest} className={'+expression+'}/>};'+extra
     await writeFile(join(root,file),source)
     const tree=parseAuthoredJsx(source),fn=tree.program.body[2].declaration
-    const input=finiteComponentInput(root,{file,tree,fn,imports:typeModule(tree,file).imports},caller)
+    const input=finiteComponentInputs(root,{file,tree,fn,imports:typeModule(tree,file).imports},caller)
     assert.equal(Boolean(input),expected)
-    if(expected)assert.deepEqual(input.verify,{quiet:{tokens:['quiet']},loud:{tokens:['loud']}})
+    if(expected)assert.deepEqual(input[0].verify,{quiet:{tokens:['quiet']},loud:{tokens:['loud']}})
   }
+  const multiSource = "import {cva} from 'class-variance-authority';"+
+    "const recipe=cva('',{variants:{tone:{quiet:'tone-light',loud:'tone-bold',hover:'hover:tone-bold'},density:{loose:'pad-large',tight:'pad-small'}}});"+
+    'export function Chip({tone,density}){return <span className={recipe({tone,density})}/>}'
+  await writeFile(join(root,file),multiSource)
+  const tree=parseAuthoredJsx(multiSource)
+  const source={file,tree,fn:tree.program.body[2].declaration,imports:typeModule(tree,file).imports}
+  const opening=text=>parseAuthoredJsx('const chip='+text).program.body[0].declarations[0].init.openingElement
+  const fields=finiteComponentInputs(root,source,opening('<Chip tone="quiet" density="loose"/>'))
+  assert.deepEqual(fields.map(({field,options})=>[field,options]),[
+    ['tone',['quiet','loud']],['density',['loose','tight']],
+  ])
+  assert.deepEqual(finiteComponentInputs(root,source,opening('<Chip tone="hover" density="loose"/>')).map(f=>f.field),['density'])
+
 })

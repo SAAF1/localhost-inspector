@@ -155,11 +155,16 @@
       const part = partNode(node,edit.prepared.part)
       return part ? getComputedStyle(part).getPropertyValue(edit.property) : ''
     }
-    return edit.prepared.field ? node.getAttribute('data-li-choice') :
-      getComputedStyle(surfacePart(node, contract(node), edit.property) ?? node).getPropertyValue(edit.property)
+    if (edit.prepared.field) {
+      const choices = node.getAttribute('data-li-choices')
+      if (choices === null) return node.getAttribute('data-li-choice')
+      try { return JSON.parse(choices)[edit.prepared.field] } catch { return }
+    }
+    return getComputedStyle(surfacePart(node, contract(node), edit.property) ?? node).getPropertyValue(edit.property)
   }
   function showsEffect(node, edit, prepared, observed = read(node, edit)) {
     const { property, requested, spacingToken, colorToken } = edit
+    const input = [prepared?.input,...(prepared?.additionalInputs ?? [])].find(item=>item?.field===edit.prepared.field)
     if (property === 'font-size' && edit.prepared.part) {
       const part = partNode(node,edit.prepared.part)
       if (!part || !renderedTextMatches(part,requested)) return false
@@ -178,13 +183,13 @@
           return false
       } else if (edit.prepared.effect.withdrawn) {
         if (property !== 'background-color' || value !== 'rgba(0, 0, 0, 0)' ||
-            !withdrawnBackground(node,prepared.input,edit.before,requested,edit.prepared.effect.withdrawn)) return false
-      } else if (!choiceFields(node,prepared.input,requested).includes(property) ||
+            !withdrawnBackground(node,input,edit.before,requested,edit.prepared.effect.withdrawn)) return false
+      } else if (!choiceFields(node,input,requested).includes(property) ||
           getComputedStyle(node).getPropertyValue(property) !== value) return false
     }
     if (edit.prepared.field)
-      return prepared.input?.field === edit.prepared.field && observed === requested &&
-        (edit.prepared.effect?.withdrawn ? receivesChoice(node,prepared.input,requested) : shows(node, prepared.input, requested))
+      return input?.field === edit.prepared.field && observed === requested &&
+        (edit.prepared.effect?.withdrawn ? receivesChoice(node,input,requested) : shows(node, input, requested))
     if (property === 'width' && ['100%', 'fit-content'].includes(requested)) {
       const parent = node.parentElement
       if (!parent || !ui.widthModes(node).length ||
@@ -253,8 +258,9 @@
       /* Ordinary app node. */
     }
   }
-  function send(revision, value) {
-    document.dispatchEvent(new CustomEvent('li-prepared-input', { detail: JSON.stringify({ revision, value }) }))
+  function send(key, value) {
+    const [revision,field] = key.split(':')
+    document.dispatchEvent(new CustomEvent('li-prepared-input', { detail: JSON.stringify({ revision, field, value }) }))
   }
   document.addEventListener('li-prepared-ready', () => {
     for (const [revision, edit] of inputs) send(revision, edit.requested)
@@ -270,7 +276,7 @@
       if (!edit.prepared || edit.previewHidden) continue
       const { revision, field } = edit.prepared
       if (!/^[a-f0-9]{64}$/.test(revision)) continue
-      if (field) next.set(revision, edit)
+      if (field) next.set(revision + ':' + field, edit)
       else if (supportedDeclaration(edit)) {
         declarations.set(revision + ':' + edit.property, edit)
         const part = edit.prepared.part
@@ -355,7 +361,7 @@
     const contracts = members.map(contract)
     if (contracts.some(c => !c || c.site !== site)) return { state: 'stale' }
     if (!field && !supportedDeclaration(edit)) return { state: 'failed', node }
-    const current = field ? inputs.get(revision) : declarations.get(revision + ':' + edit.property)
+    const current = field ? inputs.get(revision + ':' + field) : declarations.get(revision + ':' + edit.property)
     const effective = current && members.every((member, index) => {
       const c = contracts[index]
       return (field || c.style === edit.property || c.styles?.includes(edit.property)) &&

@@ -20,7 +20,7 @@ function unshadowedRecipe(definition, name) {
   }
   return false
 }
-export function finiteComponentInput(root, definition, opening) {
+export function finiteComponentInputs(root, definition, opening) {
   if (!definition) return
   let fields = cache.get(definition)
   if (!fields) {
@@ -31,9 +31,11 @@ export function finiteComponentInput(root, definition, opening) {
         if (!recipe || !unshadowedRecipe(definition,recipe.name)) continue
         const verify = recipe.choices
         const options = contract.options?.[field]
-        if (options?.length >= 2 && options.length <= 12 && options.every(option => typeof option==='string' &&
-            /^[a-zA-Z0-9_-]{1,60}$/.test(option) && verify?.[option]?.tokens.length))
-          fields.set(field,{field,attribute:field,options,verify,component:JSON.stringify([contract.source,contract.name])})
+        if (!options || options.length > 12 || !/^[a-zA-Z][a-zA-Z0-9-]{0,59}$/.test(field)) continue
+        const qualified = options.filter(option => typeof option === 'string' &&
+          /^[a-zA-Z0-9_-]{1,60}$/.test(option) && verify?.[option]?.tokens.length)
+        if (qualified.length >= 2)
+          fields.set(field,{field,attribute:field,options:qualified,verify,component:JSON.stringify([contract.source,contract.name])})
       }
     })
     cache.set(definition,fields)
@@ -42,5 +44,6 @@ export function finiteComponentInput(root, definition, opening) {
     const input = fields.get(attr.name?.name), value=attr.value
     return input && value?.type==='StringLiteral' && input.options.includes(value.value) ? [{...input,base:value.value}] : []
   })
-  if (supplied.length === 1) return supplied[0]
+  if (!supplied.length || supplied.length > 4 || new Set(supplied.map(input=>input.field)).size !== supplied.length) return
+  return supplied
 }
