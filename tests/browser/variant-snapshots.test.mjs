@@ -344,3 +344,30 @@ test('dense Fit paints saved thumbnail pixels, keeps new pictures current and re
   await atlas.waitFor({ state: 'detached' })
   assert.ok(await page.locator('.linked-frame > button').count() > 100)
 })
+
+test('a large uncaptured board opens live previews only as they become readable', async t => {
+  const flowVariants = Array.from({ length: 120 }, (_, i) => ({
+    id: 'uncaptured-' + i, anchor: 'first', route: '/screen', label: 'Screen ' + i,
+    section: 'Group ' + Math.floor(i / 6), origin: null, deferredOrigin: true,
+  }))
+  const h = await createHarness({ canvas: true, flowVariants })
+  t.after(h.close)
+  const { page } = h
+  const opened = []
+  await page.route('**/preview-origin?id=*', async route => {
+    const id = new URL(route.request().url()).searchParams.get('id')
+    opened.push(id)
+    await route.fulfill({ json: { id, origin: 'http://127.0.0.1:12345' } })
+  })
+  await page.route('http://127.0.0.1:12345/screen', route => route.fulfill({ contentType: 'text/html', body: '<p>Live screen</p>' }))
+  const jump = id => page.evaluate(id => {
+    location.hash = new URLSearchParams({ context: '1', frame: 'first', page: '/', view: 'canvas', variant: id })
+  }, id)
+  const live = id => page.frameLocator('[data-variant="' + id + '"] iframe').getByText('Live screen')
+  await jump('uncaptured-0')
+  await live('uncaptured-0').waitFor()
+  assert.ok(!opened.includes('uncaptured-113'))
+  await jump('uncaptured-113')
+  await live('uncaptured-113').waitFor()
+  assert.ok(opened.length < 20)
+})

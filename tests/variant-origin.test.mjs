@@ -152,6 +152,7 @@ test('a picture-backed step opens one isolated origin on demand while legacy con
   // new preview. Only the three previously used origins should already exist.
   const more = Array.from({ length: 100 }, (_, i) => ({ key: 'saved-' + i, label: 'Saved ' + i, route: '/saved' }))
   for (const step of more) pictures['flow~' + step.key] = { ...pictures['flow~one'], route: step.route }
+  delete pictures['flow~saved-50'] // Include an uncaptured step in the large catalog.
   await writeFile(join(root, 'variant-previews.json'), JSON.stringify(pictures))
   await writeFile(join(owner, 'frame.json'), JSON.stringify({ id: 'flow', anchor: 'a', section: 'Flow', steps: steps.concat(more) }))
   const large = await load('map.json')

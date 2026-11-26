@@ -105,7 +105,7 @@ export function localPreviewUrl(route, origin) {
 export function addVariantFrame(map, variant, gap, inspect, relayout) {
   if (!variant.id || !variant.label) return
   const url = localPreviewUrl(variant.route, variant.origin)
-  if (!url && !(variant.deferredOrigin && variant.snapshot && localPreviewUrl(variant.route, location.origin))) return
+  if (!url && !(variant.deferredOrigin && localPreviewUrl(variant.route, location.origin))) return
   return previewFrame(map, variant.anchor, variant.label, variant.label, url, gap, variant.id, inspect, variant, null, relayout)
 }
 
@@ -143,6 +143,7 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
   cover.type = 'button'
   cover.setAttribute('aria-label', 'Interact with ' + name)
   let snapshot = definition?.snapshot
+  let needsLivePreview = !snapshot && !url
   let picture
   let detail
   let failedDetail
@@ -196,6 +197,7 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
   }
   function mountLive(interactive = false) {
     if (app.isConnected) return
+    needsLivePreview = false
     if (interactive) app.loading = 'eager'
     if (picture) app.style.cssText = picture.style.cssText
     cover.before(app)
@@ -227,7 +229,11 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
       removePicture()
     }
   }
-  wrapper.append(caption, picture ?? app, cover)
+  // An uncaptured step on a large canvas has no live origin until the card
+  // is readable in the viewport or the user opens it directly.
+  wrapper.append(caption)
+  if (!needsLivePreview) wrapper.append(picture ?? app)
+  wrapper.append(cover)
   let review
   if (typeof definition?.reviewNote === 'string' && definition.reviewNote.trim()) {
     review = document.createElement('aside')
@@ -385,7 +391,7 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
     window.removeEventListener('message', exit)
     document.removeEventListener('pointerdown', outside, true)
   }
-  if (!picture) listen()
+  if (!picture && !needsLivePreview) listen()
 
   return {
     id: anchor,
@@ -394,6 +400,8 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
       return Boolean(picture) && !app.isConnected && !wrapper.contains(document.activeElement) &&
         !wrapper.hasAttribute('data-paint-selected') && !paintSurface.savedGeometry
     },
+    get needsLivePreview() { return needsLivePreview },
+    showLivePreview: mountLive,
     get hasPicture() { return Boolean(picture) && !app.isConnected },
     useOverviewPlaceholder(src, slot) {
       if (!picture || picture.complete) return

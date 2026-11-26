@@ -323,7 +323,7 @@ function updateVariantPictures(width, height) {
   let started = false
   let deferred = false
   for (const frame of variantWindow.pictures(view, width, height, expanded, prior, lookahead)) {
-    if (!frame.hasPicture || !frame.bounds) continue
+    if ((!frame.hasPicture && !frame.needsLivePreview) || !frame.bounds) continue
     const b = frame.bounds
     const left = view.x + b.x * view.scale
     const top = view.y + (b.y + b.labelHeight) * view.scale
@@ -334,6 +334,10 @@ function updateVariantPictures(width, height) {
     const dx = Math.max(0, -right, left - width)
     const dy = Math.max(0, -bottom, top - height)
     const readable = expanded && b.width * view.scale * devicePixelRatio > 320 && !frame.hidden
+    if (frame.needsLivePreview) {
+      if (readable && w > 0 && h > 0) frame.showLivePreview()
+      continue
+    }
     const projectedX = Math.max(0, -right - leadX, left + leadX - width)
     const projectedY = Math.max(0, -bottom - leadY, top + leadY - height)
     const ahead = Boolean(leadX || leadY) && projectedX < 64 && projectedY < 64

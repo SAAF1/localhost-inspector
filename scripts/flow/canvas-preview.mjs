@@ -184,7 +184,8 @@ export function savedPreviewFrames(directory, onEdit) {
     const saved = await canvasVariants(directory)
     // A plain catalog read must not allocate a listening socket for every
     // picture on a large board. Small legacy catalogs still include origins.
-    const useOnDemand = deferOrigins || saved.length >= 100
+    const largeCatalog = saved.length >= 100
+    const useOnDemand = deferOrigins || largeCatalog
     await Promise.all(saved.map(async ({ id, anchor, label, route, section, sectionPath, note, reviewNote, created, respondedAt }) => {
       const [owner, step] = id.split('~')
       const path = join(directory, 'variants', owner)
@@ -201,7 +202,7 @@ export function savedPreviewFrames(directory, onEdit) {
         (picture.revision ?? 0) === status.revision && (picture.fingerprint ?? null) === status.fingerprint &&
         Number.isSafeInteger(picture.width) && Number.isSafeInteger(picture.height) &&
         [picture.small, picture.sharp].every(digest => typeof digest === 'string' && /^[a-f0-9]{64}$/.test(digest)))
-      if (useOnDemand && frame.snapshot && !origins.has(id)) frame.deferredOrigin = true
+      if ((largeCatalog || (deferOrigins && frame.snapshot)) && !origins.has(id)) frame.deferredOrigin = true
       else frame.origin = await originFor(id, path, journalPath)
     }))
     map.variants = [...frames.values()]
