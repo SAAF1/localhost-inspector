@@ -319,26 +319,26 @@
       : 'Couldn’t reopen the original view. Your edit is still saved.', true)
   })
 
+  async function requalifyRenderedEdit(edit, path, version, current) {
+    const part = edit?.prepared.part
+    if (!current() || comparing || !part?.cohort || edit.route !== savedRoute || edit.previewHidden) return false
+    const cascade = ui.preparedPreview.cascadeReceipt(edit.property)
+    if (cascade === part.cascade || await ui.preparedPreview.cohortReceipt(edit) !== part.cohort || !current()) return false
+    const result = await write({type:'requalifyRenderedPart',id:edit.id,route:path,previous:part.cascade,
+      cascade,cohort:part.cohort},path,version)
+    if (!result.requalified || !current()) return false
+    part.cascade = cascade
+    return true
+  }
   async function selectEditTarget(id, navigation) {
     const path = currentRoute
     const version = activeRouteVersion
     const isCurrent = () => navigation === editNavigation && isCurrentRoute(path, version)
     let observation = await recovery.locateSavedEdit(id, isCurrent, comparing)
-    if (isCurrent() && !comparing && observation.state === 'stale') {
-      const edit = recovery.renderedPartEdit(id)
-      const part = edit?.prepared.part
-      if (part?.cohort && edit.route === savedRoute && !edit.previewHidden) {
-        const cascade = ui.preparedPreview.cascadeReceipt(edit.property)
-        if (cascade !== part.cascade && await ui.preparedPreview.cohortReceipt(edit) === part.cohort && isCurrent()) {
-          const result = await write({type:'requalifyRenderedPart',id,route:path,previous:part.cascade,cascade,
-            cohort:part.cohort},path,version)
-          if (result.requalified && isCurrent()) {
-            part.cascade = cascade
-            observation = await recovery.locateSavedEdit(id,isCurrent,comparing)
-            if (observation.state === 'applied') status('')
-          }
-        }
-      }
+    if (observation.state === 'stale' &&
+        await requalifyRenderedEdit(recovery.renderedPartEdit(id),path,version,isCurrent)) {
+      observation = await recovery.locateSavedEdit(id,isCurrent,comparing)
+      if (observation.state === 'applied') status('')
     }
     if (!isCurrent()) return false
     const { node, state } = observation
@@ -1550,13 +1550,19 @@
     if (sourceEdit) return undoAuthoredUse(sourceEdit, 'undo')
     const requestedRoute = currentRoute
     const version = activeRouteVersion
+    const removedPart = recovery.renderedPartEdit(id)
     const entries = recovery.componentEntries(id)
     const persist = () => write({ type: 'undo', id }, requestedRoute, version)
     if (entries.length) await rewindComponentEntries(entries, requestedRoute, version, persist)
     else await persist()
     if (isCurrentRoute(requestedRoute, version)) {
-      await recovery.forget(id, () => isCurrentRoute(requestedRoute, version))
-      if (isCurrentRoute(requestedRoute, version)) reportRecovery()
+      const current = () => isCurrentRoute(requestedRoute,version)
+      await recovery.forget(id,current)
+      if (removedPart && current()) {
+        const restored = recovery.latestRenderedPart(removedPart)
+        if (restored) await requalifyRenderedEdit(restored,requestedRoute,version,current)
+      }
+      if (current()) reportRecovery()
     } else if (currentRoute === requestedRoute) {
       window.phaseAInspectorReady = loadRoute()
     }

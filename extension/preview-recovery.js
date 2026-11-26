@@ -996,6 +996,10 @@
         }
         if (rebased.length) await restore(isCurrent)
       },
+      latestRenderedPart(removed) {
+        return [...saved.values()].findLast(edit=>!edit.previewHidden && edit.property === removed.property &&
+          edit.prepared?.site === removed.prepared.site && edit.prepared.part?.id === removed.prepared.part.id)
+      },
       renderedPartEdit(id) { const edit = saved.get(id); return edit?.prepared?.part ? edit : undefined },
       hasPreparedOperation(id) { return Boolean(saved.get(id)?.prepared) },
       waitForPreparedMember(id, current) {
