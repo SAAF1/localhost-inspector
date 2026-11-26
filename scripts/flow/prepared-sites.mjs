@@ -384,7 +384,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             }
           }
           if (authoredUseSchema && manifestData.panelBindings && fields.styles?.includes('border-radius'))
-            if (!code.includes('__liRecordAttrs') && markRecordHost(tree, node, owner, file, out)) recordRoots.add(node)
+            if (!/__liRecordAttrs|__liRecordProof/.test(code) && markRecordHost(tree, node, owner, file, out)) recordRoots.add(node)
           const contract = { site: site.id, revision, file, ...fields }
           let revisionAttribute = ' data-li-revision="' + revision + '"'
           if (site.moduleClass) {
@@ -407,7 +407,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           )
         }
         if (authoredUseSchema) {
-          if (manifestData.panelBindings && !code.includes('__liRecordAttrs')) {
+          if (manifestData.panelBindings && !/__liRecordAttrs|__liRecordProof/.test(code)) {
             for (const { node, owner } of openings) {
               if (!recordRoots.has(node) && node.attributes.some(a => a.name?.name === 'style') &&
                 markRecordHost(tree, node, owner, file, out, true)) recordRoots.add(node)
