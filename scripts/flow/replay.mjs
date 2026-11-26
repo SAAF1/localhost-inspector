@@ -1,8 +1,8 @@
 import { flowRoute, observePage, observeSurfaces } from './page-state.mjs'
 
-export function waitFor(read, current, changedDocument) {
+export function waitFor(read, current, changedDocument, timeoutMs = 4500) {
   return new Promise((resolve, reject) => {
-    const end = performance.now() + 4500
+    const end = performance.now() + timeoutMs
     let observed, observer, timer, nextPaint
     function cleanup() {
       observer?.disconnect()
@@ -54,6 +54,14 @@ export function matchesCheckpoint(doc, frame, surfaces) {
 }
 
 export async function replayFrame(app, frame, current) {
+  // Module scripts may still be compiling while a new document has an empty
+  // root. Start the application-state deadline once its entry scripts can run.
+  await waitFor(() => {
+    const doc = app.contentDocument
+    if (!doc || doc.URL === 'about:blank' || doc.readyState === 'loading') return false
+    return doc.body?.innerText.trim() || doc.readyState === 'complete' ||
+      doc.defaultView.performance.getEntriesByType('navigation')[0]?.domContentLoadedEventEnd > 0
+  }, current, () => app.contentDocument, 60_000)
   const doc = await waitFor(() => {
     const loaded = app.contentDocument
     return loaded && flowRoute(loaded.location) === frame.route && loaded.readyState !== 'loading' &&
