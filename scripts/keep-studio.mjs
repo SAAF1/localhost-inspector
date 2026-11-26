@@ -10,7 +10,8 @@ import { candidateHandoff } from './proposal-journal.mjs'
 import { readProposal } from './proposal.mjs'
 import MagicString from 'magic-string'
 import { parse } from '@babel/parser'
-import { preparedSites, preparedOpenings } from './flow/prepared-sites.mjs'
+import { preparedSites } from './flow/prepared-sites.mjs'
+import { preparedOpenings } from './flow/prepared-site-qualification.mjs'
 
 function patchFile(file, original, updated, temp) {
   const before = join(temp, 'before'),
