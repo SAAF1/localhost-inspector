@@ -34,7 +34,17 @@ try {
 		await writeFile(
 			join(app, 'vite.config.mjs'),
 			`
-      export default { root:${nested ? "'src'" : "'.'"}, base:'/mounted/', server:{open:true} }
+      const html = { name:'app-html-entry', enforce:'pre',
+        configureServer(server) {
+          server.middlewares.use((req,res,next) => {
+            if (req.headers.accept?.includes('text/html')) {
+              res.setHeader('content-type','text/html')
+              res.end('<main>fixture entry from application middleware</main>')
+            } else next()
+          })
+        }
+      }
+      export default { plugins:[html], root:${nested ? "'src'" : "'.'"}, base:'/mounted/', server:{open:true} }
     `,
 		)
 		await writeFile(
@@ -87,6 +97,17 @@ try {
 			try {
 				const base = server.origin + '/mounted/'
 				assert.match(await (await fetch(base)).text(), /fixture entry/)
+				const shellPath = '/__inspector-flow/?page=%2F&editor=extension'
+				const htmlOptions = { headers: { accept:'text/html' } }
+				assert.match(await (await fetch(base,htmlOptions)).text(), /entry from application middleware/)
+				const shell = await fetch(server.origin + shellPath,htmlOptions)
+				if (clean) assert.match(await shell.text(), /entry from application middleware/)
+				else {
+					assert.equal(shell.status,200)
+					assert.match(await shell.text(), /workspace\.mjs/)
+					const missing = await fetch(server.origin + '/__inspector-flow/unknown',htmlOptions)
+					assert.equal(missing.status,404)
+				}
 				const module = nested ? 'main.jsx' : 'src/main.jsx'
 				const res = await fetch(base + module)
 				assert.equal(res.status, 200)

@@ -97,6 +97,10 @@ async function serve(request, response) {
     return
   }
   const path = decodeURIComponent(new URL(request.url, origin).pathname)
+  if (sourceMode && !path.startsWith(flowPath)) {
+    response.writeHead(404).end()
+    return
+  }
   if (path === flowPath + 'authored-original-basis' && request.method === 'GET') {
     const basis = process.env.INSPECTOR_ORIGINAL_BASIS
     const git = args => execFileSync('git', args, {cwd:appRoot, encoding:'utf8'}).trim()
@@ -189,11 +193,16 @@ if (sourceMode) {
       return [{ tag: 'script', attrs: { type: 'module', src: flowPath + 'preview-wheel.mjs' }, injectTo: 'head' }]
     },
     configureServer(server) {
-      server.middlewares.use((request, response, next) => {
+      // App HTML plugins can install a catch-all before this plugin, even in
+      // the pre phase. Give our reserved namespace the first Connect layer.
+      const { middlewares } = server
+      middlewares.use((request, response, next) => {
+        if (!request.url?.startsWith(flowPath)) return next()
+        if (request.headers.host !== new URL(origin).host) return response.writeHead(404).end()
         if (authoredUseSchema && routeAuthoredModule(request, response, server.config.base, next, relative(appRoot,server.config.root))) return
-        if (request.url?.split('?')[0].startsWith(flowPath)) handleRequest(request, response)
-        else next()
+        handleRequest(request, response)
       })
+      middlewares.stack.unshift(middlewares.stack.pop())
     },
   }
   const manifest = process.env.INSPECTOR_PREPARED_SITES
