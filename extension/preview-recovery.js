@@ -140,6 +140,7 @@
     if (target?.mount) return node?.isConnected && ui.componentEdits.liveNode(target) === node
     if (!node?.isConnected || !target || node.localName !== target.tag ||
         node.getAttribute('data-slot') !== target.slot) return false
+    if (target.key?.startsWith('bound:')) return ui.recordContracts.matches(node,target.key)
     const key = targetKey(node)
     if (target.key || key) return key === target.key
     if ((node.id || null) !== target.id || (target.region !== undefined && target.region !== regionIdentity(node, target.anchor))) return false
@@ -153,6 +154,7 @@
   }
 
   function candidatesFor(target, exemplar) {
+    if (target.key?.startsWith('bound:')) return ui.recordContracts.candidates(target.key)
     if (target.anchor && !target.key && !target.id) {
       const { kind, value, path } = target.anchor
       if (!/^[a-z][a-z0-9-]{0,39}(>[a-z][a-z0-9-]{0,39}){0,7}$/.test(path)) return []

@@ -1,3 +1,5 @@
+import { recordKeyInput, markStateAuthorities } from './runtime-record-contract.mjs'
+import { syntaxFingerprint } from './component-proof.mjs'
 import { renderOwnerFunction } from './record-render-path.mjs'
 import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync, statSync } from 'node:fs'
@@ -26,8 +28,13 @@ function candidates(file, code, tree, repeatedCalls) {
       repeated ||= opening.attributes.some(a => a.name?.name === 'key')
       const name = opening.name.name
       const child = parent?.type === 'JSXElement' || parent?.type === 'JSXFragment'
+      const recordKey = repeatedCalls && recordKeyInput(opening)
+      if (recordKey) {
+        const id=sourceUseId(file,owner,code.slice(opening.start,opening.end))
+        repeatedCalls.push({n,child,recordKey:{...recordKey,id,file,owner}})
+      }
       if (repeated && (opening.name.type === 'JSXMemberExpression' || /^[A-Z]/.test(name))) {
-        repeatedCalls?.push({n,child})
+        if(!recordKey) repeatedCalls?.push({n,child})
         return
       }
       const imported = repeated ? undefined : imports.get(name)
@@ -63,15 +70,20 @@ export async function markSelectedCalls(root,file,code,tree,out,resolveImport) {
   if (!safeFile(file) || code.length > 1024*1024 || /\b__liSelected(?:Call|Module)\b/.test(code)) return false
   const repeated = []
   const candidatesHere = candidates(file,code,tree,repeated)
+  const revision=syntaxFingerprint(tree.program)
+  markStateAuthorities(file,tree,out)
   out.prepend('import { selectedModule as __liSelectedModule } from "virtual:inspector-selected-use";__liSelectedModule(import.meta.url,'+
-    JSON.stringify(file)+','+JSON.stringify(digest(code))+');\n')
+    JSON.stringify(file)+','+JSON.stringify(digest(code))+','+JSON.stringify(revision)+');\n')
   function wrap(n,child,args) {
     // Keep the wrapper inside its JSX span. A concise map callback may have
     // its own record arguments appended immediately after that same JSX.
     out.prependRight(n.start,(child ? '{' : '')+'__liSelectedCall(')
     out.prependLeft(n.end,args+')'+(child ? '}' : ''))
   }
-  for (const {n,child} of repeated) wrap(n,child,'')
+  for (const {n,child,recordKey} of repeated) {
+    const {variable,...site}=recordKey ?? {}
+    wrap(n,child,recordKey?',null,null,'+JSON.stringify(site)+','+variable:'')
+  }
   const resolveLocal = createComponentTypeResolver(root)
   const imports = new Map()
   const callerDigest = digest(code)

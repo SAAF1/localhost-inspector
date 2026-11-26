@@ -8,6 +8,7 @@ import {
   lookupCorroboration,
   backingCollection,
 } from './record-render-path.mjs'
+import { verifyRuntimeRecord } from './runtime-record-contract.mjs'
 import { recordCatalog, recordCatalogRows } from './record-catalog.mjs'
 import { onlyElement } from './component-surface.mjs'
 import { publicRecordCollection, publicRows } from './public-records.mjs'
@@ -221,6 +222,7 @@ export function markRecordHost(tree, node, owner, file, out, requireInput = fals
 }
 
 export function verifyRecordSource(root, proof, catalog) {
+  if(proof?.kind==='state-record')return verifyRuntimeRecord(root,proof)
   if (
     !proof ||
     !scalar.test(proof.value) ||

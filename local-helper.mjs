@@ -272,7 +272,7 @@ if (mode === 'handoff' || mode === 'proposal-readiness') {
     try { verifySelectedUse(binding.source, op.changes[0].selectedUse) }
     catch { op.status='blocked'; op.reason='selected-source-changed' }
   }
-  for (const op of handoff.operations.filter(op => op.scope === 'selected-record' && (op.changes[0].recordScope.resource || op.changes[0].recordScope.catalog))) {
+  for (const op of handoff.operations.filter(op => op.scope === 'selected-record' && (op.changes[0].recordScope.kind==='state-record' || op.changes[0].recordScope.resource || op.changes[0].recordScope.catalog))) {
     const { verifyRecordSource } = await import('./scripts/flow/record-scope.mjs')
     try {
       const proof = op.changes[0].recordScope

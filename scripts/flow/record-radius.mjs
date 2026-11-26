@@ -25,6 +25,7 @@ export function planRecordRadii(root, changes) {
     if (!proof || change.property !== 'border-radius' || !fixedRadius(change.requested))
       throw Error('Only a fixed corner radius is qualified for one record.')
     const record = change.recordScope
+    if(record.kind==='state-record')throw Error('Use the coding-agent source handoff for the verified frontend state record and its painted source part.')
     if (record.catalog) throw Error('Use the coding-agent source handoff to retain a presentation scoped to the verified catalogue record.')
     const source = verifyRecordSource(root, record)
     if (record.resource) throw Error('Use the coding-agent source handoff for a selected public-data record. Verify the key, complete backing collection, record freshness and protected peers before accepting.')

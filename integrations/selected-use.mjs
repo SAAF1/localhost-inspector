@@ -1,13 +1,32 @@
+import { installRecordContracts } from 'virtual:inspector-record-contract'
 // Development-only. Return the original React element without adding props,
 // DOM attributes, wrappers, hooks or new instances.
 const calls = new WeakMap()
 const repeated = new WeakSet()
 const modules = new Map()
-export function selectedModule(url,file,revision) {
+const moduleRevisions=new Map()
+const recordCalls=new WeakMap()
+const stateOrigins=new WeakMap()
+export function selectedModule(url,file,revision,semanticRevision) {
   modules.set(new URL(url).pathname,{file,revision})
+  moduleRevisions.set(file,semanticRevision)
 }
-export function selectedCall(element, basis, fields) {
+export function recordState(tuple,site) {
+  const value=tuple?.[0]
+  if(value && typeof value==='object' && typeof tuple?.[1]==='function'){
+    const previous=stateOrigins.get(value)
+    if(previous===undefined)stateOrigins.set(value,site)
+    else if(previous && (previous.file!==site.file || previous.id!==site.id))stateOrigins.set(value,null)
+  }
+  return tuple
+}
+export function selectedCall(element, basis, fields, site, record) {
   if (element?.props) {
+    if(site && record && typeof record==='object'){
+      const descriptor=Object.getOwnPropertyDescriptor(record,site.field)
+      if(descriptor && Object.hasOwn(descriptor,'value') && String(descriptor.value)===element.key)
+        recordCalls.set(element.props,{site,record})
+    }
     if (basis) calls.set(element.props,{basis,fields})
     else repeated.add(element.props)
   }
@@ -61,3 +80,5 @@ document.addEventListener('li-read-selected-use', event => {
   }
   node.dispatchEvent(new CustomEvent('li-selected-use',{detail:JSON.stringify(receipt)}))
 })
+
+installRecordContracts({currentFiber,recordCalls,stateOrigins,moduleRevisions})

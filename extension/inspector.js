@@ -527,7 +527,7 @@
       shared.length && Object.values(contract.parts ?? {}).some(part => part.depth) && 'Selected envelope and its verified painted descendant',
       shared.length && 'Shared source controls · ' + shared.join(', '),
       authoredUse && hasSelection && (editScope.value === 'selected'
-        ? (node.hasAttribute('data-li-record-scope') && node.getAttribute('data-inspector-target') ? 'One record · source handoff available for corner radius' : selectedHeight ? 'Selected action · fixed Height handoff at ' + selectedHeight.owner : 'Selected occurrence preview · separate from source handoff')
+        ? ((node.hasAttribute('data-li-record-scope') && node.getAttribute('data-inspector-target') || ui.recordContracts.available(node)) ? 'One record · source handoff available for corner radius' : selectedHeight ? 'Selected action · fixed Height handoff at ' + selectedHeight.owner : 'Selected occurrence preview · separate from source handoff')
         : contract && contract.file + ' · ' + ui.preparedPreview.membersOf(contract.revision).length + ' mounted'),
       hasSelection && preparedStylesUnavailable && 'Shared stylesheet controls are unavailable in this preview.',
     ].filter(Boolean).join(' · ')
@@ -1108,10 +1108,17 @@
     const editRoute = currentRoute
     const version = activeRouteVersion
     const isCurrent = () => isCurrentRoute(editRoute, version)
-    const target = ui.describePreviewTarget(node)
+    let target = ui.describePreviewTarget(node)
     const selectedUse = selectedUseHeight && authoredUse && selectionOnly && property === 'height' && /^\d+(?:\.\d+)?px$/.test(requested) && ui.selectedUse(node)
     let recordScope
-    if (authoredUse && selectionOnly && property === 'border-radius' && (qualifiedPrepared || node.hasAttribute('data-li-record-scope'))) {
+    if (authoredUse && selectionOnly && property === 'border-radius' && !node.hasAttribute('data-li-record-scope')) {
+      recordScope=await ui.recordContracts.prepare(node)
+      if(recordScope){
+        if(!isCurrent() || selection.current!==node)throw Error('Selection changed during record preparation.')
+        target={tag:node.localName,id:node.id || null,slot:node.getAttribute('data-slot'),key:recordScope.key}
+      }
+    }
+    if (!recordScope && authoredUse && selectionOnly && property === 'border-radius' && (qualifiedPrepared || node.hasAttribute('data-li-record-scope'))) {
       try { recordScope = JSON.parse(node.getAttribute('data-li-record-scope')) } catch { /* Unverified source. */ }
       if (!recordScope || !target.key || recordScope.key !== target.key || ui.findPreviewTarget(target, node) !== node)
         throw Error('Cannot identify one unique record for this corner radius. No change was saved.')
@@ -1641,6 +1648,7 @@
     return Number.isSafeInteger(snapshot?.revision) && Array.isArray(snapshot.edits) && typeof snapshot.route === 'string'
   }
   function acceptSnapshot(snapshot) {
+    for(const edit of snapshot.edits)ui.recordContracts.remember(edit.recordScope)
     textStyleDefinitions = Array.isArray(snapshot.textStyleDefinitions) ? snapshot.textStyleDefinitions : []
     buttonSizeKey = typeof snapshot.buttonSizeKey === 'string' ? snapshot.buttonSizeKey : null
     savedRoute = snapshot.route

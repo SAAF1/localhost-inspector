@@ -173,9 +173,10 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
       return []
     },
     resolveId(id) {
-      if (id === 'virtual:inspector-selected-use' || id === runtime || id === 'virtual:inspector-prepared-registry' || styles.has(id)) return '\0' + id
+      if (id === 'virtual:inspector-record-contract' || id === 'virtual:inspector-selected-use' || id === runtime || id === 'virtual:inspector-prepared-registry' || styles.has(id)) return '\0' + id
     },
     load(id) {
+      if (id === '\0virtual:inspector-record-contract') return readFileSync(new URL('../../integrations/runtime-record-contract.mjs', import.meta.url),'utf8')
       if (id === '\0virtual:inspector-selected-use') return readFileSync(new URL('../../integrations/selected-use.mjs', import.meta.url),'utf8')
       if (id === '\0virtual:inspector-prepared-registry')
         return (
