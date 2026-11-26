@@ -504,3 +504,33 @@ test('prepared edits observe rendered output and current source revision at ever
     assert.match(await h.host.locator('#pending-status').textContent(), /source changed/i)
   } finally { await h.close() }
 })
+
+test('Undo after Compare restores the preceding inline height through an app transition', async () => {
+  const h = await createHarness({ pendingEdits: true, appStyles: '#target {height:40px; transition:height 160ms ease}' })
+  try {
+    await h.open()
+    await h.select()
+    for (const value of [56, 60]) {
+      await h.enter('Height', value)
+      await h.settled()
+      assert.equal(await h.css('height'), value + 'px')
+    }
+    await h.showEdits()
+    const toggle = h.host.locator('#clear')
+    const height = value => h.app.waitForFunction(value =>
+      getComputedStyle(document.getElementById('target')).height === value, value, { timeout: 2500 })
+    await toggle.click()
+    await height('40px')
+    await toggle.click()
+    await h.settled()
+    await height('60px')
+    await h.host.locator('#undo').click()
+    await h.settled()
+    assert.deepEqual((await h.journal()).map(e => e.requested), ['56px'])
+    await height('56px')
+    assert.equal(await h.host.locator('.li-pending-row').getAttribute('data-preview-state'), 'applied')
+    await h.app.locator('#target').evaluate(node => { node.style.height = '45px' })
+    await height('45px')
+    assert.equal(await h.app.locator('#target').evaluate(node => node.style.height), '45px')
+  } finally { await h.close() }
+})

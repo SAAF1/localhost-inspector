@@ -496,14 +496,18 @@
         (edit.restore !== 'unique' || findTarget(edit.target, entry.node) === entry.node))
     }
 
-    function forget(id) {
+    async function forget(id, isCurrent) {
       reconcileConflicts()
       const group = saved.get(id)?.group
       const ids = group ? Array.from(saved.values()).filter(edit => edit.group === group).map(edit => edit.id) : [id]
       const hadPrepared = ids.some(id => saved.get(id)?.prepared)
       const removed = new Set(ids)
+      const revealed = new Set()
       for (const [key, entry] of Array.from(attached).reverse()) {
-        if (removed.has(editId(key, entry))) detach(key)
+        if (!removed.has(editId(key, entry))) continue
+        detach(key)
+        const previous = inlineStacks.get(entry.node).get(entry.property).at(-1)
+        if (previous && !removed.has(entryIds.get(previous)) && !sessionEntry(previous)) revealed.add(previous)
       }
       for (const member of ids) {
         saved.delete(member)
@@ -511,6 +515,13 @@
         conflicts.delete(member)
       }
       if (hadPrepared) projectPrepared()
+      // Removing a later inline layer can start an app CSS transition. Keep
+      // the previous layer attached until its owned declaration settles.
+      if (revealed.size) {
+        const entries = [...revealed]
+        await ui.waitForPreview(isCurrent, () => entries.every(entry => !ownsDeclaration(entry) || !lostPreview(entry)))
+        if (isCurrent()) reconcileConflicts(entries)
+      }
     }
 
     function operations() {
@@ -940,7 +951,8 @@
             if (entry.node === removed.node && entry.property === removed.property) detach(member)
           }
         }
-        forget(id)
+        await forget(id, isCurrent)
+        if (!isCurrent()) return
         for (const { id: member, before } of rebased) {
           const edit = saved.get(member)
           if (edit) saved.set(member, { ...edit, before })

@@ -1037,8 +1037,8 @@
       throw error
     } finally { projection.finish(Boolean(accepted) && current()) }
     if (current()) {
-      recovery.forget(edit.id)
-      reportRecovery()
+      await recovery.forget(edit.id, current)
+      if (current()) reportRecovery()
     }
   }
 
@@ -1487,8 +1487,8 @@
     if (entries.length) await rewindComponentEntries(entries, requestedRoute, version, persist)
     else await persist()
     if (isCurrentRoute(requestedRoute, version)) {
-      recovery.forget(id)
-      reportRecovery()
+      await recovery.forget(id, () => isCurrentRoute(requestedRoute, version))
+      if (isCurrentRoute(requestedRoute, version)) reportRecovery()
     } else if (currentRoute === requestedRoute) {
       window.phaseAInspectorReady = loadRoute()
     }
