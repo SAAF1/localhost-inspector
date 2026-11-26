@@ -1,3 +1,4 @@
+import { renderOwnerFunction } from './record-render-path.mjs'
 // Prepare literal Tailwind uses and a verified CVA/Lucide button adapter in a
 // declared source boundary. Persist rejected sites next to the manifest.
 import { createHash } from 'node:crypto'
@@ -6,7 +7,7 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from '@babel/parser'
 import { baseRule, cssFields, panelCssFields, cssParser } from './prepared-css.mjs'
-import { moduleReference, literalColorAttribute, panelOpening, preparedInputFunction } from './prepared-site-qualification.mjs'
+import { moduleReference, literalColorAttribute, panelOpening } from './prepared-site-qualification.mjs'
 import { localBindingNames } from './authored-use.mjs'
 import { sourceUseId } from './selection-provenance.mjs'
 import { finiteComponentInput } from './finite-component-input.mjs'
@@ -107,7 +108,7 @@ function analyze(code, file, config) {
       const part = def && returnedPart(def, opening, config.hostLibrary)
       const styleProp = part && part.host.attributes.find(a=>a.name?.name==='style')?.value?.expression
       const forwardsStyle = part && styleProp?.type==='Identifier' && styleProp.name === part.props.get('style')
-      const finiteDefinition = config.panelBindings && /^[A-Z]/.test(name) && preparedInputFunction(tree, owner) &&
+      const finiteDefinition = config.panelBindings && /^[A-Z]/.test(name) && renderOwnerFunction(tree, owner) &&
         !locals.has(name) && !(config.button && imports.get(name)?.from === '@/components/ui/button') &&
         opening.attributes.some(a=>a.value?.type==='StringLiteral' && !['className','id','role'].includes(a.name?.name)) &&
         config.definition(file, imports.get(name))

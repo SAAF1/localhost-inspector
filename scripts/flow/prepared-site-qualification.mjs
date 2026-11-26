@@ -50,19 +50,6 @@ export function matchesPreparedOpening(site, code, node) {
       panelOpening(code, node) === site.opening)
 }
 
-// A finite control subscribes once in its owning component, before conditional
-// returns. Only direct, named component functions have an insertion point.
-export function preparedInputFunction(tree, owner) {
-  if (owner?.type === 'FunctionDeclaration') return owner
-  if (owner?.type !== 'VariableDeclarator' || !/^[A-Z]/.test(owner.id?.name) ||
-      owner.init?.type !== 'ArrowFunctionExpression' || owner.init.async) return
-  const declared = tree.program.body.some(statement => {
-    const declaration = statement.declaration ?? statement
-    return declaration.kind === 'const' && declaration.declarations.includes(owner)
-  })
-  if (declared) return owner.init
-}
-
 export function insertInputSubscriptions(out, fn, declarations) {
   const body = fn.body
   if (body.type === 'BlockStatement') {

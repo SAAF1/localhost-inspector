@@ -1,3 +1,4 @@
+import { renderOwnerFunction } from './record-render-path.mjs'
 import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -50,8 +51,10 @@ function candidates(file, code, tree, repeatedCalls) {
   for (const statement of tree.program.body) {
     const d = statement.declaration ?? statement
     if (d.type === 'FunctionDeclaration' && /^[A-Z]/.test(d.id?.name)) visit(d.body,d,d.id.name)
-    for (const v of d.declarations ?? []) if (/^[A-Z]/.test(v.id?.name) &&
-        ['ArrowFunctionExpression','FunctionExpression'].includes(v.init?.type)) visit(v.init.body,v.init,v.id.name)
+    for (const variable of d.declarations ?? []) {
+      const fn = renderOwnerFunction(tree, variable)
+      if (fn) visit(fn.body, fn, variable.id.name)
+    }
   }
   return [...found.values()].filter(Boolean)
 }

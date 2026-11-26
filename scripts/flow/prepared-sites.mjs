@@ -1,3 +1,4 @@
+import { renderOwnerFunction } from './record-render-path.mjs'
 import { markRecordCallers, markRecordHost } from './record-scope.mjs'
 import { componentFingerprint } from './component-proof.mjs'
 import { markSelectedCalls } from './selected-use.mjs'
@@ -14,7 +15,7 @@ import { parse } from '@babel/parser'
 import { cssInput, cssReady, paddingParts, sides } from './prepared-css.mjs'
 import MagicString from 'magic-string'
 import { addAuthoredUseMarkers, localBindingNames } from './authored-use.mjs'
-import { moduleReference, matchesPreparedOpening, preparedInputFunction, insertInputSubscriptions, preparedOpenings, preparedStyleTargets, preparedRevision } from './prepared-site-qualification.mjs'
+import { moduleReference, matchesPreparedOpening, insertInputSubscriptions, preparedOpenings, preparedStyleTargets, preparedRevision } from './prepared-site-qualification.mjs'
 
 const runtime = 'virtual:inspector-prepared'
 const runtimeSource = new URL('../../integrations/prepared-input.mjs', import.meta.url)
@@ -253,7 +254,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           if (site.input) {
             const { options, base, attribute, child, choices, verify } = site.input
             if (
-              !preparedInputFunction(tree, owner) ||
+              !renderOwnerFunction(tree, owner) ||
               (!attr(attribute)?.value && !child) ||
               !Array.isArray(options) ||
               !options.includes(base) ||
@@ -338,7 +339,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             const value = attr(attribute)?.value
             const child = site.input.child
             const state = '__liInput' + index
-            const fn = preparedInputFunction(tree,owner)
+            const fn = renderOwnerFunction(tree,owner)
             let declarations = (subscriptions.get(fn) ?? '') +
               '\nconst ' + state + ' = __liUse(' + JSON.stringify(revision) + ');\n'
             if (child) {

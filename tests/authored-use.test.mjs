@@ -264,6 +264,8 @@ test('finite subscriptions preserve block and concise component arrows, early re
     ['export const Scene = enabled => ((enabled ? '+group+' : null))',2],
     ['export const Scene = () => '+openings[0],1],
     ['export const Scene = enabled => {"use strict"; if (!enabled) return null; return '+group+'}',2],
+    ['import {memo as wrap} from "react"; export const Scene = wrap(() => '+group+')',2],
+    ['import {memo as wrap} from "custom"; export const Scene = wrap(() => '+group+')',0],
     ['export let Scene = () => '+group,0],
     ['export const Scene = wrap(() => '+group+')',0],
   ]){
@@ -271,7 +273,8 @@ test('finite subscriptions preserve block and concise component arrows, early re
     const tree=parseAuthoredJsx(generated)
     assert.equal((generated.match(/ = __liUse\(/g)??[]).length,expected)
     if (expected){
-      const fn=tree.program.body.find(s=>s.type==='ExportNamedDeclaration').declaration.declarations[0].init
+      const init=tree.program.body.find(s=>s.type==='ExportNamedDeclaration').declaration.declarations[0].init
+      const fn=init.type==='CallExpression'?init.arguments[0]:init
       assert.equal(fn.body.type,'BlockStatement')
       assert.ok(fn.body.body.slice(0,expected).every(s=>s.type==='VariableDeclaration'))
       assert.equal(fn.body.body.at(-1).type,'ReturnStatement')

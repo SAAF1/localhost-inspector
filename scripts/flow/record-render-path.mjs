@@ -61,6 +61,21 @@ export function componentFunction(tree, exported, local = false) {
   }
 }
 
+// Return the actual callable body for a named render owner. Compare the
+// declaration object as well as its name so a nested binding cannot borrow a
+// top-level component's qualification.
+export function renderOwnerFunction(tree, owner) {
+  if (owner?.type === 'FunctionDeclaration') return owner
+  if (owner?.type !== 'VariableDeclarator' || !/^[A-Z]/.test(owner.id?.name)) return
+  const declared = tree.program.body.some(statement => {
+    const declaration = statement.declaration ?? statement
+    return declaration.kind === 'const' && declaration.declarations.includes(owner)
+  })
+  if (!declared) return
+  const fn = componentFunction(tree, owner.id.name, true)
+  if (fn && !fn.async && !fn.generator) return fn
+}
+
 export function renderedRecord(fn, value, jsx) {
   const aliases = new Set()
   for (const stmt of fn.body.body ?? []) {
