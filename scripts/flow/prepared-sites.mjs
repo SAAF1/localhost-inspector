@@ -388,6 +388,12 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             if (!/__liRecordAttrs|__liRecordProof/.test(code) && markRecordHost(tree, node, owner, file, out)) recordRoots.add(node)
           preparedAtOpening.set(node.start, revision)
           const contract = { site: site.id, revision, file, ...fields }
+          // A render/asChild element can own its own native styling while the
+          // surrounding component still supplies the verified public input.
+          if (site.input?.component) {
+            markers += ' data-li-input-revision="' + revision + '" data-li-input-contract={' +
+              JSON.stringify(JSON.stringify(contract)) + '}'
+          }
           let revisionAttribute = ' data-li-revision="' + revision + '"'
           if (site.moduleClass) {
             const expression = classMemberExpression(node, joins)

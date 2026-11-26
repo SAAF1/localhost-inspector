@@ -45,7 +45,7 @@
   async function inspectSelectedComponent(node, route) {
     const request = ++componentRead
     currentComponent = null
-    const contract = node && ui.preparedPreview.contract(node)
+    const contract = node && ui.preparedPreview.contract(node, true)
     if (!contract?.input && !node?.matches('[data-inspector-instance],[data-inspector-component]')) return
     let component
     if (node.hasAttribute('data-inspector-component')) {
@@ -507,7 +507,9 @@
     const node = selection.current
     const hasSelection = Boolean(node?.isConnected)
     const contract = hasSelection && ui.preparedPreview.contract(node)
-    const shared = contract ? [...(contract.styles ?? (contract.style ? [contract.style] : [])), ...(contract.input ? [contract.input.field,...(contract.additionalInputs ?? []).map(i=>i.field)] : [])] : []
+    const choices = hasSelection && ui.preparedPreview.contract(node, true)
+    const shared = [...(contract?.styles ?? (contract?.style ? [contract.style] : [])),
+      ...(choices?.input ? [choices.input.field,...(choices.additionalInputs ?? []).map(i=>i.field)] : [])]
     const scope = get('prepared-scope')
     const use = authoredUse && hasSelection ? authored.binding(node) : null
     const editScope = get('authored-edit-scope')
@@ -865,7 +867,7 @@
       node.isConnected &&
       selection.current === node &&
       isCurrentRoute(path, version) &&
-      ui.preparedPreview.contract(node)?.revision === contract.revision
+      ui.preparedPreview.contract(node, Boolean(field))?.revision === contract.revision
     const read = (key) => ui.preparedPreview.read(node, { property: key, prepared: { field, part:contract.parts?.[key] } })
     if (!current() || (field && !ui.preparedPreview.receivesChoice(node, contract.input, read(property))))
       throw Error('The prepared part changed. Select it again before editing.')
@@ -890,7 +892,7 @@
       sourceContext: ui.describeSourceContext(node),
       viewport: { width: innerWidth, height: innerHeight },
     }))
-    const originalMembers = new Set(ui.preparedPreview.membersOf(contract.revision))
+    const originalMembers = new Set(ui.preparedPreview.membersOf(contract.revision, field))
     const previousChoice = field && contract.input?.component ? new Map(
       [...originalMembers].map(member=>[member,{
         ...ui.preparedPreview.choiceValues(member),
@@ -901,9 +903,9 @@
       throw Error('The component instances no longer share the original input.')
     const boundParts = records.filter(edit => edit.prepared.part)
     if (boundParts.length) {
-      const members = ui.preparedPreview.membersOf(contract.revision)
+      const members = ui.preparedPreview.membersOf(contract.revision, field)
       if (Array.from(members).some(member => {
-        const active = ui.preparedPreview.contract(member)
+        const active = ui.preparedPreview.contract(member, Boolean(field))
         return boundParts.some(edit => !ui.preparedPreview.samePart(active?.parts?.[edit.property],edit.prepared.part))
       })) throw Error('The shared members have different source declarations or rendered parts.')
     }
@@ -912,7 +914,7 @@
       : []
     function verified(edit) {
       edit.observed = ui.preparedPreview.read(node, edit)
-      const members = ui.preparedPreview.membersOf(contract.revision)
+      const members = ui.preparedPreview.membersOf(contract.revision, field)
       if (members.length !== originalMembers.size || [...members].some(member=>!originalMembers.has(member))) return false
       if (previousChoice) {
         const fields = ui.preparedPreview.choiceFields(node, contract.input, requested)
@@ -935,7 +937,7 @@
         }
       }
       return members.length > 0 && Array.from(members).every(member => {
-        const active = ui.preparedPreview.contract(member)
+        const active = ui.preparedPreview.contract(member, Boolean(field))
         return active?.revision === contract.revision &&
           (field || active.style === edit.property || active.styles?.includes(edit.property)) &&
           ui.preparedPreview.showsEffect(member, edit, active)

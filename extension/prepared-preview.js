@@ -67,12 +67,13 @@
   function revisionOf(node) {
     return node?.getAttribute('data-li-revision') ?? node?.getAttribute('data-li-render-revision')
   }
-  function revisionSelector(revision) {
+  function revisionSelector(revision, field) {
     const value = CSS.escape(revision)
+    if (field) return ':is([data-li-input-revision="'+value+'"],'+revisionSelector(revision)+':not([data-li-input-revision]))'
     return ':is([data-li-revision="' + value + '"],[data-li-render-revision="' + value + '"]:not([data-li-revision]))'
   }
-  function membersOf(revision) {
-    return document.querySelectorAll(revisionSelector(revision))
+  function membersOf(revision, field) {
+    return document.querySelectorAll(revisionSelector(revision, field))
   }
   const renderedFields = ['background-color', 'border-radius', 'font-size']
   function declaration(part, property) {
@@ -213,14 +214,18 @@
   let sheet
   let declarations = new Map()
   let inputs = new Map()
-  function contract(node) {
+  function contract(node, forInput = false) {
     try {
-      const c = JSON.parse(node.getAttribute('data-li-contract') ?? node.getAttribute('data-li-render-contract'))
+      const separate = forInput && node.hasAttribute('data-li-input-revision')
+      const raw = separate ? node.getAttribute('data-li-input-contract') :
+        (node.getAttribute('data-li-contract') ?? node.getAttribute('data-li-render-contract'))
+      const c = JSON.parse(raw)
+      const revision = separate ? node.getAttribute('data-li-input-revision') : revisionOf(node)
       if (
         /^[a-z][a-z0-9-]{0,63}$/.test(c?.site) &&
         /^[a-f0-9]{64}$/.test(c.revision) &&
         revisions[c.site] === c.revision &&
-        revisionOf(node) === c.revision
+        revision === c.revision
       ) {
         if (c.surface) c.styles = c.styles.filter(property => surfacePart(node,c,property))
         if (node.matches('[data-li-local-ordinary~="align-items"]') &&
@@ -327,7 +332,7 @@
     inputs = next
   }
   function locate(edit) {
-    return document.querySelector(revisionSelector(edit.prepared.revision))
+    return document.querySelector(revisionSelector(edit.prepared.revision, edit.prepared.field))
   }
   // A saved destination may mount its members after the application fetches
   // its data. Observe this revision only while the requested page is open.
@@ -345,20 +350,20 @@
       })
       const timer = setTimeout(finish, 4500)
       observer.observe(document.body, {childList: true, subtree: true, attributes: true,
-        attributeFilter: ['data-li-revision', 'data-li-render-revision']})
+        attributeFilter: ['data-li-revision', 'data-li-render-revision', 'data-li-input-revision']})
     })
   }
   function observe(edit, visible, hidden) {
     if (!hidden && stale(edit)) return { state: 'stale' }
     const { revision, site, field } = edit.prepared
-    const members = [...membersOf(revision)]
+    const members = [...membersOf(revision, field)]
       .filter(visible)
     if (!members.length) return { state: hidden ? 'hidden' : 'unobservable' }
     const [node] = members
     if (hidden) return { state: 'hidden', node }
     if (edit.prepared.part && getComputedStyle(document.documentElement)
         .getPropertyValue('--li-known-' + edit.prepared.part.id).trim() !== '1') return {state:'stale',node}
-    const contracts = members.map(contract)
+    const contracts = members.map(member=>contract(member, Boolean(field)))
     if (contracts.some(c => !c || c.site !== site)) return { state: 'stale' }
     if (!field && !supportedDeclaration(edit)) return { state: 'failed', node }
     const current = field ? inputs.get(revision + ':' + field) : declarations.get(revision + ':' + edit.property)
