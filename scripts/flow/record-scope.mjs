@@ -93,9 +93,10 @@ function componentRoot(tree, exported, prop) {
   const record = params.properties.find((p) => p.key.name === prop && identifier(p.value))?.value.name
   if (!record) return
   const jsx = returnedValue(fn)
-  const root = jsx?.type === 'JSXElement' && jsx.openingElement
+  if (jsx?.type !== 'JSXElement') return
+  const root = jsx.openingElement
   if (
-    !/^[a-z][a-z0-9]*$/.test(root?.name.name ?? '') ||
+    !/^[a-z][a-z0-9]*$/.test(root.name.name ?? '') ||
     root.attributes.some(
       (a) =>
         a.type === 'JSXSpreadAttribute' ||

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import MagicString from 'magic-string'
 import { parseAuthoredJsx } from '../scripts/flow/authored-forwarding.mjs'
-import { markRecordCallers, verifyRecordSource } from '../scripts/flow/record-scope.mjs'
+import { markRecordCallers, markRecordHost, verifyRecordSource } from '../scripts/flow/record-scope.mjs'
 import { planRecordRadius } from '../scripts/flow/record-radius.mjs'
 import { buildSourceHandoff } from '../source-handoff.mjs'
 
@@ -201,4 +201,14 @@ test('a filtered singleton cannot hide a duplicate identity or substitute a diff
   } finally {
     globalThis.document = previous
   }
+})
+
+test('an unrelated memo component with effect statements is left untouched', () => {
+  const source = 'import {memo,useEffect} from "react"; export const Search=memo(function Search({row}) { useEffect(()=>{},[]); return <div>{row.name}</div> })'
+  const tree = parseAuthoredJsx(source)
+  const fn = tree.program.body[1].declaration.declarations[0].init.arguments[0]
+  const node = fn.body.body.at(-1).argument.openingElement
+  const out = new MagicString(source)
+  assert.equal(markRecordHost(tree, node, fn, 'Search.jsx', out), undefined)
+  assert.equal(out.toString(), source)
 })
