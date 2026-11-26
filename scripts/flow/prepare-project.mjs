@@ -251,7 +251,8 @@ function ordinaryCSS(root, graph, classify) {
   // Utility classification also consults this index for same-class
   // ownership. Let neither kind publish candidates from a partial index.
   if (indexError) classes.clear()
-  return { classes, tokenFiles, spacingSources, indexError }
+  const variableSources = [...definitions].map(([file, names]) => ({ file, names: [...names] }))
+  return { classes, tokenFiles, spacingSources, variableSources, indexError }
 }
 export async function prepareProject(project, destination, namespace, boundary = 'src', server, {
   classifyCSS = cssFields,
@@ -325,6 +326,7 @@ export async function prepareProject(project, destination, namespace, boundary =
     sites,
     retiredSites,
     spacingSources: css.spacingSources,
+    variableSources: css.variableSources,
     ...(css.indexError ? { preparation: { preparedStyles: 'unavailable', diagnostics: [css.indexError] } } : {}),
     stylesheetGraph: graph,
     utilityEntry: tailwind ? graph.utilityEntries[0] : null,

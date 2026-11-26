@@ -92,12 +92,12 @@ if (mode === 'authorize-authored-use') {
 }
 
 const catalogPath = (binding, kind) => join(root, binding.id + '-' + kind + '.json')
+const catalogUnavailable = message => Object.assign(Error(message), { code: 'CATALOG_UNAVAILABLE' })
+
 async function verifyCatalog(binding, catalog, kind) {
   const { source, names } = catalog
-  if (typeof source !== 'string' || !source.endsWith('.css') || source.length > 400 || isAbsolute(source) ||
-      !Array.isArray(names) || (kind !== 'text-styles' && !names.length) || names.length > 100 ||
-      names.some(name => typeof name !== 'string' || !variableName.test(name))) {
-    throw Error('Expected one relative CSS source and a list of CSS variable names')
+  if (typeof source !== 'string' || !source.endsWith('.css') || source.length > 400 || isAbsolute(source)) {
+    throw Error('Expected one relative CSS source')
   }
   const file = await realpath(resolve(binding.source, source))
   const child = relative(binding.source, file)
@@ -105,13 +105,18 @@ async function verifyCatalog(binding, catalog, kind) {
     throw Error('Variable source must be inside the connected working copy')
   }
   const info = await stat(file)
-  if (!info.isFile() || info.size > 1024 * 1024) throw Error('Expected a CSS file under 1 MB')
+  if (!info.isFile()) throw Error('Expected a CSS file')
+  if (info.size > 1024 * 1024) throw catalogUnavailable('Catalog CSS exceeds 1 MB')
+  if (!Array.isArray(names) || (kind !== 'text-styles' && !names.length) || names.length > 100 ||
+      names.some(name => typeof name !== 'string' || !variableName.test(name))) {
+    throw catalogUnavailable('Catalog needs supported CSS variable names and no more than 100 entries')
+  }
   const css = (await readFile(file, 'utf8')).replace(/\/\*[\s\S]*?\*\//g, '')
   const declarations = kind === 'text-styles'
     ? names.flatMap(name => textStyleProperties.map(property => name + '-' + property))
     : names
   for (const name of declarations) {
-    if (!declaresVariable(css, name)) throw Error('Variable source does not declare ' + name)
+    if (!declaresVariable(css, name)) throw catalogUnavailable('Variable source does not declare ' + name)
   }
   return { source: child, names: [...new Set(names)], file, css }
 }
@@ -143,15 +148,23 @@ async function verifyPublishedDefinitions(binding, edits, projectStyles = []) {
 }
 
 if (catalogKinds.has(mode)) {
-  const [port, source, ...names] = args
+  const optional = args[0] === '--if-supported'
+  const [port, source, ...names] = optional ? args.slice(1) : args
   const origin = originFor(port)
   const bindings = await read(configPath, {})
   const binding = bindings[origin]
   if (!binding) throw Error('No saved project connection for this origin')
   await verify(binding)
   const kind = catalogKinds.get(mode)
-  const { source: verifiedSource, names: verifiedNames } = await verifyCatalog(binding, { source, names }, kind)
-  const catalog = { source: verifiedSource, names: verifiedNames }
+  const verified = await verifyCatalog(binding, { source, names }, kind).catch(error => {
+    if (!optional || error.code !== 'CATALOG_UNAVAILABLE') throw error
+    return { unavailable: error.message }
+  })
+  if (verified.unavailable) {
+    await printJson(verified)
+    process.exit(0)
+  }
+  const catalog = { source: verified.source, names: verified.names }
   await atomic(catalogPath(binding, kind), catalog)
   console.log(JSON.stringify(catalog))
   process.exit(0)

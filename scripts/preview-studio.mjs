@@ -238,21 +238,23 @@ try {
       const binding = helperResult(state, 'bind', String(port), app)
       if (authoredBaseline) helperResult(state, 'authorize-authored-use', String(port), dir)
       if (id === 'original') {
-        const catalogs = inventory.stylesheetGraph.sheets
-          .map((s) => s.file)
-          .filter((file) => /--(?:space-[\w-]+|primary)\s*:/.test(readFileSync(join(app, file), 'utf8')))
-        const theme = catalogs.length === 1 ? catalogs[0] : null
-        const css = theme ? readFileSync(join(app, theme), 'utf8') : ''
-        const spacing = [...new Set([...css.matchAll(/(--space-[\w-]+)\s*:/g)].map((m) => m[1]))]
+        const register = (kind, source, names) => {
+          const result = helperResult(state, 'register-' + kind, '--if-supported', String(port), source, ...names)
+          if (result.unavailable) console.warn('Optional ' + kind + ' catalog unavailable for ' + source + ': ' + result.unavailable)
+        }
+        const themes = inventory.variableSources.filter(({ names }) => names.some(name =>
+          name === '--primary' || /^--space-[\w-]+$/.test(name)))
+        const theme = themes.length === 1 ? themes[0] : null
+        const spacing = theme?.names.filter(name => /^--space-[\w-]+$/.test(name)) ?? []
         if (!spacing.length && inventory.spacingSources?.length === 1) {
           const source = inventory.spacingSources[0]
-          helperResult(state, 'register-spacing', String(port), source.file, ...source.names)
+          register('spacing', source.file, source.names)
         }
-        if (spacing.length) helperResult(state, 'register-spacing', String(port), theme, ...spacing)
+        if (spacing.length) register('spacing', theme.file, spacing)
         const colors = ['--primary', '--secondary', '--foreground', '--muted-foreground'].filter((name) =>
-          css.includes(name + ':'),
+          theme?.names.includes(name),
         )
-        if (colors.length) helperResult(state, 'register-colors', String(port), theme, ...colors)
+        if (colors.length) register('colors', theme.file, colors)
       } else if (!existsSync(sessionFile(dir))) {
         const parent = studio.versions.find((v) => v.id === (version.parent ?? 'original'))
         helperResult(state, 'copy-registrations', String(parent.port), String(port))

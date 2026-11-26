@@ -29,7 +29,8 @@ await write(
   `import React from 'react';import './lazy.css';export function Late(){return <div className="later">late</div>}`,
 )
 await write('src/entry.css', "@import '@css/inside.css';")
-await write('src/inside.css', '.example {display:grid;gap:var(--space-x)} :root {--space-x:13px}')
+await write('src/inside.css',
+  '.example {display:grid;gap:var(--space-x)} .btn--primary:hover {color:red} :root {--space-x:13px;--secondary:blue}')
 await write('src/dead.css', '.example {gap:99px} :root{--space-dead:1px}')
 await write('src/lazy.css', '.later {gap:18px}')
 const browser = await chromium.launch()
@@ -47,6 +48,7 @@ try {
     assert.ok(result.stylesheetGraph.sheets.find((s) => s.file === 'src/lazy.css').lazy)
     assert.ok(!JSON.stringify(result.sites).includes('dead.css'))
     assert.deepEqual(result.spacingSources, [{ file: 'src/' + name + '.css', names: ['--space-x'] }])
+    assert.deepEqual(result.variableSources, [{ file: 'src/' + name + '.css', names: ['--space-x', '--secondary'] }])
     // A legacy inline recipe cannot distinguish these two occurrences. Keep the
     // entire site untouched even when an earlier recipe on it would qualify.
     result.sites.push({

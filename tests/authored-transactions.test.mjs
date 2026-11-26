@@ -62,7 +62,8 @@ async function fixture(t, family = 'paint', schema = 2, mixed = false) {
     await addAuthoredUseMarkers({ root: draft.appRoot, file: 'example.jsx', code, tree, out, schema, resolveImport: specifier => specifier === './part' ? join(draft.appRoot, 'part.jsx') : null })
     return out.toString()
   }
-  t.mock.method(globalThis, 'fetch', async () => {
+  t.mock.method(globalThis, 'fetch', async url => {
+    assert.equal(url.pathname, '/__inspector-flow/authored-module/example.jsx')
     const written = readFileSync(target, 'utf8').includes('style=')
     if (failCandidateWrite && written) return new Response(null, { status: 500 })
     if (staleResponse && written) {

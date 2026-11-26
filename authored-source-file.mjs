@@ -3,6 +3,7 @@ import { lstat, readFile, realpath, rename, unlink, writeFile } from 'node:fs/pr
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { readProposal } from './scripts/proposal.mjs'
+import { authoredModulePath } from './scripts/flow/authored-module-route.mjs'
 import { parseAuthoredJsx } from './scripts/flow/authored-forwarding.mjs'
 
 export const authoredError = message => Object.assign(Error(message), { code: 'AUTHORED_SOURCE_REJECTED' })
@@ -93,7 +94,7 @@ function hasCompiledBinding(code, edit) {
 }
 
 export async function compile(binding, edit, expectedRevision, afterWrite = false) {
-  const url = new URL('/' + edit.file.split('/').map(encodeURIComponent).join('/'), binding.origin)
+  const url = new URL(authoredModulePath(edit.file), binding.origin)
   const signal = AbortSignal.timeout(3500)
   const stillOwned = async () => {
     if (revision((await source(binding.source, edit.file)).text) !== expectedRevision) {

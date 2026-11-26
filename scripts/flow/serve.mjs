@@ -1,3 +1,4 @@
+import { routeAuthoredModule } from './authored-module-route.mjs'
 import { authoredUseSites } from './authored-use.mjs'
 import { preparedStyles } from './prepared-css.mjs'
 import { preparedSites } from './prepared-sites.mjs'
@@ -180,6 +181,7 @@ if (sourceMode) {
   const { createServer: createViteServer } = await projectVite(appRoot)
   const { componentPreviewSites } = await import('./component-preview-sites.mjs')
   const { tableRenderSites } = await import('./table-render-sites.mjs')
+  const authoredUseSchema = Number(process.env.INSPECTOR_AUTHORED_USE_SCHEMA || (process.env.INSPECTOR_AUTHORED_USE === '1' ? '2' : '0'))
   const workspace = {
     name: 'localhost-inspector-workspace',
     enforce: 'pre',
@@ -188,13 +190,13 @@ if (sourceMode) {
     },
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
+        if (authoredUseSchema && routeAuthoredModule(request, response, server.config.base, next)) return
         if (request.url?.split('?')[0].startsWith(flowPath)) handleRequest(request, response)
         else next()
       })
     },
   }
   const manifest = process.env.INSPECTOR_PREPARED_SITES
-  const authoredUseSchema = Number(process.env.INSPECTOR_AUTHORED_USE_SCHEMA || (process.env.INSPECTOR_AUTHORED_USE === '1' ? '2' : '0'))
   const server = await createViteServer({
     root: appRoot,
     ...(comparison?.role === 'proposal' ? { cacheDir: resolve(appRoot, '../vite-cache') } : {}),
