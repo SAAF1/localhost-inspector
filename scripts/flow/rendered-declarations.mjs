@@ -59,6 +59,8 @@ export function bindRenderedDeclarations(sheet, file, originalValues) {
       }
     }
   })
+  const inputs = [...registered].filter(n => n.startsWith('--li-render-'))
+  if (inputs.length) sheet.append(':root{' + inputs.map(n => '--li-known-' + n.slice('--li-render-'.length) + ':1').join(';') + '}')
   if (registered.size) sheet.append([...registered].map(name =>
     '@property ' + name + '{syntax:"*";inherits:false;}').join('\n'))
   return registered.size > 0

@@ -66,18 +66,26 @@
         // Sibling controls and badges can share the container without owning
         // its surface. Only one direct child may occupy the envelope.
         const candidates = [...child.children].filter(n => sameBox(node,n))
-        if (candidates.length > 1) return
+        if (candidates.length > 1) return false
         if (!candidates.length || (level > 1 && child.childElementCount !== 1)) break
         child = candidates[0]
         const css = getComputedStyle(child)
         if (css.backgroundColor === 'rgba(0, 0, 0, 0)' && css.backgroundImage === 'none') continue
-        if (!revisionOf(child) || css.backgroundImage !== 'none') return
-        if (level > 1 && node.childElementCount !== 1) return
+        if (!revisionOf(child) || css.backgroundImage !== 'none') return false
+        if (level > 1 && node.childElementCount !== 1) return false
         part = child
         depth = level
       }
     }
+    const css = getComputedStyle(part)
+    if (property === 'background-color' && css.backgroundImage !== 'none') return false
+    if (property === 'border-radius' && part !== node) {
+      const envelope = getComputedStyle(node)
+      if (envelope.backgroundColor !== 'rgba(0, 0, 0, 0)' ||
+          ['hidden','clip'].includes(envelope.overflowX) || ['hidden','clip'].includes(envelope.overflowY)) return false
+    }
     const binding = declaration(part,property)
+    if (part !== node && !binding) return false
     const revision = revisionOf(part)
     if (!binding || !/^[a-f0-9]{64}$/.test(revision ?? '')) return
     return { ...binding, depth, revision }
@@ -176,13 +184,14 @@
           c.parts = {}
           c.styles ??= []
           for (const field of renderedFields) {
-            if (c.cssReady?.[field] || c.styleInputs?.[field]) continue
-            if (getComputedStyle(node).getPropertyValue('--li-owner-' + field).trim() === 'unavailable') {
+            if (c.styleInputs?.[field]) continue
+            const part = renderedPart(node,field)
+            if (part === false || (getComputedStyle(node).getPropertyValue('--li-owner-' + field).trim() === 'unavailable' &&
+                !part?.depth)) {
               c.styles = c.styles.filter(p => p !== field)
               continue
             }
-            const part = renderedPart(node,field)
-            if (!part) continue
+            if (!part || (c.cssReady?.[field] && !part.depth)) continue
             c.parts[field] = part
             if (!c.styles.includes(field)) c.styles.push(field)
           }
@@ -270,6 +279,8 @@
     if (!members.length) return { state: hidden ? 'hidden' : 'unobservable' }
     const [node] = members
     if (hidden) return { state: 'hidden', node }
+    if (edit.prepared.part && getComputedStyle(document.documentElement)
+        .getPropertyValue('--li-known-' + edit.prepared.part.id).trim() !== '1') return {state:'stale',node}
     const contracts = members.map(contract)
     if (contracts.some(c => !c || c.site !== site)) return { state: 'stale' }
     if (!field && !supportedDeclaration(edit)) return { state: 'failed', node }
