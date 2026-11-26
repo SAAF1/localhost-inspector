@@ -28,7 +28,7 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
       if (mount) paint()
     },
   })
-  const revealLabel = label => revealLayerLabel(mount, label)
+  const revealLabel = (label, center) => revealLayerLabel(mount, label, center)
   const hover = createLayerHover({ getMount: () => mount, getOutline, paint, revealLabel })
   const hiddenAttribute = 'data-localhost-inspector-layer-hidden'
   const visibilitySheets = new WeakMap()
@@ -161,7 +161,7 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
     if (!temporaryBranches && visibleTarget && sameSelection && !group.length &&
         current?.activeKey === previousActive && current?.selectedKey === previousSelection) {
       for (const row of visibleRows) updateLayerSelection(row, row.node === node)
-      if (revealNode) revealLabel(visibleTarget.text)
+      if (revealNode) revealLabel(visibleTarget.text, true)
       revealNode = null
       return
     }
@@ -373,7 +373,7 @@ export function createWorkspaceLayers({ getDocument, selectNode, componentFor, g
     currentTree = tree
     flowNavigation.connect(mount, outline?.flows ?? [], outline?.flowKey, tree, selectedKey)
     if (labelToReveal) {
-      revealLabel(labelToReveal)
+      revealLabel(labelToReveal, Boolean(revealNode))
       revealNode = null
     }
     if (restoreFocus) ((restoreEye && nextFocus.eye) || nextFocus.item).focus({ preventScroll: true })

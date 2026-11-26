@@ -140,6 +140,7 @@ test('section and frame titles select independent fills that preview and survive
     assert.equal(await h.field('Section width').getAttribute('aria-readonly'), 'true')
     const frameTitle = wrapper.getByRole('button', { name: 'Select Draft frame' })
     await frameTitle.press('Enter')
+    await wrapper.getByRole('button', { name: 'Interact with Draft' }).press('Enter')
     const width = h.field('Frame width')
     await width.fill('700')
     await width.press('Enter')

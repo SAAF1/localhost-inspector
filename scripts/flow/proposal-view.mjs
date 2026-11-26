@@ -244,7 +244,7 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
   }
   function outside(event) {
     if (!app.inert && !wrapper.contains(event.target) &&
-        !(variant && event.composedPath().some(node => node.matches?.('#workspace-sidebar,#variant-properties')))) stop(false)
+        !(variant && event.composedPath().some(node => node.matches?.('#workspace-sidebar,#variant-properties,#localhost-inspector-dock')))) stop(false)
   }
   window.addEventListener('message', exit)
   document.addEventListener('pointerdown', outside, true)

@@ -51,7 +51,7 @@ test('sidebar navigation centers frames, sections and elements between both open
     await original.press('Enter')
     await centered(h.page.locator('#app-preview'))
     await tree.getByRole('treeitem', { name: 'Draft', exact: true }).press('Enter')
-    await h.page.locator('#variant-properties').waitFor()
-    await centered(h.page.locator('[data-variant="draft"] iframe'), '#variant-properties')
+    await h.page.locator('#localhost-inspector-dock[data-frame-properties][data-canvas-paint-target="frame:draft"]').waitFor()
+    await centered(h.page.locator('[data-variant="draft"] iframe'))
   } finally { await h.close() }
 })

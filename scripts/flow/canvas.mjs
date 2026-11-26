@@ -177,6 +177,17 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   else if (command === 'init' && (args.length === 2 || args.length === 3)) await initCanvas(...args)
   else if (command === 'bind' && args.length === 2) await bindCanvas(...args)
   else if (command === 'attach-source' && args.length === 3) await attachSource(...args)
+  else if (command === 'add-flow' && args[3] === '--from-source') {
+    const [directory, id, anchor, , source, manifest, config] = args
+    if (!manifest || args.length > 7) throw Error('Expected --from-source APP_ROOT MANIFEST_JSON [VITE_CONFIG]')
+    const stage = await mkdtemp(join(tmpdir(), 'inspector-flow-build-'))
+    try {
+      const output = join(stage, 'preview')
+      const builder = fileURLToPath(new URL('./build-table-preview.mjs', import.meta.url))
+      execFileSync(process.execPath, [builder, source, output, ...(config ? [config] : [])], { stdio: 'inherit' })
+      await addFlow(directory, id, anchor, output, manifest, source)
+    } finally { await rm(stage, { recursive: true, force: true }) }
+  }
   else if (command === 'add-flow' && (args.length === 5 || args.length === 6)) await addFlow(...args)
   else if (command === 'add') {
     const options = new Map()

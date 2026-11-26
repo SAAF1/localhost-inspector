@@ -196,7 +196,7 @@ test('saved canvas restores frame contents across reload, new tabs, browsers and
     await row.waitFor()
     await fresh.getByRole('button', { name: 'Back to localhost' }).click()
     await row.click()
-    await fresh.locator('#variant-properties').waitFor()
+    await fresh.locator('#localhost-inspector-dock[data-frame-properties][data-inspector-open]').waitFor()
     await fresh.frameLocator('[data-variant="new-draft"] iframe').getByRole('heading', { name: 'New draft content' }).waitFor()
     assert.equal(await row.isVisible(), true)
     await canvas('respond', saved, 'summary', 'new-draft')

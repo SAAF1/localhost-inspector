@@ -457,8 +457,16 @@ function inspectVariant(frame, action, details) {
     }
     return
   }
+  if (action === 'selection' && inspectedVariant === frame.variant) {
+    dock.toggleAttribute('data-frame-properties', !details)
+    background.select(details ? null : variantFrames.get(frame.variant)?.paintSurface)
+  }
   if (action !== 'start') {
-    if (action === 'stop' && inspectedVariant === frame.variant) inspectedVariant = null
+    if (action === 'stop' && inspectedVariant === frame.variant) {
+      inspectedVariant = null
+      dock.removeAttribute('data-frame-properties')
+      background.select(null)
+    }
     sidebar.inspectVariant(frame, action, details)
     if (action === 'stop') sidebar.refreshOutline()
     return
@@ -473,8 +481,14 @@ function inspectVariant(frame, action, details) {
   const board = viewport.getBoundingClientRect()
   const wasInView = before.left >= board.left && before.right <= board.right - dock.offsetWidth + 1
   sidebar.inspectVariant(frame, action, details)
+  if (dock.firstElementChild) {
+    dock.firstElementChild.dispatchEvent(new Event('clear-workspace-selection', { cancelable: true }))
+    dock.firstElementChild.dispatchEvent(new Event('open-workspace-inspector'))
+    background.select(variantFrames.get(frame.variant).paintSurface)
+    dock.setAttribute('data-frame-properties', '')
+  }
   const left = viewport.getBoundingClientRect().left
-  const width = viewport.clientWidth - document.querySelector('#variant-properties').offsetWidth
+  const width = viewport.clientWidth - (document.querySelector('#variant-properties').offsetWidth || dock.offsetWidth)
   if (width <= 0) return
   // Opening the sidebars changes the usable canvas. Keep the same screen
   // position where possible, and keep a formerly visible frame within view.

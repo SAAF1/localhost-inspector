@@ -78,7 +78,7 @@ export function createLayerHover({ getMount, getOutline, paint, revealLabel }) {
   }
 }
 
-export function revealLayerLabel(mount, label) {
+export function revealLayerLabel(mount, label, center = false) {
   // Scroll only the Layers viewport. Focusing a treeitem or scrolling its full
   // width can move the canvas or leave the text out of sight in a deep tree.
   if (!label || !mount.clientWidth || !mount.clientHeight) return
@@ -94,6 +94,6 @@ export function revealLayerLabel(mount, label) {
   const right = left + Math.min(box.width / scaleX, mount.clientWidth - 8)
   const bottom = top + box.height / scaleY
   const dx = left < 4 ? left - 4 : Math.max(0, right - mount.clientWidth + 4)
-  const dy = top < 4 ? top - 4 : Math.max(0, bottom - mount.clientHeight + 4)
+  const dy = center ? (top + bottom - mount.clientHeight) / 2 : top < 4 ? top - 4 : Math.max(0, bottom - mount.clientHeight + 4)
   mount.scrollBy({ left: dx, top: dy, behavior: 'instant' })
 }

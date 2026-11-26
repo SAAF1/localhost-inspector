@@ -46,7 +46,10 @@ export function connectVariantSelection(receiver, origin) {
     selected = node?.closest('svg') || node
     selected?.setAttribute(attribute, '')
     document.dispatchEvent(new Event('canvas-variant-selection'))
-    if (inspector) return
+    if (inspector) {
+      receiver.postMessage({ type: 'variant-selection', details: selected ? { selected: true } : null }, origin)
+      return
+    }
     const style = selected && getComputedStyle(selected)
     const bounds = selected?.getBoundingClientRect()
     receiver.postMessage({ type: 'variant-selection', details: selected ? {

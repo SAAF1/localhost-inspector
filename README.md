@@ -61,7 +61,9 @@ In a separate terminal at the repository root, run `node local-helper.mjs "$HOME
 
 ### Publish a multi-step canvas flow
 
-Run `node scripts/flow/canvas.mjs add-flow CANVAS FLOW_ID ANCHOR BUILT_PREVIEW MANIFEST_JSON [EDITABLE_SOURCE]`. Use an initialized canvas, an existing anchor frame, and a build that can reopen each step directly. The manifest supplies the section title and the steps in reading order.
+For a Vite app, run `node scripts/flow/canvas.mjs add-flow CANVAS FLOW_ID ANCHOR --from-source APP_ROOT MANIFEST_JSON [VITE_CONFIG]`. Inspector uses the app’s Vite configuration, builds all steps once, and wires supported component instances to their live props. Each step should have its own starting route.
+
+To publish an existing build, run `node scripts/flow/canvas.mjs add-flow CANVAS FLOW_ID ANCHOR BUILT_PREVIEW MANIFEST_JSON [EDITABLE_SOURCE]`. If you need a separate instrumented Vite build, use `npm run build:preview -- APP_ROOT NEW_OUTPUT_DIRECTORY [VITE_CONFIG]`. The manifest supplies the section title and the steps in reading order.
 
 ```json
 {

@@ -241,3 +241,6 @@ iframe#variant-properties { display:block; height:100%; padding:0; border:0; }
   .variant-section .variant-section > .variant-section-surface h2,
   .variant-section .frame-review { color: #f1f2ef; }
 }
+
+#localhost-inspector-dock[data-variant-inspection][data-frame-properties] { visibility: visible; }
+#localhost-inspector-dock[data-frame-properties] ~ #variant-properties { visibility: hidden; }
