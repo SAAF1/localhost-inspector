@@ -62,12 +62,17 @@
       // Follow a unique, coextensive painted surface. Never pick one sibling
       // among several, or follow a child merely because it has some paint.
       let child = node
-      for (let level = 1; level <= 4 && child.childElementCount === 1; level++) {
-        child = child.firstElementChild
-        if (!sameBox(node,child)) break
+      for (let level = 1; level <= 4; level++) {
+        // Sibling controls and badges can share the container without owning
+        // its surface. Only one direct child may occupy the envelope.
+        const candidates = [...child.children].filter(n => sameBox(node,n))
+        if (candidates.length > 1) return
+        if (!candidates.length || (level > 1 && child.childElementCount !== 1)) break
+        child = candidates[0]
         const css = getComputedStyle(child)
         if (css.backgroundColor === 'rgba(0, 0, 0, 0)' && css.backgroundImage === 'none') continue
         if (!revisionOf(child) || css.backgroundImage !== 'none') return
+        if (level > 1 && node.childElementCount !== 1) return
         part = child
         depth = level
       }
@@ -81,6 +86,10 @@
     return a?.id === b?.id && a?.revision === b?.revision && a?.depth === b?.depth
   }
   function partNode(node,binding) {
+    if (binding.depth === 1) {
+      const matches = [...node.children].filter(child=>revisionOf(child)===binding.revision)
+      return matches.length === 1 ? matches[0] : null
+    }
     for (let i=0; node && i<binding.depth; i++) node = node.childElementCount===1 ? node.firstElementChild : null
     return revisionOf(node) === binding.revision ? node : null
   }
@@ -209,7 +218,9 @@
           if (/^[a-f0-9]{32}$/.test(part.id) && /^[a-f0-9]{64}$/.test(part.revision) &&
               Number.isInteger(part.depth) && part.depth >= 0 && part.depth <= 4) {
             const owner = revisionSelector(revision)
-            const selector = part.depth ? owner + ' > :only-child'.repeat(part.depth) + revisionSelector(part.revision) : owner
+            const child = revisionSelector(part.revision)
+            const selector = part.depth === 1 ? owner + ':not(:has(> ' + child + ' ~ ' + child + ')) > ' + child :
+              part.depth ? owner + ' > :only-child'.repeat(part.depth) + child : owner
             rules.push(selector + '{--li-render-' + part.id + ':' + edit.requested + '}')
           }
           continue

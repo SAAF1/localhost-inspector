@@ -62,19 +62,22 @@ export function preparedStyles(root, manifest) {
     enforce: 'post',
     apply: 'serve',
     transform(code, id) {
-      if (!id.endsWith('.css') || id.includes('virtual:') || !code.includes('__vite__css')) return
+      const [path, search=''] = id.split('?')
+      const direct = new URLSearchParams(search).has('direct')
+      if (!path.endsWith('.css') || id.includes('virtual:') || (!direct && !code.includes('__vite__css'))) return
       const inventory = JSON.parse(readFileSync(manifest, 'utf8'))
       if (inventory.preparation?.preparedStyles === 'unavailable') return
-      const ast = parse(code, { sourceType: 'module' })
-      const source = ast.program.body
+      const file = relative(root, path)
+      if (direct && (!inventory.panelBindings || !inventory.stylesheetGraph?.sheets.some(s=>s.served.includes(file)))) return
+      const statements = direct ? [] : parse(code, { sourceType: 'module' }).program.body
+      const source = direct ? {type:'StringLiteral',value:code} : statements
         .flatMap((n) => n.declarations ?? [])
         .find((n) => n.id.name === '__vite__css')?.init
       if (source?.type !== 'StringLiteral') return
-      const file = relative(root, id)
-      const constants = new Map(ast.program.body.flatMap(statement =>
+      const constants = new Map(statements.flatMap(statement =>
         (statement.declaration ?? statement).declarations ?? []).filter(d => d.init?.type === 'StringLiteral')
         .map(d => [d.id.name, d.init.value]))
-      const exported = ast.program.body.find(n => n.type === 'ExportDefaultDeclaration')?.declaration
+      const exported = statements.find(n => n.type === 'ExportDefaultDeclaration')?.declaration
       const members = new Map((exported?.properties ?? []).filter(p => p.type === 'ObjectProperty' && !p.computed)
         .map(p => [p.key.name ?? p.key.value, p.value.type === 'StringLiteral' ? p.value.value : constants.get(p.value.name)]))
       const byClass = new Map()
@@ -158,7 +161,7 @@ export function preparedStyles(root, manifest) {
       }
       if (output !== source.value)
         return {
-          code: code.slice(0, source.start) + JSON.stringify(output) + code.slice(source.end),
+          code: direct ? output : code.slice(0, source.start) + JSON.stringify(output) + code.slice(source.end),
           map: null,
         }
     },

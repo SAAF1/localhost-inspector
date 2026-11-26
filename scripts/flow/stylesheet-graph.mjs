@@ -101,8 +101,23 @@ export async function stylesheetGraph(root, running, onProjectImport, onClassJoi
     const entry = join(realpathSync(server.config.root),'index.html')
     if (!entry.startsWith(root + '/')) throw Error('Configured Vite HTML root is outside the candidate project.')
     const html = readFileSync(entry, 'utf8')
-    for (const link of html.matchAll(/<link\b[^>]*>/gi)) {
-      if (/\brel\s*=\s*["']stylesheet["']/i.test(link[0])) unresolved.add('HTML stylesheet ' + link[0])
+    const markup = html.replace(/<!--[\s\S]*?-->/g,'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,'')
+    const attribute = (tag,name) => new RegExp('\\s'+name+'\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s>]+))','i').exec(tag)?.slice(1).find(v=>v!==undefined)
+    const origin = 'http://inspector.invalid'
+    const entryUrl = new URL(server.config.base,origin)
+    const base = attribute(markup.match(/<base\b[^>]*>/i)?.[0] ?? '', 'href')
+    for (const [link] of markup.matchAll(/<link\b[^>]*>/gi)) {
+      if (!attribute(link,'rel')?.toLowerCase().split(/\s+/).includes('stylesheet')) continue
+      try {
+        const href = attribute(link,'href')
+        const url = new URL(href,base ? new URL(base,entryUrl) : entryUrl)
+        if (href && url.origin === origin && !url.search && !url.hash && url.pathname.endsWith('.css')) {
+          const path = decodeURIComponent(url.pathname)
+          await follow(path.startsWith(entryUrl.pathname) ? '/' + path.slice(entryUrl.pathname.length) : path,entry,false)
+          continue
+        }
+      } catch { /* Preserve unresolved evidence for an unsupported HTML reference. */ }
+      unresolved.add('HTML stylesheet ' + link)
     }
     for (const tag of html.matchAll(/<script\b[^>]*>/gi)) {
       if (!/\btype\s*=\s*["']module["']/i.test(tag[0])) continue

@@ -49,7 +49,7 @@ try {
 		)
 		await writeFile(
 			join(nested ? src : app, 'index.html'),
-			'<main>fixture entry</main><script type="module" src="' +
+			'<link rel="stylesheet" href="./linked.css"><main>fixture entry</main><script type="module" src="' +
 				(nested ? '/main.jsx' : '/src/main.jsx') +
 				'"></script>',
 		)
@@ -57,6 +57,8 @@ try {
 			join(src, 'main.jsx'),
 			"import React from 'react'; import sheet from './card.module.css'; export function Tile(){return <div className={sheet.card}>test</div>}",
 		)
+		await writeFile(join(nested ? src : app,'linked.css'),
+      '.tag{font-size:14px}.other{font-size:14px}.duplicate{font-size:14px}.duplicate{font-size:14px}@media(max-width:640px){.tag{font-size:12px}}')
 		await writeFile(join(src, 'card.module.css'), '.card {border-radius:5px}')
 		const manifest = join(group, 'prepared.json')
 		if (nested && old) {
@@ -107,6 +109,15 @@ try {
 					assert.match(await shell.text(), /workspace\.mjs/)
 					const missing = await fetch(server.origin + '/__inspector-flow/unknown',htmlOptions)
 					assert.equal(missing.status,404)
+				}
+				const cssResponse = await fetch(base+'linked.css',{headers:{accept:'text/css'}})
+				assert.equal(cssResponse.status,200)
+				const linked = await cssResponse.text()
+				assert.equal(linked.includes('--li-render-'),!clean)
+				if (!clean) {
+					assert.ok(found.stylesheetGraph.sheets.some(s=>s.file===(nested?'src/linked.css':'linked.css')))
+					assert.match(linked,/\.duplicate\s*\{\s*font-size:\s*14px;\s*--li-owner-font-size:\s*unavailable/)
+					assert.match(linked,/font-size:\s*12px;\s*--li-owner-font-size:\s*unavailable/)
 				}
 				const module = nested ? 'main.jsx' : 'src/main.jsx'
 				const res = await fetch(base + module)
