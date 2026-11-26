@@ -198,6 +198,7 @@ function previewFrame(map, anchor, label, name, url, gap, variant, inspect, defi
     select.textContent = label
     select.setAttribute('aria-label', 'Select ' + label + ' frame')
     select.onclick = () => inspect?.(inspection, 'surface')
+    title.setAttribute('aria-label', label)
     title.replaceChildren(select)
   }
   function exit(event) {
