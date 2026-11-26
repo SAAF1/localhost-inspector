@@ -495,6 +495,42 @@ test('inspect mode blocks menu activation and saved states still replay', async 
   } finally { await h.close() }
 })
 
+test('pinching over a live canvas frame keeps its point fixed through a reversal', async () => {
+  const h = await createHarness({ canvas: true, dock: true, flowFrames: lifecycleFrames, flowPages })
+  try {
+    await h.page.locator('#flow-toggle').click()
+    await h.open()
+    const viewport = h.page.locator('#viewport')
+    assert.ok((await viewport.boundingBox()).x > 0, 'the open sidebar offsets the viewport')
+    await viewport.dispatchEvent('wheel', { deltaX: -24, deltaY: -38, cancelable: true })
+    const target = h.app.locator('body > #target')
+    const start = await target.boundingBox()
+    async function pinch(deltas) {
+      await target.evaluate(async (node, deltas) => {
+        const rect = node.getBoundingClientRect()
+        const preview = parent.document.querySelector('#app-preview')
+        const before = preview.style.transform
+        for (const deltaY of deltas) {
+          node.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY, bubbles: true, cancelable: true,
+            clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2 }))
+        }
+        if (deltas.length === 1 && preview.style.transform === before) throw Error('First pinch waited for another frame')
+        // A continuous pinch settles on its exact target within two paints.
+        await new Promise(resolve => parent.requestAnimationFrame(() => parent.requestAnimationFrame(resolve)))
+      }, deltas)
+      const box = await target.boundingBox()
+      assert.ok(Math.abs(box.x + box.width / 2 - start.x - start.width / 2) < .5, 'anchor x stays fixed')
+      assert.ok(Math.abs(box.y + box.height / 2 - start.y - start.height / 2) < .5, 'anchor y stays fixed')
+      return box.width
+    }
+    const first = await pinch([-4])
+    assert.ok(first > start.width, 'the first input expands the frame')
+    const second = await pinch([-4, -4, 4])
+    assert.ok(Math.abs(second - first * first / start.width) < .1, 'all deltas contribute to the zoom')
+    assert.ok(Math.abs(await pinch([4, 4]) - start.width) < .1, 'reversing the pinch restores the scale')
+  } finally { await h.close() }
+})
+
 test('only Command-pinch crosses between the live page and its centered canvas frame', async () => {
   const h = await createHarness({ canvas: true, dock: true })
   try {

@@ -194,6 +194,10 @@ function message(text) {
 
 let gestureIdleTimer
 let deferredHover
+let pinchFrame
+let lastPinchDirection
+let lastPinchSample
+const displayedCamera = { ...camera }
 
 function schedulePreviewUpdate() {
   if (previewUpdate || gestureIdleTimer) return
@@ -205,21 +209,30 @@ function schedulePreviewUpdate() {
 }
 
 function position() {
-  map.toggleAttribute('data-detail-scale', camera.scale * window.devicePixelRatio >= .6)
-  map.style.transform = 'translate(' + camera.x + 'px,' + camera.y + 'px) scale(' + camera.scale + ')'
-  const percent = Math.round(camera.scale * 100) + '%'
-  if (zoom.value !== percent) zoom.value = percent
-  if (zoomPreset.options[0].textContent !== zoom.value) {
-    zoomPreset.options[0].textContent = zoom.value
+  if (pinchFrame) cancelAnimationFrame(pinchFrame)
+  pinchFrame = null
+  lastPinchDirection = null
+  drawCamera(camera)
+}
+
+function drawCamera(view) {
+  Object.assign(displayedCamera, view)
+  map.toggleAttribute('data-detail-scale', view.scale * window.devicePixelRatio >= .6)
+  map.style.transform = 'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.scale + ')'
+  if (expanded && active) {
+    const card = cards.get(active)
+    const x = view.x + card.x * view.scale
+    const y = view.y + (card.y + card.labelHeight) * view.scale
+    preview.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + view.scale + ')'
   }
-  const preset = presetScales.has(String(camera.scale)) ? String(camera.scale) : 'current'
+  const percent = Math.round(view.scale * 100) + '%'
+  if (zoom.value !== percent) {
+    zoom.value = percent
+    zoomPreset.options[0].textContent = percent
+  }
+  const preset = presetScales.has(String(view.scale)) ? String(view.scale) : 'current'
   if (zoomPreset.value !== preset) zoomPreset.value = preset
   schedulePreviewUpdate()
-  if (!expanded || !active) return
-  const card = cards.get(active)
-  const x = camera.x + card.x * camera.scale
-  const y = camera.y + (card.y + card.labelHeight) * camera.scale
-  preview.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + camera.scale + ')'
 }
 
 function getOutline() {
@@ -754,12 +767,32 @@ function toggleView() {
 
 toggle.addEventListener('click', toggleView)
 
-function setZoom(scale, x, y) {
+function zoomCamera(scale, x, y) {
   const next = Math.min(1, Math.max(minZoom, scale))
   camera.x = x - (x - camera.x) * next / camera.scale
   camera.y = y - (y - camera.y) * next / camera.scale
   camera.scale = next
-  position()
+}
+
+// Average successive frame samples to soften uneven wheel packet delivery.
+// The trailing sample lands exactly on the input position on the next frame.
+function drawPinchFrame() {
+  pinchFrame = null
+  const previous = lastPinchSample
+  if (camera.scale === previous.scale) {
+    position()
+    return
+  }
+  lastPinchSample = { ...camera }
+  // Show most of this frame's movement now. Carry the rest for one frame
+  // only, using the same blend for translation to keep the pinch anchored.
+  const share = .65
+  drawCamera({
+    x: previous.x + (camera.x - previous.x) * share,
+    y: previous.y + (camera.y - previous.y) * share,
+    scale: previous.scale + (camera.scale - previous.scale) * share,
+  })
+  pinchFrame = requestAnimationFrame(drawPinchFrame)
 }
 
 // Chromium reports trackpad pinches as Ctrl-wheel without a finger count.
@@ -786,8 +819,15 @@ function zoomAt(event, x, y, card) {
       return
     }
   }
+  const direction = Math.sign(event.deltaY)
+  const continuing = gestureIdleTimer && direction === lastPinchDirection
   deferGestureWork()
-  setZoom(nextScale, x, y)
+  zoomCamera(nextScale, x, y)
+  if (!continuing) {
+    position()
+    lastPinchSample = { ...camera }
+    lastPinchDirection = direction
+  } else if (!pinchFrame) pinchFrame = requestAnimationFrame(drawPinchFrame)
 }
 
 function fitCards(board, width, height) {
@@ -812,7 +852,8 @@ zoomPreset.addEventListener('change', () => {
     fitCards(board, width, height)
     return
   }
-  setZoom(Number(zoomPreset.value), width / 2, height / 2)
+  zoomCamera(Number(zoomPreset.value), width / 2, height / 2)
+  position()
 })
 
 dock.addEventListener('capture-inspector-edit-state', event => {
@@ -1181,11 +1222,19 @@ function watchLiveFrame(frame) {
         panByWheel(event)
         return
       }
-      const view = viewport.getBoundingClientRect()
-      const app = preview.getBoundingClientRect()
       clearHover()
-      zoomAt(event, app.x - view.x + event.clientX * camera.scale,
-        app.y - view.y + event.clientY * camera.scale, active && cards.get(active).button)
+      const card = cards.get(active)
+      if (card) {
+        // The wheel point is already local to the scaled app. Use the same
+        // card origin as drawCamera(), including any movement still pending.
+        zoomAt(event, displayedCamera.x + (card.x + event.clientX) * displayedCamera.scale,
+          displayedCamera.y + (card.y + card.labelHeight + event.clientY) * displayedCamera.scale, card.button)
+      } else {
+        const view = viewport.getBoundingClientRect()
+        const app = preview.getBoundingClientRect()
+        zoomAt(event, app.x - view.x + event.clientX * displayedCamera.scale,
+          app.y - view.y + event.clientY * displayedCamera.scale)
+      }
     }, { capture: true, passive: false })
     if (expanded && !active) syncLiveFrame()
   }
