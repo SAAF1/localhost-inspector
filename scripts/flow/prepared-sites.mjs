@@ -218,7 +218,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
         }
         const openings = preparedOpenings(tree)
         const out = new MagicString(code)
-        const registeredCatalog = manifestData.panelBindings && !code.includes('__liRegisterCatalog') && registerCatalogImport(out,file,manifestData.recordCatalog)
+        const registeredCatalog = manifestData.panelBindings && !/__liRegisterCatalog|__liDerivedRecord/.test(code) && registerCatalogImport(out,file,manifestData.recordCatalog,tree)
         const revisions = {}
         const registrationsForModule = new Set()
         const dependencies = new Map()

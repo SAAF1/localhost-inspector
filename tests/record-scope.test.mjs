@@ -289,7 +289,7 @@ test('an evaluated project data import corroborates projected records across qua
   const {recordCatalog,recordCatalogRows,registerCatalogImport}=await import('../scripts/flow/record-catalog.mjs')
   const dir=realpathSync(mkdtempSync(join(tmpdir(),'structural-record-')))
   t.after(()=>rmSync(dir,{recursive:true,force:true}))
-  const source='import stock from "./stock.json";export const App=()=>null'
+  const source='import stock from "./stock.json";export const App=()=>read(stock)'
   const caller='import {Row} from "./Row";export function Orders({lines}){return lines.map(line=><Row key={line.code} entry={line}/>)}'
   const owner='export const Row=({entry})=><section style={{opacity:0.9}}>{entry.name}</section>'
   const data=[{code:11,name:'Oak',cost:4},{code:5,name:'Pine',cost:6}]
@@ -297,7 +297,7 @@ test('an evaluated project data import corroborates projected records across qua
   const edge={importer:'App.jsx',file:'stock.json',specifier:'./stock.json'}
   assert.equal(recordCatalog(dir,[edge,edge]),undefined)
   const catalog=recordCatalog(dir,[edge]);assert.equal(catalog.binding,'stock')
-  const entryOut=new MagicString(source);registerCatalogImport(entryOut,'App.jsx',catalog);parseAuthoredJsx(entryOut.toString())
+  const entryOut=new MagicString(source);registerCatalogImport(entryOut,'App.jsx',catalog,parseAuthoredJsx(source));parseAuthoredJsx(entryOut.toString())
   const tree=parseAuthoredJsx(caller),out=new MagicString(caller)
   assert.ok(await markRecordCallers({root:dir,file:'Orders.jsx',code:caller,tree,out,catalog,resolveImport:()=>join(dir,'Row.jsx')}))
   parseAuthoredJsx(out.toString())
@@ -306,13 +306,15 @@ test('an evaluated project data import corroborates projected records across qua
   const original=globalThis.document
   globalThis.document={addEventListener(){}}
   t.after(()=>{globalThis.document=original})
-  const {registerRecordCatalog,recordIdentity}=await import('../integrations/prepared-registry.mjs')
+  const {registerRecordCatalog,derivedRecord,recordIdentity}=await import('../integrations/prepared-registry.mjs')
   const keys=(rows,backing=rows)=>recordIdentity(proof,rows,'code',get=>rows.map(row=>JSON.parse(get(row))),backing,entries)
   const [a,b]=data.map(x=>({...x,quantity:1}))
   assert.equal(keys([a,b])[0].key,undefined)
   let dispose;registerRecordCatalog(catalog,data,{dispose:cb=>{dispose=cb}})
-  const [first,second]=keys([a,b]);assert.ok(first.key&&second.key);verifyRecordSource(dir,first,catalog)
-  assert.deepEqual(keys([{...b,quantity:8},{...a,quantity:2}]),[second,first])
+  assert.equal(keys([a,b])[0].origin,'snapshot')
+  derivedRecord(data[0],a);derivedRecord(data[1],b)
+  const [first,second]=keys([a,b]);assert.equal(first.origin,'live');assert.ok(first.key&&second.key);verifyRecordSource(dir,first,catalog)
+  assert.deepEqual(keys([derivedRecord(b,{...b,quantity:8}),derivedRecord(a,{...a,quantity:2})]),[second,first])
   assert.deepEqual(keys([b],[a,b]),[second])
   assert.equal(keys([a],[a,{...a,code:'11'}])[0].key,undefined)
   assert.equal(keys([{...a,cost:7}])[0].key,undefined)

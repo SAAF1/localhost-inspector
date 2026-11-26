@@ -47,12 +47,22 @@ function publicRecordKeys(proof, records, field, backing, entries) {
 }
 
 const activeCatalogs = new Map()
+const domainOrigin = new WeakMap()
+export function derivedRecord(original, copy) {
+  const origin = domainOrigin.get(original)
+  if (origin) domainOrigin.set(copy,origin)
+  return copy
+}
 export function registerRecordCatalog(catalog, rows, hot) {
   const key = JSON.stringify(catalog)
+  if (activeCatalogs.get(key) === rows) return rows
+  if (!Array.isArray(rows) || rows.length > 256) return rows
   activeCatalogs.set(key,rows)
+  for (const row of rows) if (row && typeof row === 'object') domainOrigin.set(row,row)
   hot?.dispose(() => {
     if (activeCatalogs.get(key) === rows) activeCatalogs.delete(key)
   })
+  return rows
 }
 
 function catalogRecordKeys(proof,records,field,backing,entries) {
@@ -78,7 +88,8 @@ function catalogRecordKeys(proof,records,field,backing,entries) {
     if (new Set(records).size !== records.length || !records.every(item => members.get(item[field]) === item)) return keys
     for (const item of records) {
       const entry = table.get(item[field])
-      keys.set(item,{...proof,value:entry.value,rowRevision:entry.revision,key:'record:'+proof.id+':'+entry.revision})
+      const origin = domainOrigin.get(item) === owner.get(entry.value) ? 'live' : 'snapshot'
+      keys.set(item,{...proof,origin,value:entry.value,rowRevision:entry.revision,key:'record:'+proof.id+':'+entry.revision})
     }
   } catch { keys.clear() }
   return keys

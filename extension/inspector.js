@@ -1108,6 +1108,12 @@
       try { recordScope = JSON.parse(node.getAttribute('data-li-record-scope')) } catch { /* Unverified source. */ }
       if (!recordScope || !target.key || recordScope.key !== target.key || ui.findPreviewTarget(target, node) !== node)
         throw Error('Cannot identify one unique record for this corner radius. No change was saved.')
+      if (recordScope.catalog && recordScope.origin !== 'live') {
+        const state = await send({type:'load',route:editRoute})
+        if (!state?.edits?.some(e => !e.undone && e.recordScope?.key === recordScope.key &&
+            ['live','verified-replay'].includes(e.recordScope.origin)))
+          throw Error('This item matches stored data, but its application source has not been verified. No change was saved.')
+      }
     }
     const marker = !selectionOnly && templatePreviews && !tokenOptions?.pendingColor ? ui.templatePreview.of(node) : undefined
     const source = marker ? recovery.templateSource(node, property) : undefined

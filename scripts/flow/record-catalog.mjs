@@ -3,6 +3,7 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { parseAuthoredJsx } from './authored-forwarding.mjs'
+import { localBindingNames } from './authored-use.mjs'
 import { recordRows } from './public-records.mjs'
 
 export function recordCatalog(root, edges) {
@@ -26,9 +27,36 @@ export function recordCatalogRows(root, catalog, field, watchFile) {
     key !== field && ['string','number'].includes(typeof value))) ? data : undefined
 }
 
-export function registerCatalogImport(out,file,catalog) {
-  if (file !== catalog?.importer) return false
-  out.prepend('import { registerRecordCatalog as __liRegisterCatalog } from "virtual:inspector-prepared-registry";\n')
-  out.append('\n__liRegisterCatalog('+JSON.stringify(catalog)+','+catalog.binding+',import.meta.hot);\n')
+export function registerCatalogImport(out,file,catalog,tree) {
+  if (file !== catalog?.importer || localBindingNames(tree).has(catalog.binding)) return false
+  const reads = [], copies = []
+  function visit(node,parent) {
+    if (!node?.type) return
+    if (node.type === 'Identifier' && node.name === catalog.binding && (
+      parent?.type === 'CallExpression' && parent.arguments.includes(node) ||
+      parent?.type === 'VariableDeclarator' && parent.init === node ||
+      parent?.type === 'MemberExpression' && parent.object === node ||
+      parent?.type === 'ReturnStatement' && parent.argument === node)) reads.push(node)
+    if (node.type === 'ObjectExpression' && node.properties[0]?.type === 'SpreadElement' &&
+        node.properties[0].argument.type === 'Identifier' &&
+        node.properties.filter(p=>p.type === 'SpreadElement').length === 1) copies.push(node)
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) for (const child of value) visit(child,node)
+      else if (value?.type) visit(value,node)
+    }
+  }
+  visit(tree.program)
+  if (!reads.length) return false
+  out.prepend('import { registerRecordCatalog as __liRegisterCatalog, derivedRecord as __liDerivedRecord } from "virtual:inspector-prepared-registry";\n')
+  for (const ref of reads) {
+    out.prependLeft(ref.start,'__liRegisterCatalog('+JSON.stringify(catalog)+',')
+    out.appendRight(ref.end,',import.meta.hot)')
+  }
+  // Preserve the actual input object before evaluating the remaining fields.
+  // Associate the newly created application object without modifying it.
+  for (const copy of copies) {
+    out.prependLeft(copy.start,'__liDerivedRecord('+copy.properties[0].argument.name+',')
+    out.appendRight(copy.end,')')
+  }
   return true
 }

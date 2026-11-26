@@ -458,6 +458,11 @@ async function handle(message) {
     const proof = message.record.recordScope
     const catalog = proof.catalog && (await read(join(binding.authoredUse.directory,'prepared.json'),null))?.recordCatalog
     verifyRecordSource(binding.source, proof, catalog)
+    if (catalog && proof.origin !== 'live') {
+      if (proof.origin !== 'snapshot' || !journal.edits.some(e=>!e.undone && e.recordScope?.key === proof.key &&
+          ['live','verified-replay'].includes(e.recordScope.origin))) throw Error('No verified origin for this stored record.')
+      proof.origin = 'verified-replay'
+    }
   }
   const { changed, removed, value } = await applyJournalOperation(message, journal, { validators, journalRoute,
     readCatalog: kind => readCatalog(binding, kind), readButtonSize: () => readButtonSize(binding) })
