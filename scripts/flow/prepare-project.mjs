@@ -104,6 +104,7 @@ function analyze(code, file, config) {
       const panelHost = host && !(config.button && imports.get(name)?.from === '@/components/ui/button')
       if (panelHost) raw.dependencies = [...raw.dependencies, host.path]
       const surface = reference && componentSurface(node, {config,file,code,imports,locals,outer:moduleClass,reference})
+      const inlineFont = config.panelBindings && /^[a-z][a-z0-9-]*$/.test(name) && literalStyleInput(opening,'font-size')
       const fixedHeight = config.panelBindings && !locals.has(name) && /^[A-Z]/.test(name) && literalStyleInput(opening,'height')
       const def = fixedHeight && config.definition(file, imports.get(name))
       const part = def && returnedPart(def, opening, config.hostLibrary)
@@ -129,7 +130,7 @@ function analyze(code, file, config) {
         found.push({ ...raw, componentProof:config.proof(def.files), dependencies:[...new Set([...raw.dependencies,...def.files])],
           styles:[{property:'height', styleInput:true, tag:part.tag, base:fixedHeight.value}] })
         reason = null
-      } else if (typeof name === 'string' && (/^[a-z]/.test(name) || panelHost) && (typeof classes === 'string' || moduleUse || !attr('className'))) {
+      } else if (typeof name === 'string' && (/^[a-z]/.test(name) || panelHost) && (typeof classes === 'string' || moduleUse || !attr('className') || inlineFont)) {
         const tokens = (classes ?? '').split(/\s+/).filter(Boolean)
         const eligible = tokens.flatMap((literal) => {
           const declarations = config.css.classes.get(literal) ?? []
@@ -193,6 +194,11 @@ function analyze(code, file, config) {
           raw.dependencies = [...raw.dependencies, reference.file]
         }
         const styles = eligible.filter((s) => eligible.filter((x) => s.property === x.property).length === 1)
+        if (inlineFont) {
+          const index = styles.findIndex(style => style.property === 'font-size')
+          if (index >= 0) styles.splice(index,1)
+          styles.push({property:'font-size',styleInput:true,tag:name,base:inlineFont.value})
+        }
         if (config.panelBindings && !(moduleUse && attr('className')?.expression?.type === 'CallExpression') && (!attr('style') || (/^[a-z]/.test(name) && literalColorAttribute(opening))) && !config.css.indexError &&
             !opening.attributes.some(a => a.name?.name?.startsWith('data-li-'))) {
           const defaults = ['background-color', 'border-radius', 'font-size']
