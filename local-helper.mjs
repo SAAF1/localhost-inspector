@@ -11,6 +11,7 @@ import { completeHandoff } from './complete-handoff.mjs'
 import { declaresVariable, journalTarget, textStyleProperties, validRoute, variableName } from './journal-values.mjs'
 import { journalValidators } from './journal-records.mjs'
 import { applyJournalOperation, journalSnapshot, requireRevision } from './journal-operations.mjs'
+import { recheckRenderedPartOwners } from './prepared-requalification.mjs'
 import { buildSourceHandoff } from './source-handoff.mjs'
 import { assertAuthoredReady, authoredResult, authoredTransactions, guardAuthoredJournalOperation, requireAuthoredCandidate } from './authored-transactions.mjs'
 import { addVisualEvidence, maxEvidenceLength, removeVisualEvidence, saveVisualEvidence } from './visual-evidence.mjs'
@@ -265,6 +266,7 @@ if (mode === 'handoff' || mode === 'proposal-readiness') {
   if (journal.version !== 2) throw Error('Open Inspector to migrate this journal before exporting a handoff')
   await assertAuthoredReady(binding, file, journal, read)
   const handoff = buildSourceHandoff(binding, journal)
+  if (mode === 'handoff') await recheckRenderedPartOwners(binding, handoff.operations, read)
   for (const op of handoff.operations.filter(op=>op.scope === 'selected-use')) {
     const { verifySelectedUse } = await import('./scripts/flow/selected-use.mjs')
     try { verifySelectedUse(binding.source, op.changes[0].selectedUse) }

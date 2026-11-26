@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { effectivePreparedEdit } from './journal-edits.mjs'
-import { conflict } from './authored-source-file.mjs'
+import { conflict, source } from './authored-source-file.mjs'
 import { parseAuthoredJsx } from './scripts/flow/authored-forwarding.mjs'
 import { matchesPreparedOpening, preparedOpenings, preparedRevision, preparedStyleTargets } from './scripts/flow/prepared-site-qualification.mjs'
 
@@ -11,6 +11,43 @@ function uniqueStyleUse(site, code, openings) {
     throw conflict('A saved shared edit no longer has a unique qualified source use.')
   }
   return matches[0]
+}
+
+// A saved rendered-part receipt includes the revision of its authored envelope.
+// Recheck that envelope before a coding agent is offered the old part relationship.
+export async function recheckRenderedPartOwners(binding, operations, read) {
+  const pending = operations.filter(op => op.status === 'pending' && op.changes.some(edit => edit.prepared?.part))
+  if (!pending.length) return
+  const manifest = binding.authoredUse && await read(join(binding.authoredUse.directory, 'prepared.json'), null)
+  const revisions = new Map()
+  const dependencies = new Map()
+  for (const op of pending) {
+    for (const { prepared } of op.changes) {
+      if (!prepared?.part) continue
+      const key = JSON.stringify([prepared.file, prepared.site])
+      if (!revisions.has(key)) {
+        let revision = null
+        try {
+          const sites = manifest?.sites?.filter(s => s.id === prepared.site && s.file === prepared.file)
+          if (manifest?.namespace && sites?.length === 1) {
+            const site = sites[0]
+            const { text } = await source(binding.source, site.file)
+            const tree = parseAuthoredJsx(text)
+            const { owner } = uniqueStyleUse(site, text, preparedOpenings(tree))
+            revision = preparedRevision(binding.source, manifest.namespace, site, text, tree, owner, dependencies)
+          }
+        } catch {
+          // An unreadable, ambiguous or unparsable owner cannot support a current receipt.
+        }
+        revisions.set(key, revision)
+      }
+      if (revisions.get(key) !== prepared.revision) {
+        op.status = 'blocked'
+        op.reason = 'prepared-part-owner-changed'
+        break
+      }
+    }
+  }
 }
 
 const operationKey = edit => JSON.stringify([edit.prepared.file, edit.prepared.site, edit.property])
