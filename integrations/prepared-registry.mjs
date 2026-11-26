@@ -20,7 +20,7 @@ export function recordIdentity(proof, records, field, render) {
   }
   return render(record => {
     const value = record?.[field]
-    if (counts.get(value) === 1) return { ...proof, value, key: 'record:'+proof.id+':'+value }
+    return counts.get(value) === 1 ? { ...proof, value, key: 'record:'+proof.id+':'+value } : { ...proof }
   })
 }
 

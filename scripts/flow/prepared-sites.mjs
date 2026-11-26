@@ -215,7 +215,8 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
         const revisions = {}
         const registrationsForModule = new Set()
         const dependencies = new Map()
-        let usesInput = false, usesRecords = false
+        let usesInput = false
+        const recordRoots = new Set()
         const reserved = new Set()
         for (const [index, site] of recipes.entries()) {
           if (typeof site.id !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(site.id)) continue
@@ -383,7 +384,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             }
           }
           if (authoredUseSchema && manifestData.panelBindings && fields.styles?.includes('border-radius'))
-            if (!code.includes('__liRecordAttrs') && markRecordHost(tree, node, owner, file, out)) usesRecords = true
+            if (!code.includes('__liRecordAttrs') && markRecordHost(tree, node, owner, file, out)) recordRoots.add(node)
           const contract = { site: site.id, revision, file, ...fields }
           let revisionAttribute = ' data-li-revision="' + revision + '"'
           if (site.moduleClass) {
@@ -402,6 +403,13 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           )
         }
         if (authoredUseSchema) {
+          if (manifestData.panelBindings && !code.includes('__liRecordAttrs')) {
+            for (const { node, owner } of openings) {
+              if (!recordRoots.has(node) && node.attributes.some(a => a.name?.name === 'style') &&
+                markRecordHost(tree, node, owner, file, out, true)) recordRoots.add(node)
+            }
+          }
+          if (recordRoots.size) out.prepend('import { recordAttributes as __liRecordAttrs } from "virtual:inspector-prepared-registry";\n')
           const records = manifestData.panelBindings && await markRecordCallers({ root, file, code, tree, out,
             resolveImport: async specifier => (await this.resolve(specifier, id))?.id })
           const selected = manifestData.panelBindings && markSourceSelections(file,code,openings,out)
@@ -409,7 +417,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             root, file, code, tree, out, reserved, schema: authoredUseSchema,
             resolveImport: async (specifier) => (await this.resolve(specifier, id))?.id,
           })
-          if (!recipes.length) return (records || selected || marked) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
+          if (!recipes.length) return (recordRoots.size || records || selected || marked) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
         }
         // Report known-but-stale sites separately from an absent scene. The registry
         // contains only mappings for modules loaded in this page.
@@ -424,7 +432,6 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           styles.set(moduleId, css)
           out.prepend('import ' + JSON.stringify(moduleId) + ';\n')
         }
-        if (usesRecords) out.prepend('import { recordAttributes as __liRecordAttrs } from "virtual:inspector-prepared-registry";\n')
         if (usesInput) out.prepend('import { usePreparedInput as __liUse } from "' + runtime + '";\n')
         return { code: out.toString(), map: out.generateMap({ hires: true, source: id }) }
       },

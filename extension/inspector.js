@@ -506,7 +506,7 @@
       shared.length && contract.surface && 'Selected envelope and its direct painted surface',
       shared.length && 'Shared source controls · ' + shared.join(', '),
       authoredUse && hasSelection && (editScope.value === 'selected'
-        ? (node.getAttribute('data-li-record-scope') ? 'One record · source handoff available for corner radius' : 'Selected occurrence preview · separate from source handoff')
+        ? (node.hasAttribute('data-li-record-scope') && node.getAttribute('data-inspector-target') ? 'One record · source handoff available for corner radius' : 'Selected occurrence preview · separate from source handoff')
         : contract && contract.file + ' · ' + document.querySelectorAll('[data-li-revision="' + contract.revision + '"]').length + ' mounted'),
       hasSelection && preparedStylesUnavailable && 'Shared stylesheet controls are unavailable in this preview.',
     ].filter(Boolean).join(' · ')
@@ -1040,7 +1040,7 @@
     const isCurrent = () => isCurrentRoute(editRoute, version)
     const target = ui.describePreviewTarget(node)
     let recordScope
-    if (authoredUse && selectionOnly && property === 'border-radius' && qualifiedPrepared) {
+    if (authoredUse && selectionOnly && property === 'border-radius' && (qualifiedPrepared || node.hasAttribute('data-li-record-scope'))) {
       try { recordScope = JSON.parse(node.getAttribute('data-li-record-scope')) } catch { /* Unverified source. */ }
       if (!recordScope || !target.key || recordScope.key !== target.key || ui.findPreviewTarget(target, node) !== node)
         throw Error('Cannot identify one unique record for this corner radius. No change was saved.')
