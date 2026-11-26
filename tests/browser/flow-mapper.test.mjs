@@ -47,6 +47,11 @@ test('mapper preserves URL states and waits for a delayed rendered branch', asyn
           <button role="tab" aria-selected="true" id="open-tab">Open</button>
           <button role="tab" aria-selected="false" onclick="this.setAttribute('aria-selected', 'true'); document.getElementById('open-tab').setAttribute('aria-selected', 'false')">Paid</button>
         </div>
+        <div>
+          <button aria-pressed="true" id="every">Every item</button>
+          <button aria-pressed="false" onclick="document.querySelector('#every').setAttribute('aria-pressed','false');this.setAttribute('aria-pressed','true')">Unassigned</button>
+        </div>
+        <button aria-pressed="false" onclick="fetch('/approve')">Favorite</button>
         </main>`)
     }
   })
@@ -69,12 +74,18 @@ test('mapper preserves URL states and waits for a delayed rendered branch', asyn
     const home = scans.find(scan => scan.page.id === '/')
     assert.ok(home.entries.some(entry => entry.category === 'typography' &&
       entry.occurrences.some(use => use.label === 'Home' && !('node' in use))))
+    const every = { role: 'pressed-option', label: JSON.stringify(['Every item', 'Every item', 'Unassigned']) }
     const delayed = frames.find(frame => frame.label === 'Show details')
-    assert.deepEqual(delayed?.checkpoint, [{ role: 'dialog', label: 'Delayed details' }])
+    assert.deepEqual(delayed?.checkpoint, [{ role: 'dialog', label: 'Delayed details' }, every])
     assert.ok(connections.some(edge => edge.to === delayed.id && edge.observed))
     const paid = frames.find(frame => frame.label === 'Paid')
     assert.equal(paid?.route, '/')
-    assert.deepEqual(paid?.checkpoint, [{ role: 'selected-tab', label: 'Paid' }])
+    const unassigned = { role: 'pressed-option', label: JSON.stringify(['Unassigned', 'Every item', 'Unassigned']) }
+    assert.deepEqual(paid?.checkpoint, [{ role: 'selected-tab', label: 'Paid' }, every])
+    assert.ok(frames.find(frame => frame.route === '/' && !frame.steps.length)?.checkpoint
+      .some(check => check.label === every.label))
+    assert.deepEqual(frames.find(frame => frame.label === 'Unassigned')?.checkpoint, [unassigned])
+    assert.ok(!frames.some(frame => frame.label === 'Favorite'))
     const previews = JSON.parse(await readFile(join(output, 'previews.json'), 'utf8'))
     assert.ok(previews[delayed.id].desktop.fixed)
     assert.equal(previews[delayed.id].phone.unavailable, 'hidden-control')

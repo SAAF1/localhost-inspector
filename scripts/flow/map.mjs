@@ -87,7 +87,12 @@ async function observeInteraction(page, route, trigger, baseId) {
     const after = await page.evaluate(observePage)
     additions = after.surfaces.filter(surface => !before.surfaces.some(old =>
       old.role === surface.role && old.label === surface.label))
-    if (additions.length) break
+    if (additions.length) {
+      // Include the other choice groups so the same visible record in a
+      // different combination of filters cannot masquerade as this frame.
+      additions.push(...after.surfaces.filter(surface => surface.role === 'pressed-option' && !additions.includes(surface)))
+      break
+    }
     await new Promise(resolve => setTimeout(resolve, 50))
   } while (Date.now() < deadline)
   if (!additions.length) {

@@ -33,12 +33,32 @@ export function observePage(doc = document, mode = 'page', find) {
     const name = label(tab)
     if (name && visible(tab)) surfaces.push({ role: 'selected-tab', label: name })
   }
+  // A single pressed button can be a persistent toggle such as a favorite. Only
+  // offer choices from a visible sibling group with one explicit active option.
+  const options = new Set()
+  const groups = new Map()
+  const parents = new Set([...doc.querySelectorAll('button[aria-pressed="true"]')].map(button => button.parentElement))
+  for (const parent of parents) {
+    const members = [...parent.children].filter(visible)
+    if (members.length < 2 || members.some(button =>
+      !button.matches('button[aria-pressed="true"], button[aria-pressed="false"]') || button.closest('form'))) continue
+    const names = members.map(label).sort()
+    const active = members.filter(button => button.getAttribute('aria-pressed') === 'true')
+    if (!names.every(Boolean) || new Set(names).size !== names.length || active.length !== 1) continue
+    const key = JSON.stringify(names)
+    groups.set(key, groups.has(key) ? null : { members, names, active: active[0] })
+  }
+  for (const group of groups.values()) {
+    if (!group) continue
+    surfaces.push({ role: 'pressed-option', label: JSON.stringify([label(group.active), ...group.names]) })
+    for (const button of group.members) if (button !== group.active) options.add(button)
+  }
   if (mode === 'surfaces') return { surfaces }
   const links = [...doc.querySelectorAll('a[href]')].filter(visible).map(node => ({ href: node.href, label: label(node) }))
   // Controlled forms may use ordinary buttons as their launchers.
   const openForm = /^(create|add|invite|import|new)(?: |$)/i
   const triggers = [...(main || doc).querySelectorAll('[role="tab"], button')].filter(node =>
-    node.matches('[role="tab"], button[aria-haspopup]') || (main && openForm.test(label(node)) && !node.closest('form')))
+    options.has(node) || node.matches('[role="tab"], button[aria-haspopup]') || (main && openForm.test(label(node)) && !node.closest('form')))
     .filter(node => visible(node) && !node.closest('th') && !node.disabled && node.getAttribute('aria-disabled') !== 'true' &&
       node.getAttribute('aria-selected') !== 'true' && node.getAttribute('aria-expanded') !== 'true' &&
       node.getAttribute('type') !== 'submit')

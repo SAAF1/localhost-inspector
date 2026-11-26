@@ -490,7 +490,9 @@ function verifiedFrameState(frame) {
     return frameStates.get(matches[0].id)
   }
   const base = onRoute.filter(item => !item.steps.length && matchesCheckpoint(doc, item, surfaces) &&
-    surfaces.every(surface => (surface.role === 'selected-tab' && !item.checkpoint.some(check => check.role === 'selected-tab')) ||
+    surfaces.every(surface => (surface.role === 'pressed-option' &&
+      !onRoute.some(frame => frame.checkpoint.some(check => check.role === 'pressed-option'))) ||
+      (surface.role === 'selected-tab' && !item.checkpoint.some(check => check.role === 'selected-tab')) ||
       item.checkpoint.some(check => check.role === surface.role && check.label === surface.label)))
   return !matches.length && base.length === 1 ? frameStates.get(base[0].id) : 'unverified'
 }
