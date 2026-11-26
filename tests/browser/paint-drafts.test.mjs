@@ -101,3 +101,36 @@ test('a first drag uses an uncommitted hex draft and capture loss keeps the type
     assert.equal((await h.journal()).length, 2)
   } finally { await h.close() }
 })
+
+test('Undo Fill restores the app’s variable-backed shorthand and retains other style changes', async () => {
+  const h = await createHarness({ dock: true, pendingEdits: true })
+  try {
+    await h.open()
+    const target=h.app.locator('body > #target')
+    await target.evaluate(node=>{
+      node.style.setProperty('--card-surface','white')
+      node.style.background='var(--card-surface)'
+    })
+    await h.select()
+    const field=h.host.getByRole('textbox',{name:'Fill color',exact:true})
+    for (const independentImage of [false,true]) {
+      await field.fill('DBEAFE')
+      await field.press('Enter')
+      await h.settled()
+      assert.equal(await h.css('background-color'),'rgb(219, 234, 254)')
+      await target.evaluate((node,withImage)=>{
+        node.style.marginLeft='12px'
+        if (withImage) node.style.backgroundImage='linear-gradient(red, blue)'
+      }, independentImage)
+      await h.previewAction('Undo last preview')
+      await h.settled()
+      assert.equal(await h.css('background-color'),'rgb(255, 255, 255)')
+      assert.equal(await h.css('margin-left'),'12px')
+      if (independentImage) assert.match(await h.css('background-image'),/linear-gradient/)
+      else assert.equal(await target.evaluate(node=>node.style.background),'var(--card-surface)')
+      await h.select()
+    }
+    await target.evaluate(node=>node.style.setProperty('--card-surface','navy'))
+    assert.equal(await h.css('background-color'),'rgb(0, 0, 128)')
+  } finally { await h.close() }
+})
