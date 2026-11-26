@@ -3,7 +3,8 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { parseAuthoredJsx } from './authored-forwarding.mjs'
 import { localBindingNames } from './authored-use.mjs'
-import { reactReference, walk } from './record-render-path.mjs'
+import { preparedOpenings } from './prepared-site-qualification.mjs'
+import { reactReference, renderOwnerFunction, walk } from './record-render-path.mjs'
 import { sourceUseId } from './selection-provenance.mjs'
 import { syntaxFingerprint } from './component-proof.mjs'
 
@@ -42,9 +43,26 @@ export function markStateAuthorities(file,tree,out) {
   return changed
 }
 
+// React can retain a different component's output between the keyed caller
+// and its painted host. Register actual component values from loaded modules.
+export function recordRenderOwners(tree) {
+  const names = []
+  for (const statement of tree.program.body) {
+    const declaration = statement.declaration ?? statement
+    const bindings = declaration.declarations ?? [declaration]
+    for (const binding of bindings) {
+      if (/^[A-Z]/.test(binding.id?.name ?? '') && renderOwnerFunction(tree, binding)) {
+        names.push(binding.id.name)
+      }
+    }
+  }
+  return names
+}
+
 export function recordContractKey(proof) {
   return 'bound:'+createHash('sha256').update(JSON.stringify([proof.part.id,proof.anchor.id,
-    proof.authority.file,proof.authority.id,proof.field,proof.value,proof.witness])).digest('hex')
+    proof.authority.file,proof.authority.id,proof.field,proof.value,proof.witness,
+    proof.part.revision,proof.anchor.revision,proof.authority.revision,proof.renderPath.map(site=>[site.file,site.owner,site.revision])])).digest('hex')
 }
 
 export function verifyRuntimeRecord(root,proof) {
@@ -55,9 +73,11 @@ export function verifyRuntimeRecord(root,proof) {
       typeof proof.witness!=='string' || !proof.witness.length || proof.witness.length>4096 ||
       !/^[a-zA-Z_$][\w$]*$/.test(proof.field) ||
       ![proof.part,proof.anchor,proof.authority].every(site=>site?.file && site.id) ||
+      (!Array.isArray(proof.renderPath) || proof.renderPath.length>12 ||
+        !proof.renderPath.every(site=>site?.file && site.owner && site.revision)) ||
       proof.key!==recordContractKey(proof)) throw Error('Invalid selected record contract.')
   const sources=new Map()
-  for(const site of [proof.part,proof.anchor,proof.authority]){
+  for(const site of [proof.part,proof.anchor,proof.authority,...proof.renderPath]){
     if(!/^[\w./ -]+\.[jt]sx?$/.test(site.file) || site.file.split('/').some(p=>!p||p==='..'||p==='node_modules'))throw Error('Invalid record source path.')
     const path=join(root,site.file)
     if(relative(root,path)!==site.file || realpathSync(path)!==path)throw Error('Record source moved.')
@@ -73,12 +93,16 @@ export function verifyRuntimeRecord(root,proof) {
       if(!stateAuthorities(tree).get(site.id))throw Error('Record state authority changed.')
       continue
     }
+    if (proof.renderPath.includes(site)) {
+      if (!recordRenderOwners(tree).includes(site.owner)) throw Error('Record render owner changed.')
+      continue
+    }
     let count=0
-    walk(tree.program,node=>{
-      if(node.type!=='JSXOpeningElement' || sourceUseId(site.file,site.owner,code.slice(node.start,node.end))!==site.id)return
-      if(site===proof.anchor && recordKeyInput(node)?.field!==proof.field)return
+    for(const {node,owner} of preparedOpenings(tree)){
+      if(owner.id?.name!==site.owner || sourceUseId(site.file,site.owner,code.slice(node.start,node.end))!==site.id)continue
+      if(site===proof.anchor && recordKeyInput(node)?.field!==proof.field)continue
       count++
-    })
+    }
     if(count!==1)throw Error('Record contract source is ambiguous.')
   }
 }

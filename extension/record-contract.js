@@ -11,7 +11,7 @@
   }
   function same(a,b){
     return a && b && a.kind===b.kind && a.operation===b.operation && a.field===b.field &&
-      a.value===b.value && a.witness===b.witness &&
+      JSON.stringify(a.renderPath)===JSON.stringify(b.renderPath) && a.value===b.value && a.witness===b.witness &&
       ['anchor','part','authority'].every(k=>a[k].id===b[k].id && a[k].file===b[k].file &&
         a[k].revision===b[k].revision)
   }
@@ -27,7 +27,8 @@
       if(same(cached,proof))return {...cached,members:proof.members,preparation:'reused'}
     }
     const state=JSON.stringify([proof.part.id,proof.anchor.id,proof.authority.file,proof.authority.id,
-      proof.field,proof.value,proof.witness])
+      proof.field,proof.value,proof.witness,proof.part.revision,proof.anchor.revision,proof.authority.revision,
+      proof.renderPath.map(site=>[site.file,site.owner,site.revision])])
     const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(state))
     proof.key='bound:'+Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('')
     if(!same(proof,read(node,'admit')))return

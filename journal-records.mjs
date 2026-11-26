@@ -116,7 +116,7 @@ export function journalValidators(journalRoute) {
         ...Object.fromEntries(['id','file','owner','callerDigest','component','componentDigest','field'].map(k=>[k,selectedUse[k]])),
         dependencies:selectedUse.dependencies.map(({file,revision})=>({file,revision})),
       }} : {}),
-      ...(recordScope ? {recordScope: recordScope.kind==='state-record' ? Object.fromEntries(['kind','operation','key','field','value','witness','part','anchor','authority','members','preparation'].map(k=>[k,recordScope[k]])) : Object.fromEntries(['id','value','key','caller','file','owner','prop','field','collection','backing','resource','rowRevision','catalog','origin'].map(k => [k,recordScope[k]]))} : {}),
+      ...(recordScope ? {recordScope: recordScope.kind==='state-record' ? Object.fromEntries(['kind','operation','key','field','value','witness','part','anchor','authority','renderPath','members','preparation'].map(k=>[k,recordScope[k]])) : Object.fromEntries(['id','value','key','caller','file','owner','prop','field','collection','backing','resource','rowRevision','catalog','origin'].map(k => [k,recordScope[k]]))} : {}),
       target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,
       templateSourceFingerprint: record.templateSourceFingerprint,
       colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,

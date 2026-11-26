@@ -51,7 +51,7 @@ function painted(node){
       !clear(css['border'+side+'Color'])) || ['hidden','clip'].includes(css.overflow)
 }
 
-export function installRecordContracts({currentFiber,recordCalls,stateOrigins,moduleRevisions}){
+export function installRecordContracts({currentFiber,recordCalls,stateOrigins,moduleRevisions,renderOrigins}){
   function keyed(node){
     const fiber=currentFiber(node)
     if(!fiber || fiber.stateNode!==node)return
@@ -61,6 +61,18 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
       const binding=recordCalls.get(f.memoizedProps)
       if(binding && String(own(binding.record,binding.site.field))===String(f.key))return {...binding,fiber:f}
       return
+    }
+  }
+  function renderPath(node, anchor) {
+    const path = []
+    for (let fiber = currentFiber(node); fiber; fiber = fiber.return) {
+      // Host elements and fragments introduce no additional component source.
+      if (typeof fiber.type !== 'string' && fiber.tag !== 7) {
+        const site = renderOrigins.get(fiber.elementType) ?? renderOrigins.get(fiber.type)
+        if (!site || !moduleRevisions.has(site.file) || path.length >= 12) return
+        path.push({...site, revision: moduleRevisions.get(site.file)})
+      }
+      if (fiber === anchor) return path
     }
   }
   function inspect(node,expected){
@@ -97,8 +109,9 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
         if(matched.size>1)return
       }
     }
-    if(!authority)return
-    return {kind:'state-record',operation:'border-radius',value,field,witness:JSON.stringify(fields),members:peers.size,
+    const path = renderPath(node, binding.fiber)
+    if(!authority || !path)return
+    return {kind:'state-record',operation:'border-radius',value,field,witness:JSON.stringify(fields),members:peers.size,renderPath:path,
       part:{...part,revision:moduleRevisions.get(part.file)},
       anchor:{id:anchor.id,owner:anchor.owner,file:anchor.file,revision:moduleRevisions.get(anchor.file)},
       authority:{...authority,revision:moduleRevisions.get(authority.file)}}

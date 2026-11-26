@@ -7,6 +7,12 @@ const modules = new Map()
 const moduleRevisions=new Map()
 const recordCalls=new WeakMap()
 const stateOrigins=new WeakMap()
+const renderOrigins=new WeakMap()
+export function registerRenderOwners(file, owners) {
+  for (const [owner, component] of Object.entries(owners)) {
+    renderOrigins.set(component, {file, owner})
+  }
+}
 export function selectedModule(url,file,revision,semanticRevision) {
   modules.set(new URL(url).pathname,{file,revision})
   moduleRevisions.set(file,semanticRevision)
@@ -81,4 +87,4 @@ document.addEventListener('li-read-selected-use', event => {
   node.dispatchEvent(new CustomEvent('li-selected-use',{detail:JSON.stringify(receipt)}))
 })
 
-installRecordContracts({currentFiber,recordCalls,stateOrigins,moduleRevisions})
+installRecordContracts({currentFiber,recordCalls,stateOrigins,moduleRevisions,renderOrigins})

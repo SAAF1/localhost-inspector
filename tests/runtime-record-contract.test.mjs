@@ -20,7 +20,7 @@ test('state-record handoff rechecks the real hook, rendered part, key and curren
   const authority={...JSON.parse(out.toString().match(/__liRecordState\(useRows\(reduce,initial\),(\{.*?\})\)/)[1]),revision}
   function site(opening){return {file:'Board.jsx',owner:'Board',revision,id:sourceUseId('Board.jsx','Board',opening)}}
   const proof={kind:'state-record',operation:'border-radius',part:site('<article>'),
-    anchor:site('<li key={row.uid}>'),field:'uid',value:'oak',authority,witness:'[["title","Oak"]]',members:2}
+    anchor:site('<li key={row.uid}>'),field:'uid',value:'oak',authority,witness:'[["title","Oak"]]',members:2,renderPath:[]}
   proof.key=recordContractKey(proof)
   assert.doesNotThrow(()=>verifyRuntimeRecord(root,proof))
   writeFileSync(join(root,'Board.jsx'),code+'\n// harmless')
@@ -33,6 +33,17 @@ test('state-record handoff rechecks the real hook, rendered part, key and curren
   const invalid={...proof,authority:{...authority,id:syntaxFingerprint(tree.program.body[0])}}
   invalid.key=recordContractKey(invalid)
   assert.throws(()=>verifyRuntimeRecord(root,invalid))
+  const mislabeled = {...proof,part:{...proof.part,owner:'Other',id:sourceUseId('Board.jsx','Other','<article>')}}
+  mislabeled.key=recordContractKey(mislabeled)
+  assert.throws(()=>verifyRuntimeRecord(root,mislabeled))
+  const intermediate = "export function Relay({row}){return <Board row={row}/>}"
+  writeFileSync(join(root,'Relay.jsx'),intermediate)
+  const withRelay={...proof,renderPath:[{file:'Relay.jsx',owner:'Relay',revision:syntaxFingerprint(parseAuthoredJsx(intermediate).program)}]}
+  withRelay.key=recordContractKey(withRelay)
+  assert.notEqual(withRelay.key,proof.key)
+  assert.doesNotThrow(()=>verifyRuntimeRecord(root,withRelay))
+  writeFileSync(join(root,'Relay.jsx'),intermediate.replace('<Board row={row}/>','<p>Other</p>'))
+  assert.throws(()=>verifyRuntimeRecord(root,withRelay))
   const shadow=code.replace('function Board()','function Board(useRows)')
   assert.equal(markStateAuthorities('Board.jsx',parseAuthoredJsx(shadow),new MagicString(shadow)),false)
   const lookalike=code.replace("from 'react'","from './react-like'")

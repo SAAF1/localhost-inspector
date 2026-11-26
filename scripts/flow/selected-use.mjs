@@ -1,4 +1,4 @@
-import { recordKeyInput, markStateAuthorities } from './runtime-record-contract.mjs'
+import { recordKeyInput, markStateAuthorities, recordRenderOwners } from './runtime-record-contract.mjs'
 import { syntaxFingerprint } from './component-proof.mjs'
 import { renderOwnerFunction } from './record-render-path.mjs'
 import { createHash } from 'node:crypto'
@@ -67,13 +67,18 @@ function candidates(file, code, tree, repeatedCalls) {
 }
 
 export async function markSelectedCalls(root,file,code,tree,out,resolveImport) {
-  if (!safeFile(file) || code.length > 1024*1024 || /\b__liSelected(?:Call|Module)\b/.test(code)) return false
+  if (!safeFile(file) || code.length > 1024*1024 || /\b__li(?:SelectedCall|SelectedModule|RenderOwners|RecordState)\b/.test(code)) return false
   const repeated = []
   const candidatesHere = candidates(file,code,tree,repeated)
   const revision=syntaxFingerprint(tree.program)
   markStateAuthorities(file,tree,out)
   out.prepend('import { selectedModule as __liSelectedModule } from "virtual:inspector-selected-use";__liSelectedModule(import.meta.url,'+
     JSON.stringify(file)+','+JSON.stringify(digest(code))+','+JSON.stringify(revision)+');\n')
+  const renderOwners = recordRenderOwners(tree)
+  if (renderOwners.length) {
+    out.prepend('import { registerRenderOwners as __liRenderOwners } from "virtual:inspector-selected-use";\n')
+    out.append('\n__liRenderOwners(' + JSON.stringify(file) + ',{' + renderOwners.join(',') + '});\n')
+  }
   function wrap(n,child,args) {
     // Keep the wrapper inside its JSX span. A concise map callback may have
     // its own record arguments appended immediately after that same JSX.
