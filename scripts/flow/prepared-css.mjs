@@ -1,3 +1,4 @@
+import { bindRenderedDeclarations } from './rendered-declarations.mjs'
 import { preparedStyleProperties, validValue } from '../../journal-values.mjs'
 // Inspect the actual stylesheet Vite delivered after its configured CSS pipeline.
 import { createHash } from 'node:crypto'
@@ -95,6 +96,9 @@ export function preparedStyles(root, manifest) {
         }
       }
       const sheet = postcss.parse(source.value)
+      const rendered = inventory.panelBindings && inventory.stylesheetGraph?.sheets.some(s => s.served.includes(file))
+      const originalValues = new WeakMap()
+      if (rendered) sheet.walkDecls(d => originalValues.set(d,d.value))
       let changed = false
       sheet.walkRules((rule) => {
         if (!baseRule(rule)) return
@@ -143,9 +147,18 @@ export function preparedStyles(root, manifest) {
           } else decl.value = wrap(decl.prop, decl.value)
         }
       })
-      if (changed)
+      const prepared = changed ? sheet.toString() : source.value
+      let output = prepared
+      if (rendered) {
+        try {
+          if (bindRenderedDeclarations(sheet,file,originalValues)) output = sheet.toString()
+        } catch (error) {
+          this.warn('Rendered declaration preparation unavailable for ' + file + ': ' + error.message)
+        }
+      }
+      if (output !== source.value)
         return {
-          code: code.slice(0, source.start) + JSON.stringify(sheet.toString()) + code.slice(source.end),
+          code: code.slice(0, source.start) + JSON.stringify(output) + code.slice(source.end),
           map: null,
         }
     },

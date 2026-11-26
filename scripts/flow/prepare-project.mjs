@@ -254,6 +254,17 @@ function analyze(code, file, config) {
           } else reason = 'no verified direct finite slot or variant'
         }
       }
+      if (config.panelBindings && owner && typeof name === 'string' && /^[a-z][a-z0-9-]*$/.test(name) &&
+          !config.css.indexError && !opening.attributes.some(a => a.name?.name?.startsWith('data-li-'))) {
+        // A native host needs no prop-forwarding assumption. Its emitted CSS
+        // determines eligibility later, even for spread or dynamic class props.
+        const candidate = !reason && found.at(-1)
+        if (candidate) candidate.renderedBindings = true
+        else {
+          found.push({...raw, renderedBindings:true, styles:[]})
+          reason = null
+        }
+      }
       if (reason) rejected.push(config.panelBindings ? {
         ...entry, sourceUse:raw.id, tag:name, importedFrom:imports.get(name)?.from,
         resolvedFile:config.resolved.get(JSON.stringify([file,imports.get(name)?.from])), reason,

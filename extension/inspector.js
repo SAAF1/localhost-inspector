@@ -504,6 +504,7 @@
       ? 'Shared candidate source · ' + authoredLabel : 'Shared candidate source unavailable for text color and fixed spacing'),
       authoredUse && !shared.length && origin?.file && 'Selected source · ' + origin.file + ' · ' + origin.owner,
       shared.length && contract.surface && 'Selected envelope and its direct painted surface',
+      shared.length && Object.values(contract.parts ?? {}).some(part => part.depth) && 'Selected envelope and its verified painted descendant',
       shared.length && 'Shared source controls · ' + shared.join(', '),
       authoredUse && hasSelection && (editScope.value === 'selected'
         ? 'Selected occurrence preview · separate from source handoff'
@@ -840,7 +841,7 @@
       selection.current === node &&
       isCurrentRoute(path, version) &&
       ui.preparedPreview.contract(node)?.revision === contract.revision
-    const read = (key) => ui.preparedPreview.read(node, { property: key, prepared: { field } })
+    const read = (key) => ui.preparedPreview.read(node, { property: key, prepared: { field, part:contract.parts?.[key] } })
     if (!current() || (field && !ui.preparedPreview.shows(node, contract.input, read(property))))
       throw Error('The prepared part changed. Select it again before editing.')
     const records = properties.map((key) => ({
@@ -858,10 +859,19 @@
         file: contract.file,
         revision: contract.revision,
         ...(field ? { field } : {}),
+        ...(contract.parts?.[key] ? { part:contract.parts[key] } : {}),
       },
       sourceContext: ui.describeSourceContext(node),
       viewport: { width: innerWidth, height: innerHeight },
     }))
+    const boundParts = records.filter(edit => edit.prepared.part)
+    if (boundParts.length) {
+      const members = document.querySelectorAll('[data-li-revision="' + contract.revision + '"]')
+      if (Array.from(members).some(member => {
+        const active = ui.preparedPreview.contract(member)
+        return boundParts.some(edit => !ui.preparedPreview.samePart(active?.parts?.[edit.property],edit.prepared.part))
+      })) throw Error('The shared members have different source declarations or rendered parts.')
+    }
     const untouchedPadding = properties.every(key => key.startsWith('padding-'))
       ? ['padding-top','padding-right','padding-bottom','padding-left'].filter(key=>!properties.includes(key)).map(key=>[key,read(key)])
       : []

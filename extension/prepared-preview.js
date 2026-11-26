@@ -30,12 +30,78 @@
           (parseFloat(css.getPropertyValue('border-'+side+'-width')) || 0)+1)) return
     return part
   }
+  const renderedFields = ['background-color', 'border-radius', 'font-size']
+  function declaration(part, property) {
+    const css = getComputedStyle(part)
+    const value = css.getPropertyValue('--li-owner-' + property).trim()
+    if (!value.startsWith('"') || part.style.getPropertyValue(property)) return
+    try {
+      const [id,file,selector] = JSON.parse(decodeURIComponent(JSON.parse(value)))
+      if (/^[a-f0-9]{32}$/.test(id) && typeof file === 'string' && typeof selector === 'string')
+        return {id,file,selector}
+    } catch { /* An unrelated app declaration is not a verified input. */ }
+  }
+  function sameBox(a, b) {
+    const outer = a.getBoundingClientRect(), inner = b.getBoundingClientRect()
+    return inner.width > 0 && inner.height > 0 &&
+      ['left','right','top','bottom'].every(edge => Math.abs(outer[edge] - inner[edge]) <= 1)
+  }
+  function renderedPart(node, property) {
+    let part = node, depth = 0
+    if (property !== 'font-size') {
+      // Follow a unique, coextensive painted surface. Never pick one sibling
+      // among several, or follow a child merely because it has some paint.
+      let child = node
+      for (let level = 1; level <= 4 && child.childElementCount === 1; level++) {
+        child = child.firstElementChild
+        if (!sameBox(node,child)) break
+        const css = getComputedStyle(child)
+        if (css.backgroundColor === 'rgba(0, 0, 0, 0)' && css.backgroundImage === 'none') continue
+        if (!child.hasAttribute('data-li-revision') || css.backgroundImage !== 'none') return
+        part = child
+        depth = level
+      }
+    }
+    const binding = declaration(part,property)
+    const revision = part.getAttribute('data-li-revision')
+    if (!binding || !/^[a-f0-9]{64}$/.test(revision ?? '')) return
+    return { ...binding, depth, revision }
+  }
+  function samePart(a,b) {
+    return a?.id === b?.id && a?.revision === b?.revision && a?.depth === b?.depth
+  }
+  function partNode(node,binding) {
+    for (let i=0; node && i<binding.depth; i++) node = node.childElementCount===1 ? node.firstElementChild : null
+    return node?.getAttribute('data-li-revision') === binding.revision ? node : null
+  }
+  function renderedTextMatches(node, requested) {
+    const walker = document.createTreeWalker(node,NodeFilter.SHOW_TEXT)
+    const range = document.createRange()
+    let seen = false
+    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+      if (!text.data.trim()) continue
+      range.selectNodeContents(text)
+      if (!range.getClientRects().length || getComputedStyle(text.parentElement).visibility !== 'visible') continue
+      seen = true
+      if (getComputedStyle(text.parentElement).fontSize !== requested) return false
+    }
+    return seen
+  }
   function read(node, edit) {
+    if (edit.prepared.part) {
+      const part = partNode(node,edit.prepared.part)
+      return part ? getComputedStyle(part).getPropertyValue(edit.property) : ''
+    }
     return edit.prepared.field ? node.getAttribute('data-li-choice') :
       getComputedStyle(surfacePart(node, contract(node), edit.property) ?? node).getPropertyValue(edit.property)
   }
   function showsEffect(node, edit, prepared, observed = read(node, edit)) {
     const { property, requested, spacingToken, colorToken } = edit
+    if (property === 'font-size' && edit.prepared.part) {
+      const part = partNode(node,edit.prepared.part)
+      if (!part || !renderedTextMatches(part,requested)) return false
+    }
+    if (edit.prepared.part && !samePart(prepared?.parts?.[property],edit.prepared.part)) return false
     if (prepared?.surface) {
       const part = surfacePart(node, prepared, property)
       if (!part || (prepared.surface.envelope.includes(property) &&
@@ -87,6 +153,21 @@
           if(c.styles)c.styles=c.styles.filter(available)
           if(c.style && !available(c.style))delete c.style
         }
+        if (c.renderedBindings && !c.surface) {
+          c.parts = {}
+          c.styles ??= []
+          for (const field of renderedFields) {
+            if (c.cssReady?.[field] || c.styleInputs?.[field]) continue
+            if (getComputedStyle(node).getPropertyValue('--li-owner-' + field).trim() === 'unavailable') {
+              c.styles = c.styles.filter(p => p !== field)
+              continue
+            }
+            const part = renderedPart(node,field)
+            if (!part) continue
+            c.parts[field] = part
+            if (!c.styles.includes(field)) c.styles.push(field)
+          }
+        }
         return c
       }
     } catch {
@@ -113,6 +194,16 @@
       if (field) next.set(revision, edit)
       else if (supportedDeclaration(edit)) {
         declarations.set(revision + ':' + edit.property, edit)
+        const part = edit.prepared.part
+        if (part) {
+          if (/^[a-f0-9]{32}$/.test(part.id) && /^[a-f0-9]{64}$/.test(part.revision) &&
+              Number.isInteger(part.depth) && part.depth >= 0 && part.depth <= 4) {
+            const owner = '[data-li-revision="' + revision + '"]'
+            const selector = part.depth ? owner + ' > :only-child'.repeat(part.depth) + '[data-li-revision="' + part.revision + '"]' : owner
+            rules.push(selector + '{--li-render-' + part.id + ':' + edit.requested + '}')
+          }
+          continue
+        }
         if (['height', 'border-radius', 'background-color', 'font-size'].includes(edit.property)) {
           // Add a source-local default only while a value exists. A more specific
           // app rule in the same layer keeps its conditional ownership.
@@ -174,5 +265,5 @@
     const edit = revision && declarations.get(revision + ':' + property)
     return edit?.property === property ? edit.requested : undefined
   }
-  ui.preparedPreview = { contract, project, locate, authored, shows, read, showsEffect, observe }
+  ui.preparedPreview = { samePart, contract, project, locate, authored, shows, read, showsEffect, observe }
 })()

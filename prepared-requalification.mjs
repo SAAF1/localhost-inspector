@@ -7,7 +7,7 @@ import { matchesPreparedOpening, preparedOpenings, preparedRevision, preparedSty
 function uniqueStyleUse(site, code, openings) {
   const matches = openings.filter(({ node, owner }) =>
     owner.id.name === site.owner && matchesPreparedOpening(site, code, node))
-  if (matches.length !== 1 || (!site.input && !preparedStyleTargets(site, matches[0].node, code)?.length)) {
+  if (matches.length !== 1 || (!site.renderedBindings && !site.input && !preparedStyleTargets(site, matches[0].node, code)?.length)) {
     throw conflict('A saved shared edit no longer has a unique qualified source use.')
   }
   return matches[0]
@@ -40,6 +40,11 @@ export async function preparedTransitions(binding, journal, plan, read) {
       throw conflict('A saved prepared operation on this file cannot be safely requalified.')
     }
     const [site] = sites
+    if (edit.prepared.part && file === plan.file) {
+      // A component-local source edit can change the rendered hierarchy. A
+      // stored emitted declaration cannot by itself re-prove that relationship.
+      throw conflict('A source edit on this file needs the saved rendered part to be requalified.')
+    }
     if (!site.input && !(site.styles ?? [site.style]).some(style => style?.property === edit.property)) {
       throw conflict('A saved prepared property no longer matches its controlling declaration.')
     }

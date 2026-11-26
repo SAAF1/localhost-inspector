@@ -280,7 +280,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           if (site.input || (!site.moduleClass && targets.some(({ style }) => !style.local && !style.forwarded &&
               !style.css?.selector && !['border-radius', 'font-size'].includes(style.property)))) reserved.add(node.start)
           const prefix = '--li-' + revision.slice(0, 20)
-          const fields = {}
+          const fields = site.renderedBindings ? { renderedBindings:true } : {}
           let markers = ''
           if(surface){
             out.appendLeft(surface.attributes.at(-1)?.end ?? surface.name.end, ' data-li-surface="'+revision+'"')

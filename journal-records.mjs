@@ -34,7 +34,15 @@ export function journalValidators(journalRoute) {
         typeof field === 'string' && /^[a-zA-Z][a-zA-Z0-9-]{0,59}$/.test(field) && record.property === 'component-' + field &&
         typeof record.requested === 'string' && /^[a-zA-Z0-9_-]{1,60}$/.test(record.requested) &&
         record.observed === record.requested && !reference
-      if (!validSite || !validControl || group || pending || record.template || record.frameState ||
+      const part = prepared?.part
+      const validPart = part === undefined || (!field && ['background-color','border-radius','font-size'].includes(record.property) &&
+        /^[a-f0-9]{32}$/.test(part?.id) && /^[a-f0-9]{64}$/.test(part.revision) &&
+        Number.isInteger(part.depth) && part.depth >= 0 && part.depth <= 4 &&
+        (part.depth || part.revision === prepared.revision) &&
+        typeof part.file === 'string' && part.file.length <= 240 && part.file.endsWith('.css') &&
+        !part.file.startsWith('/') && !part.file.split('/').includes('..') &&
+        typeof part.selector === 'string' && part.selector.length <= 240 && /^(?:\.(?:[\w-]|\\[^\s])+|[a-z][\w-]*)$/.test(part.selector))
+      if (!validPart || !validSite || !validControl || group || pending || record.template || record.frameState ||
           record.restore !== 'unique' || record.intent !== featureTemplateScope) throw Error('Invalid prepared contract')
     }
     const validRequest = field ? true : group ? validTextStyleRequest : reference
@@ -79,7 +87,8 @@ export function journalValidators(journalRoute) {
     const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
     return {
       id, route: journalRoute(route), property, requested, observed, before, restore,
-      ...(prepared ? { prepared: { site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}) } } : {}),
+      ...(prepared ? { prepared: { site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}),
+        ...(prepared.part ? {part:Object.fromEntries(['id','revision','depth','file','selector'].map(k=>[k,prepared.part[k]]))} : {}) } } : {}),
       target: journalTarget(target), viewport, frameState: record.frameState, template: record.template,
       templateSourceFingerprint: record.templateSourceFingerprint,
       colorToken, pendingColor, spacingToken, textStyleToken, group, intent, sourceContext,
