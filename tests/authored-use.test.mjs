@@ -167,3 +167,82 @@ test('V2 rejects a forwarding component that drops or replaces the authored chil
     false,
   )
 })
+
+test('shared executor selection requires the same source opening and complete mounted membership', async () => {
+  const { runInNewContext } = await import('node:vm')
+  const use = { schema: 2, actions: ['spacing'], id: 'cards', file: 'Card.tsx', revision: 'current', tag: 'article' }
+  const prepared = { file: use.file, revision: 'prepared' }
+  const marker = use.id + ' ' + prepared.revision
+  function member(visible, opening = marker, revision = use.revision) {
+    return {
+      localName: 'article', isConnected: true,
+      getClientRects: () => visible ? [1] : [],
+      getAttribute: name => name === 'data-li-authored-use' ? JSON.stringify({ ...use, revision }) : opening,
+    }
+  }
+  const selected = member(true), peer = member(true), hidden = member(false)
+  const mounted = [selected, peer, hidden]
+  let preparedMembers = mounted.slice()
+  const ui = { preparedPreview: { membersOf: () => preparedMembers } }
+  runInNewContext(readFileSync(new URL('../extension/authored-use-preview.js', import.meta.url), 'utf8'), {
+    window: { LocalhostInspector: ui }, document: { querySelectorAll: () => mounted },
+    getComputedStyle: () => ({ visibility: 'visible' }),
+  })
+  const matches = () => ui.authoredUsePreview.samePreparedUse(selected, use, prepared)
+  assert.equal(matches(), true)
+  preparedMembers = [selected, peer]
+  assert.equal(matches(), false, 'hidden mounted peer was missing')
+  preparedMembers = [selected, peer, member(false)]
+  assert.equal(matches(), false, 'equal count with a different peer')
+  preparedMembers = mounted
+  mounted[1] = member(true, 'different opening')
+  assert.equal(matches(), false)
+  mounted[1] = member(true, marker, 'stale')
+  assert.equal(matches(), false)
+  mounted[1] = peer
+  assert.equal(ui.authoredUsePreview.samePreparedUse(selected, use, { ...prepared, file: 'Other.tsx' }), false)
+})
+
+test('only the prepared JSX opening carries the paired source and preparation revisions', async (t) => {
+  const { preparedSites } = await import('../scripts/flow/prepared-sites.mjs')
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'shared-opening-')))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const code = 'export function Cards() { return <main><article className="card"><b>A</b><b>B</b></article><aside><b>C</b><b>D</b></aside></main> }'
+  const file = join(root, 'Cards.jsx'), manifest = join(root, 'prepared.json')
+  writeFileSync(file, code)
+  writeFileSync(join(root, 'card.css'), '.card { display: flex; flex-direction: column; gap: 12px }')
+  const site = {
+    id: 'card-gap', file: 'Cards.jsx', owner: 'Cards', opening: '<article className="card">', dependencies: ['card.css'],
+    styles: [{ property: 'gap', attribute: 'className', literal: 'card',
+      css: { file: 'card.css', selector: '.card', declaration: 'gap', value: '12px' } }],
+  }
+  writeFileSync(manifest, JSON.stringify({ namespace: 'fixture', sites: [site] }))
+  const plugin = preparedSites(root, manifest, { authoredUseSchema: 2 })
+  const generated = (await plugin.transform.handler.call({ resolve: async () => null }, code, file)).code
+  const [article] = generated.match(/<article [^>]+>/) ?? []
+  assert.ok(article)
+  const parse = (name) => JSON.parse(JSON.parse(article.match(new RegExp(name+'=\\{("(?:[^"\\\\]|\\\\.)*")\\}'))[1]))
+  const native = parse('data-li-authored-use'), prepared = parse('data-li-contract')
+  assert.equal(article.match(/data-li-shared-opening="([^"]+)"/)[1], native.id + ' ' + prepared.revision)
+  assert.equal(generated.match(/data-li-shared-opening=/g).length, 1)
+  assert.match(generated, /<aside [^>]*data-li-authored-use=/)
+})
+
+test('a prepared column gap measures the children without admitting the horizontal native transaction', async () => {
+  const { runInNewContext } = await import('node:vm')
+  const ui = {}
+  const lower = { top: 43, bottom: 58 }
+  const styles = { display: 'flex', flexDirection: 'column', flexWrap: 'nowrap', direction: 'ltr', writingMode: 'horizontal-tb', visibility: 'visible' }
+  const node = { children: [{ top: 4, bottom: 24 }, lower].map(rect => ({
+    isConnected: true, getClientRects: () => [rect], getBoundingClientRect: () => rect,
+  })) }
+  runInNewContext(readFileSync(new URL('../extension/authored-use-preview.js', import.meta.url), 'utf8'), {
+    window: { LocalhostInspector: ui }, getComputedStyle: () => styles,
+  })
+  assert.equal(ui.authoredUsePreview.eligible(node, 'spacing'), false)
+  assert.deepEqual(Array.from(ui.authoredUsePreview.separation(node, true)), [19])
+  lower.top = 64
+  assert.deepEqual(Array.from(ui.authoredUsePreview.separation(node, true)), [40])
+  styles.flexWrap = 'wrap'
+  assert.equal(ui.authoredUsePreview.separation(node, true), null)
+})

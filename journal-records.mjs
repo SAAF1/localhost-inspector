@@ -43,7 +43,9 @@ export function journalValidators(journalRoute) {
         !part.file.startsWith('/') && !part.file.split('/').includes('..') &&
         typeof part.selector === 'string' && part.selector.length <= 240 && /^(?:\.(?:[\w-]|\\[^\s])+|[a-z][\w-]*)$/.test(part.selector))
       const effect = prepared?.effect
-      const validEffect = effect === undefined || (Boolean(field) && effect &&
+      const measuredGap = !field && record.property === 'gap' && effect?.property === 'gap' &&
+        effect.value === record.requested && typeof effect.value === 'string' && /^\d+(?:\.\d+)?px$/.test(effect.value)
+      const validEffect = effect === undefined || measuredGap || (Boolean(field) && effect &&
         ['background-color','color','font-size','height','width'].includes(effect.property) && validValue(effect.property,effect.value))
       if (!validEffect || !validPart || !validSite || !validControl || group || pending || record.template || record.frameState ||
           record.restore !== 'unique' || record.intent !== featureTemplateScope) throw Error('Invalid prepared contract')

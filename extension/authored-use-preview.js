@@ -20,8 +20,18 @@
     return node.isConnected && node.getClientRects().length && getComputedStyle(node).visibility === 'visible'
   }
 
-  function members(use) {
-    return [...document.querySelectorAll(selector)].filter(node => binding(node)?.id === use.id && visible(node))
+  function members(use, visibleOnly = true) {
+    return [...document.querySelectorAll(selector)].filter(node => binding(node)?.id === use.id && (!visibleOnly || visible(node)))
+  }
+
+  function samePreparedUse(node, use, prepared) {
+    if (use.file !== prepared.file) return false
+    const expected = new Set(members(use, false))
+    const candidates = ui.preparedPreview.membersOf(prepared.revision)
+    const opening = use.id + ' ' + prepared.revision
+    return expected.has(node) && candidates.length === expected.size && [...candidates].every(member =>
+      expected.has(member) && binding(member)?.revision === use.revision &&
+      member.getAttribute('data-li-shared-opening') === opening)
   }
 
   function read(node, family) {
@@ -54,13 +64,14 @@
     return token ? ui.resolveColorVariable(node, token) : ui.normalizeSolidColor(requested)
   }
 
-  function separation(node) {
+  function separation(node, includeColumn = false) {
     const style = getComputedStyle(node)
     const children = [...node.children].filter(visible)
-    if (!['flex', 'inline-flex'].includes(style.display) || style.flexDirection !== 'row' || style.flexWrap !== 'nowrap' ||
+    const column = includeColumn && style.flexDirection === 'column'
+    if (!['flex', 'inline-flex'].includes(style.display) || (!column && style.flexDirection !== 'row') || style.flexWrap !== 'nowrap' ||
         style.direction !== 'ltr' || style.writingMode !== 'horizontal-tb' || children.length < 2) return null
     const bounds = children.map(child => child.getBoundingClientRect())
-    return bounds.slice(1).map((rect, index) => rect.left - bounds[index].right)
+    return bounds.slice(1).map((rect, index) => column ? rect.top - bounds[index].bottom : rect.left - bounds[index].right)
   }
 
   function observation(use, values, count = 1) {
@@ -138,5 +149,5 @@
     })
   }
 
-  ui.authoredUsePreview = { attribute, binding, compare, eligible, expectedPaint, intent, members, observation, observe, protectPeers, read, separation }
+  ui.authoredUsePreview = { attribute, binding, compare, eligible, expectedPaint, intent, members, samePreparedUse, observation, observe, protectPeers, read, separation }
 })()

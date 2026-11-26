@@ -152,7 +152,11 @@
     }
     if (edit.prepared.effect) {
       const {property,value} = edit.prepared.effect
-      if (!choiceFields(node,prepared.input,requested).includes(property) ||
+      if (!edit.prepared.field && property === 'gap') {
+        const distances = ui.authoredUsePreview.separation(node, true)
+        if (observed !== value || !distances || distances.some(distance => Math.abs(distance - parseFloat(value)) > 1))
+          return false
+      } else if (!choiceFields(node,prepared.input,requested).includes(property) ||
           getComputedStyle(node).getPropertyValue(property) !== value) return false
     }
     if (edit.prepared.field)

@@ -177,6 +177,7 @@ export async function addAuthoredUseMarkers({
   out,
   resolveImport,
   reserved = new Set(),
+  preparedAtOpening,
   schema = authoredUseSchema,
 }) {
   const components = new Map()
@@ -212,6 +213,9 @@ export async function addAuthoredUseMarkers({
   let changed = false
   for (const { opening, binding } of uses) {
     if (counts.get(binding.id) !== 1 || reserved.has(opening.start)) continue
+    const revision = preparedAtOpening?.get(opening.start)
+    if (revision)
+      out.appendLeft(opening.name.end, ' data-li-shared-opening="' + binding.id + ' ' + revision + '"')
     out.appendLeft(opening.name.end, ' ' + marker + '={' + JSON.stringify(JSON.stringify(binding)) + '}')
     changed = true
   }

@@ -218,6 +218,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
         let usesInput = false
         const recordRoots = new Set()
         const reserved = new Set()
+        const preparedAtOpening = new Map()
         for (const [index, site] of recipes.entries()) {
           if (typeof site.id !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(site.id)) continue
           revisions[site.id] = null
@@ -385,6 +386,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           }
           if (authoredUseSchema && manifestData.panelBindings && fields.styles?.includes('border-radius'))
             if (!/__liRecordAttrs|__liRecordProof/.test(code) && markRecordHost(tree, node, owner, file, out)) recordRoots.add(node)
+          preparedAtOpening.set(node.start, revision)
           const contract = { site: site.id, revision, file, ...fields }
           let revisionAttribute = ' data-li-revision="' + revision + '"'
           if (site.moduleClass) {
@@ -418,7 +420,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             resolveImport: async specifier => (await this.resolve(specifier, id))?.id })
           const selected = manifestData.panelBindings && markSourceSelections(file,code,openings,out)
           const marked = await addAuthoredUseMarkers({
-            root, file, code, tree, out, reserved, schema: authoredUseSchema,
+            root, file, code, tree, out, reserved, preparedAtOpening, schema: authoredUseSchema,
             resolveImport: async (specifier) => (await this.resolve(specifier, id))?.id,
           })
           if (!recipes.length) return (recordRoots.size || records || selected || marked) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined

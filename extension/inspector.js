@@ -504,7 +504,9 @@
     editScope.hidden = !authoredUse || !hasSelection
     const preparedStylesUnavailable = document.querySelector('meta[name="inspector-prepared-styles"][content="unavailable"]')
     scope.hidden = !shared.length && editScope.hidden && !(hasSelection && preparedStylesUnavailable)
-    const actions = (use?.actions ?? (use ? [use.family] : [])).filter(action => authored.eligible(node, action))
+    const cohort = use ? authored.members(use) : []
+    const actions = (use?.actions ?? (use ? [use.family] : [])).filter(action => cohort.includes(node) &&
+      cohort.every(member => authored.binding(member).revision === use.revision && authored.eligible(member, action)))
     let origin
     try { origin = JSON.parse(node?.getAttribute('data-li-source-use')) } catch { /* Unmarked source. */ }
     const authoredLabel = actions.map(action => action === 'paint' ? 'text color' : 'fixed spacing').join(', ')
@@ -839,7 +841,7 @@
   }
   ui.bindInspectorShortcuts({ root, panel, selection, undo: get('undo'), parent: get('parent') })
   window.addEventListener('pagehide', () => { ui.dismissTooltip(); ui.closeMenu(); revertDialog.dismiss() })
-  async function commitPrepared(node, contract, property, requested, tokenOptions, field) {
+  async function commitPrepared(node, contract, property, requested, tokenOptions, field, sharedUse) {
     const path = currentRoute
     const version = activeRouteVersion
     if (!preparedPreviews) throw Error('Restart the local helper with prepared preview support.')
@@ -867,6 +869,7 @@
         file: contract.file,
         revision: contract.revision,
         ...(field ? { field } : {}),
+        ...(sharedUse && key === 'gap' ? { effect: { property: 'gap', value: requested } } : {}),
         ...(contract.parts?.[key] ? { part:contract.parts[key] } : {}),
       },
       sourceContext: ui.describeSourceContext(node),
@@ -911,7 +914,8 @@
     }
     try {
       recovery.projectPrepared(records)
-      const matches = () => records.every(verified) && untouchedPadding.every(([key,before])=>read(key)===before)
+      const matches = () => (!sharedUse || authored.samePreparedUse(node, sharedUse, contract)) &&
+        records.every(verified) && untouchedPadding.every(([key,before])=>read(key)===before)
       if (!(await ui.waitForPreview(current, matches, previousChoice ? 2 : 0)))
         throw Error('The prepared edit did not reach the selected part in its current state.')
       const pair = records.length === 2
@@ -943,14 +947,10 @@
       throw Error('The source change could not be confirmed or restored. Reopen the candidate and check Edits.')
     }
   }
-  async function commitAuthoredUse(node, use, property, values, tokenOptions) {
+  async function commitAuthoredUse(node, use, nodes, property, values, tokenOptions) {
     const path = currentRoute
     const version = activeRouteVersion
     const current = () => isCurrentRoute(path, version)
-    const nodes = authored.members(use)
-    if (nodes.some(member => !authored.eligible(member, use.family)))
-      throw Error(use.family === 'paint' ? 'Shared text color needs directly rendered text on every visible member.'
-        : 'Shared fixed spacing needs horizontal flex rows with measurable children.')
     const authoredBefore = authored.read(node, use.family)
     const observed = use.family === 'paint' ? authored.expectedPaint(node, values.color) : values[property]
     if (!nodes.includes(node) || !observed || nodes.some(member => authored.binding(member).revision !== use.revision))
@@ -1061,7 +1061,19 @@
       if (!selectionOnly) {
         const use = marker && (marker.actions ?? [marker.family]).includes(family) && { ...marker, family }
         const values = use && authored.intent(node, use, property, requested)
-        if (values) return commitAuthoredUse(node, use, property, values, tokenOptions)
+        if (values) {
+          const cohort = authored.members(use)
+          if (!cohort.includes(node) || cohort.some(member => authored.binding(member).revision !== use.revision))
+            throw Error('The authored use changed. Select it again before editing.')
+          if (cohort.every(member => authored.eligible(member, family)))
+            return commitAuthoredUse(node, use, cohort, property, values, tokenOptions)
+          // Both executors must designate the very same JSX opening and members.
+          // Only an ineligible action may change paths, before any source write.
+          if (!qualifiedPrepared || !authored.samePreparedUse(node, use, prepared))
+            throw Error('The shared change could not be verified for the same source and members.')
+          if (sourceOwns(node, property)) throw Error(removeSourceFirst)
+          return commitPrepared(node, prepared, property, requested, tokenOptions, undefined, use)
+        }
         if (!qualifiedPrepared)
           throw Error('Shared source is unavailable for this change. Choose Selected element only to preview one occurrence.')
       }
