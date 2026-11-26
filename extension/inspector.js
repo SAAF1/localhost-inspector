@@ -550,7 +550,7 @@
       shared.length && Object.values(contract.parts ?? {}).some(part => part.depth) && 'Selected envelope and its verified painted descendant',
       shared.length && 'Shared source controls · ' + shared.join(', '),
       authoredUse && hasSelection && (editScope.value === 'selected'
-        ? ((node.hasAttribute('data-li-record-scope') && node.getAttribute('data-inspector-target') || ui.recordContracts.available(node)) ? 'One record · source handoff available for corner radius' : selectedHeight ? 'Selected action · fixed Height handoff at ' + selectedHeight.owner : 'Selected occurrence preview · separate from source handoff')
+        ? (node.hasAttribute('data-li-record-scope') && node.getAttribute('data-inspector-target') ? 'One record · source handoff available for corner radius' : ui.recordContracts.available(node) ? 'One record · source handoff for corner radius and solid Fill' : selectedHeight ? 'Selected action · fixed Height handoff at ' + selectedHeight.owner : 'Selected occurrence preview · separate from source handoff')
         : contract && contract.file + ' · ' + ui.preparedPreview.membersOf(contract.revision).length + ' mounted'),
       hasSelection && preparedStylesUnavailable && 'Shared stylesheet controls are unavailable in this preview.',
     ].filter(Boolean).join(' · ')
@@ -1136,9 +1136,13 @@
     let target = ui.describePreviewTarget(node)
     const selectedUse = selectedUseHeight && authoredUse && selectionOnly && property === 'height' && /^\d+(?:\.\d+)?px$/.test(requested) && ui.selectedUse(node)
     let recordScope
-    if (authoredUse && selectionOnly && property === 'border-radius' && !node.hasAttribute('data-li-record-scope')) {
-      recordScope=await ui.recordContracts.prepare(node)
+    const recordFill = property === 'background-color' && !tokenOptions?.colorToken && !tokenOptions?.pendingColor &&
+      /^rgb\(\d+, \d+, \d+\)$/.test(requested)
+    if (authoredUse && selectionOnly && (property === 'border-radius' || recordFill) && !node.hasAttribute('data-li-record-scope')) {
+      recordScope=await ui.recordContracts.prepare(node,property)
       if(recordScope){
+        if (recordFill && getComputedStyle(node).backgroundImage !== 'none')
+          throw Error('An image covers this record’s background. No change was saved.')
         if(!isCurrent() || selection.current!==node)throw Error('Selection changed during record preparation.')
         target={tag:node.localName,id:node.id || null,slot:node.getAttribute('data-slot'),key:recordScope.key}
       }

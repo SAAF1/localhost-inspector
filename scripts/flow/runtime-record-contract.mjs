@@ -77,7 +77,7 @@ export function verifyRuntimeRecord(root,proof) {
     error.code = 'record-state-path-unverified'
     throw error
   }
-  if(proof?.kind!=='state-record' || proof.operation!=='border-radius' ||
+  if(proof?.kind!=='state-record' || !['border-radius','background-color'].includes(proof.operation) ||
       !['string','number'].includes(typeof proof.value) ||
       (typeof proof.value==='number' && !Number.isSafeInteger(proof.value)) ||
       String(proof.value).length>70 || !String(proof.value).trim() ||

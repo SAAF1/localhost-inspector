@@ -703,7 +703,8 @@
           const exactMatch = matchesTarget(exact?.node, exact?.target) && sameUse(edit,exact.node) &&
             (!edit.recordScope || findTarget(edit.target, exact.node) === exact.node)
           const node = exactMatch ? exact.node : (edit.restore === 'unique' ? await resolveSavedNode(edit, groupCurrent) : null)
-          if (conflicts.has(edit.id) || !node) {
+          if (conflicts.has(edit.id) || !node || (edit.recordScope?.operation === 'background-color' &&
+              getComputedStyle(node).backgroundImage !== 'none')) {
             complete = false
             break
           }

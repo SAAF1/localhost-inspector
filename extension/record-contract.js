@@ -27,7 +27,7 @@
     return proof
   }
   function same(a,b,legacy=false){
-    return a && b && a.kind===b.kind && a.operation===b.operation && a.field===b.field &&
+    return a && b && a.kind===b.kind && a.field===b.field &&
       (legacy || JSON.stringify(a.statePath)===JSON.stringify(b.statePath)) &&
       JSON.stringify(a.renderPath)===JSON.stringify(b.renderPath) && a.value===b.value && a.witness===b.witness &&
       ['anchor','part','authority'].every(k=>a[k].id===b[k].id && a[k].file===b[k].file &&
@@ -37,19 +37,21 @@
     if(proof?.kind!=='state-record' || typeof proof.key!=='string')return
     known.set(proof.key,proof)
   }
-  async function prepare(node) {
-    const proof=read(node,'admit')
+  async function prepare(node, operation = 'border-radius') {
+    const request = {mode:'admit', operation}
+    const proof=read(node,request)
     if(!proof)return
     if(proof.unavailable)throw Error('Cannot verify one unique application record and its painted source part. No change was saved.')
+    if (proof.operation !== operation) throw Error('This record does not support the requested operation.')
     for(const cached of known.values()){
-      if(same(cached,proof))return {...cached,members:proof.members,preparation:'reused'}
+      if(same(cached,proof))return {...cached,operation,members:proof.members,preparation:'reused'}
     }
     const state=JSON.stringify([proof.part.id,proof.anchor.id,proof.authority.file,proof.authority.id,
       proof.field,proof.value,proof.witness,proof.part.revision,proof.anchor.revision,proof.authority.revision,
       proof.renderPath.map(site=>[site.file,site.owner,site.revision]),proof.statePath.map(site=>[site.file,site.owner,site.revision])])
     const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(state))
     proof.key='bound:'+Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('')
-    if(!same(proof,read(node,'admit')))throw Error('The selected record changed during verification. No change was saved.')
+    if(!same(proof,read(node,request)))throw Error('The selected record changed during verification. No change was saved.')
     // An explicit edit on the same live record can renew a pre-state-path
     // receipt. Its old ID and values remain available to Undo.
     for (const previous of known.values()) {

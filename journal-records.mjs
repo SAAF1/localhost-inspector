@@ -71,9 +71,13 @@ export function journalValidators(journalRoute) {
       pending.source === catalog.source && pending.value === record.requested && pending.value === record.observed &&
       /^(?:rgba?\(|(?:oklch|oklab|lch|lab|color)\()/i.test(pending.value))
     const recordScope = record?.recordScope
-    if (recordScope !== undefined && (record.property !== 'border-radius' || record.restore !== 'unique' ||
+    const recordFill = recordScope?.kind === 'state-record' && recordScope.operation === 'background-color' &&
+      record.property === 'background-color' && record.requested === record.observed && /^rgb\(\d+, \d+, \d+\)$/.test(record.requested)
+    const recordRadius = record.property === 'border-radius' && /^\d+(?:\.\d+)?px$/.test(record.requested) &&
+      (recordScope?.kind !== 'state-record' || recordScope.operation === record.property)
+    if (recordScope !== undefined && ((!recordRadius && !recordFill) || record.restore !== 'unique' ||
       record.intent !== 'selected occurrence only' || record.target?.key !== recordScope?.key ||
-      group || prepared || reference || pending || record.template || !/^\d+(?:\.\d+)?px$/.test(record.requested)))
+      group || prepared || reference || pending || record.template))
       throw Error('Invalid selected-record request.')
     const selectedUse = record?.selectedUse
     if (selectedUse !== undefined && (record.property !== 'height' || record.restore !== 'unique' ||

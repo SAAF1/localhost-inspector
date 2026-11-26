@@ -77,7 +77,7 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
       if (fiber === end) return path
     }
   }
-  function inspect(node,expected){
+  function inspect(node,expected,operation){
     if(!painted(node))return
     const raw=node.getAttribute('data-li-source-use')
     if(!raw)return
@@ -115,7 +115,7 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
     const path = renderPath(currentFiber(node), binding.fiber)
     const statePath = authorityFiber === binding.fiber ? [] : renderPath(binding.fiber.return, authorityFiber)
     if (!path || (!statePath && !expected?.legacy)) return
-    return {kind:'state-record',operation:'border-radius',value,field,witness:JSON.stringify(fields),members:peers.size,renderPath:path,statePath,
+    return {kind:'state-record',operation,value,field,witness:JSON.stringify(fields),members:peers.size,renderPath:path,statePath,
       part:{...part,revision:moduleRevisions.get(part.file)},
       anchor:{id:anchor.id,owner:anchor.owner,file:anchor.file,revision:moduleRevisions.get(anchor.file)},
       authority:{...authority,revision:moduleRevisions.get(authority.file)}}
@@ -126,7 +126,9 @@ export function installRecordContracts({currentFiber,recordCalls,stateOrigins,mo
     let proof
     try{
       const expected=event.detail?.mode==='restore' ? event.detail : null
-      proof=inspect(node,expected)
+      const operation=event.detail?.operation ?? 'border-radius'
+      if (!['border-radius','background-color'].includes(operation)) return
+      proof=inspect(node,expected,operation)
       if(!proof && !expected && keyed(node))proof={unavailable:true}
     }catch{/* Optional preparation must preserve application behavior. */}
     node.dispatchEvent(new CustomEvent('li-record-contract',{detail:JSON.stringify(proof??null)}))
