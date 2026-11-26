@@ -872,8 +872,9 @@
       sourceContext: ui.describeSourceContext(node),
       viewport: { width: innerWidth, height: innerHeight },
     }))
+    const originalMembers = new Set(ui.preparedPreview.membersOf(contract.revision))
     const previousChoice = field && contract.input?.component ? new Map(
-      [...ui.preparedPreview.membersOf(contract.revision)].map(member=>[member,ui.preparedPreview.choiceValues(member)])) : null
+      [...originalMembers].map(member=>[member,ui.preparedPreview.choiceValues(member)])) : null
     const boundParts = records.filter(edit => edit.prepared.part)
     if (boundParts.length) {
       const members = ui.preparedPreview.membersOf(contract.revision)
@@ -888,6 +889,7 @@
     function verified(edit) {
       edit.observed = ui.preparedPreview.read(node, edit)
       const members = ui.preparedPreview.membersOf(contract.revision)
+      if (members.length !== originalMembers.size || [...members].some(member=>!originalMembers.has(member))) return false
       if (previousChoice) {
         const fields = ui.preparedPreview.choiceFields(node, contract.input, requested)
         const property = fields.find(key => [...members].every(member => {
@@ -909,7 +911,8 @@
     }
     try {
       recovery.projectPrepared(records)
-      if (!(await ui.waitForPreview(current, () => records.every(verified) && untouchedPadding.every(([key,before])=>read(key)===before))))
+      const matches = () => records.every(verified) && untouchedPadding.every(([key,before])=>read(key)===before)
+      if (!(await ui.waitForPreview(current, matches, previousChoice ? 2 : 0)))
         throw Error('The prepared edit did not reach the selected part in its current state.')
       const pair = records.length === 2
       await write(

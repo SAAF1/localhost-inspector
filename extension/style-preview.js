@@ -27,14 +27,24 @@
     }
   }
 
-  ui.waitForPreview = async (current, matches) => {
+  ui.waitForPreview = async (current, matches, requiredFrames = 0) => {
     const deadline=performance.now()+550
-    while(current()){
-      if(matches())return true
-      if(performance.now()>=deadline)return false
-      await new Promise(resolve=>setTimeout(resolve,16))
+    let frames = 0, frame
+    function sample() {
+      frames = current() && matches() ? frames+1 : 0
+      if (frames < requiredFrames) frame = requestAnimationFrame(sample)
     }
-    return false
+    if (requiredFrames) frame = requestAnimationFrame(sample)
+    try {
+      while(current()){
+        if(frames >= requiredFrames && matches())return true
+        if(performance.now()>=deadline)return false
+        await new Promise(resolve=>setTimeout(resolve,16))
+      }
+      return false
+    } finally {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    }
   }
   ui.createStylePreview = catalogs => {
     const temporary = new Set()
