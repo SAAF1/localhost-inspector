@@ -1,0 +1,9 @@
+{
+  "id": "inbox-draft",
+  "anchor": "frame-10",
+  "label": "Choose a recipient and write",
+  "route": "/chats?demo=draft",
+  "section": "Inbox",
+  "note": "Taylor Grande is selected and the message is ready to attach a ticket.",
+  "created": 1795653834812
+}

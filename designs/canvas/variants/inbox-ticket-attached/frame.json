@@ -1,0 +1,9 @@
+{
+  "id": "inbox-ticket-attached",
+  "anchor": "frame-10",
+  "label": "Review the attachment",
+  "route": "/chats?demo=attached",
+  "section": "Inbox",
+  "note": "The ticket card shows its issue ID, title, and status before sending.",
+  "created": 1795653835552
+}

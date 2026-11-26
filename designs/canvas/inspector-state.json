@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "revision": 172,
+  "edits": [],
+  "textStyleDefinitions": [],
+  "registrations": {
+    "spacing": {
+      "source": "src/styles/theme.css",
+      "names": [
+        "--space-1",
+        "--space-2",
+        "--space-3",
+        "--space-4",
+        "--space-6",
+        "--space-8"
+      ]
+    },
+    "text-styles": {
+      "source": "src/styles/theme.css",
+      "names": [
+        "--text-body",
+        "--text-page-title"
+      ]
+    }
+  }
+}

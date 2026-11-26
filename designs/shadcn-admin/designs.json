@@ -1,0 +1,95 @@
+{
+  "Reports": [
+    {
+      "label": "Executive brief",
+      "route": "/?tab=reports&study=brief",
+      "note": "Monthly revenue comes first so you can see how the business is doing at a glance."
+    },
+    {
+      "label": "Executive brief · static HTML",
+      "route": "/executive-brief.html",
+      "note": "This static version uses the same layout to see how quickly we can sketch the monthly report."
+    },
+    {
+      "label": "Conversion & retention",
+      "route": "/?tab=reports",
+      "note": "See where visitors drop off and when signup cohorts return in a single report. Each view keeps its own dates and denominator."
+    },
+    {
+      "label": "Conversion funnel",
+      "route": "/?tab=reports&study=funnel",
+      "note": "Each step shows how many people continue, making the biggest drop easy to spot."
+    },
+    {
+      "label": "Report library",
+      "route": "/?tab=reports&study=library",
+      "note": "Reports are grouped by topic so you can find one without knowing its name."
+    },
+    {
+      "label": "Report delivery",
+      "route": "/?tab=reports&study=schedules",
+      "note": "The next delivery comes first so you can check what will be sent and when."
+    },
+    {
+      "label": "Cohort retention",
+      "route": "/?tab=reports&study=segments",
+      "note": "Each row follows customers who started together, so you can compare how long different groups stay."
+    }
+  ],
+  "Inbox": [
+    {
+      "label": "Compose a message",
+      "route": "/chats?demo=compose",
+      "note": "Open a new message from the Inbox."
+    },
+    {
+      "label": "Choose a recipient and write",
+      "route": "/chats?demo=draft",
+      "note": "Taylor Grande is selected and the message is ready to attach a ticket."
+    },
+    {
+      "label": "Review the attachment",
+      "route": "/chats?demo=attached",
+      "note": "The ticket card shows its issue ID, title, and status before sending."
+    },
+    {
+      "label": "Find a Linear ticket",
+      "route": "/chats?demo=search",
+      "note": "Search the connected workspace by issue ID or title."
+    },
+    {
+      "label": "See the sent message",
+      "route": "/chats?demo=sent",
+      "note": "The message and ticket appear together in Taylor’s conversation."
+    }
+  ],
+  "Swap a Linear ticket / Components": [
+    {
+      "label": "Ticket details",
+      "route": "/component-review.html",
+      "reviewNote": "Select a different issue to compare it with the current attachment. Keep current ticket preserves the draft. Confirm replacement applies the proposed issue."
+    }
+  ],
+  "Swap a Linear ticket": [
+    {
+      "label": "Review the current ticket",
+      "route": "/chats?demo=swap-original",
+      "note": "Taylor’s draft has ENG-142 attached. Use Change ticket to pick a replacement."
+    },
+    {
+      "label": "Choose a replacement",
+      "route": "/chats?demo=swap-picker",
+      "note": "The current ticket stays visible while you search. Cancel keeps it attached."
+    },
+    {
+      "label": "Check the updated draft",
+      "route": "/chats?demo=swap-updated",
+      "note": "DES-91 replaces ENG-142. The recipient and draft text are preserved."
+    },
+    {
+      "label": "See the replacement in the thread",
+      "route": "/chats?demo=swap-sent",
+      "note": "Taylor’s conversation shows the replacement ticket on the sent message."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "funnel",
+  "anchor": "frame-2",
+  "label": "Conversion funnel",
+  "route": "/?tab=reports&study=funnel",
+  "created": 1795544074396,
+  "section": "Reports",
+  "note": "Each step shows how many people continue, making the biggest drop easy to spot."
+}

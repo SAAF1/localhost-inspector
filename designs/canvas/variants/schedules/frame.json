@@ -1,0 +1,9 @@
+{
+  "id": "schedules",
+  "anchor": "frame-2",
+  "label": "Report delivery",
+  "route": "/?tab=reports&study=schedules",
+  "created": 1795544074646,
+  "section": "Reports",
+  "note": "The next delivery comes first so you can check what will be sent and when."
+}

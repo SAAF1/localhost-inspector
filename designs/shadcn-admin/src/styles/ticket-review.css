@@ -1,0 +1,144 @@
+.ticket-review {
+  max-width: 78rem;
+  margin-inline: auto;
+  padding: var(--space-8);
+}
+
+.ticket-review-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-8);
+  margin-top: var(--space-6);
+}
+
+.ticket-review h2 {
+  font-weight: 600;
+}
+
+.ticket-replacement {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--card-foreground);
+}
+
+.ticket-replacement-header,
+.ticket-replacement-comparison,
+.ticket-replacement-current,
+.ticket-replacement-picker,
+.ticket-replacement-closed {
+  padding: var(--space-4);
+}
+
+.ticket-replacement-header p,
+.ticket-status-examples > p {
+  margin-top: var(--space-1);
+  color: var(--muted-foreground);
+}
+
+.ticket-replacement-current,
+.ticket-replacement-comparison {
+  padding-top: 0;
+}
+
+.ticket-replacement-comparison {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ticket-replacement-comparison > .ticket-replacement-current {
+  padding: 0;
+}
+
+.ticket-replacement-proposed .ticket-review-row {
+  border-color: var(--ring);
+}
+
+.ticket-review-label {
+  margin-bottom: var(--space-2);
+  color: var(--muted-foreground);
+}
+
+.ticket-review-row {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--muted) 45%, transparent);
+}
+
+.ticket-replacement-picker {
+  display: grid;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.ticket-replacement-picker > label {
+  font-weight: 600;
+}
+
+.ticket-replacement-options {
+  min-width: 0;
+  margin-block: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.ticket-replacement-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+
+.ticket-replacement-option + .ticket-replacement-option {
+  border-top: 1px solid var(--border);
+}
+
+.ticket-replacement-option:hover,
+.ticket-replacement-option:has(input:checked) {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.ticket-replacement-option > input {
+  flex: none;
+  accent-color: var(--primary);
+}
+
+.ticket-replacement-empty {
+  padding: var(--space-3);
+  color: var(--muted-foreground);
+}
+
+.ticket-replacement-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.ticket-replacement-closed {
+  border-top: 1px solid var(--border);
+}
+
+.ticket-status-examples ul {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+@media (max-width: 54rem) {
+  .ticket-review-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 32rem) {
+  .ticket-review {
+    padding: var(--space-4);
+  }
+}

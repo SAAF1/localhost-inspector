@@ -1,0 +1,9 @@
+{
+  "id": "inbox-compose",
+  "anchor": "frame-10",
+  "label": "Compose a message",
+  "route": "/chats?demo=compose",
+  "section": "Inbox",
+  "note": "Open a new message from the Inbox.",
+  "created": 1795653834631
+}

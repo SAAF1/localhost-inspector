@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "revision": 4,
+  "edits": [
+    {
+      "id": "4f7a2eee-1c6b-4096-8ed7-a7e1fdc4d876",
+      "route": "/component-review.html",
+      "property": "component-attachment",
+      "before": "ENG-142",
+      "requested": "ENG-157",
+      "observed": "ENG-157",
+      "restore": "session",
+      "intent": "selected occurrence only",
+      "target": {
+        "kind": "slot",
+        "mount": "cb8d8bde-e297-47dc-a22e-ec7b0aecdec7",
+        "definition": "[\"Inbox\",\"TicketReplacement\",1]",
+        "field": "attachment",
+        "tag": "section",
+        "slot": "TicketReplacement",
+        "key": "cb8d8bde-e297-47dc-a22e-ec7b0aecdec7",
+        "id": null
+      },
+      "component": {
+        "name": "TicketReplacement",
+        "prop": "attachment"
+      },
+      "beforeState": {
+        "value": "ENG-142",
+        "visible": true
+      },
+      "afterState": {
+        "value": "ENG-157",
+        "visible": true
+      }
+    },
+    {
+      "id": "78347b44-48d4-47fd-b020-8122bf1a8252",
+      "route": "/component-review.html",
+      "property": "component-attachment",
+      "before": "ENG-157",
+      "requested": "DES-84",
+      "observed": "DES-84",
+      "restore": "session",
+      "intent": "selected occurrence only",
+      "target": {
+        "kind": "slot",
+        "mount": "cb8d8bde-e297-47dc-a22e-ec7b0aecdec7",
+        "definition": "[\"Inbox\",\"TicketReplacement\",1]",
+        "field": "attachment",
+        "tag": "section",
+        "slot": "TicketReplacement",
+        "key": "cb8d8bde-e297-47dc-a22e-ec7b0aecdec7",
+        "id": null
+      },
+      "component": {
+        "name": "TicketReplacement",
+        "prop": "attachment"
+      },
+      "beforeState": {
+        "value": "ENG-157",
+        "visible": true
+      },
+      "afterState": {
+        "value": "DES-84",
+        "visible": true
+      }
+    },
+    {
+      "id": "8da15eee-2615-4147-b1b6-60ffe44047f4",
+      "route": "/component-review.html",
+      "property": "component-attachment",
+      "before": "DES-84",
+      "requested": "DES-91",
+      "observed": "DES-91",
+      "restore": "session",
+      "intent": "selected occurrence only",
+      "target": {
+        "kind": "slot",
+        "mount": "cb8d8bde-e297-47dc-a22e-ec7b0aecdec7",
+        "definition": "[\"Inbox\",\"TicketReplacement\",1]",
+        "field": "attachment",
+        "tag": "section",
+        "slot": "TicketReplacement",
+        "key": "cb8d8bde-e297-47dc-a22e-ec7b0aecdec7",
+        "id": null
+      },
+      "component": {
+        "name": "TicketReplacement",
+        "prop": "attachment"
+      },
+      "beforeState": {
+        "value": "DES-84",
+        "visible": true
+      },
+      "afterState": {
+        "value": "DES-91",
+        "visible": true
+      }
+    },
+    {
+      "id": "5ee51358-aa29-422f-913d-1aa12647c927",
+      "route": "/component-review.html",
+      "property": "component-attachment",
+      "before": "DES-91",
+      "requested": "ENG-142",
+      "observed": "ENG-142",
+      "restore": "session",
+      "intent": "selected occurrence only",
+      "target": {
+        "kind": "slot",
+        "mount": "cb8d8bde-e297-47dc-a22e-ec7b0aecdec7",
+        "definition": "[\"Inbox\",\"TicketReplacement\",1]",
+        "field": "attachment",
+        "tag": "section",
+        "slot": "TicketReplacement",
+        "key": "cb8d8bde-e297-47dc-a22e-ec7b0aecdec7",
+        "id": null
+      },
+      "component": {
+        "name": "TicketReplacement",
+        "prop": "attachment"
+      },
+      "beforeState": {
+        "value": "DES-91",
+        "visible": true
+      },
+      "afterState": {
+        "value": "ENG-142",
+        "visible": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "inbox-ticket-search",
+  "anchor": "frame-10",
+  "label": "Find a Linear ticket",
+  "route": "/chats?demo=search",
+  "section": "Inbox",
+  "note": "Search the connected workspace by issue ID or title.",
+  "created": 1795653835296
+}

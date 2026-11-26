@@ -4,6 +4,8 @@ Localhost Inspector brings a Figma-style design inspector to a running local web
 
 The Chrome extension handles selection and previews. A local helper remembers which working copy serves the app and saves edits to a JSON journal. A coding agent can read that journal, inspect the source, and make a scoped change without a clipboard handoff.
 
+The [editable Inbox and Reports studies](designs/shadcn-admin/README.md) include the ticket comparison, every saved flow step, and the combined conversion and retention report.
+
 ## Evaluate it on an existing project
 
 The [evaluation guide](docs/EVALUATION.md) covers supported edits, project fit, design-system setup, and a source handoff you can verify with previews off.

@@ -1,0 +1,9 @@
+{
+  "id": "conversion-retention",
+  "anchor": "frame-2",
+  "label": "Conversion & retention",
+  "route": "/?tab=reports",
+  "section": "Reports",
+  "note": "See where visitors drop off and when signup cohorts return in a single report. Each view keeps its own dates and denominator.",
+  "created": 1795653669383
+}

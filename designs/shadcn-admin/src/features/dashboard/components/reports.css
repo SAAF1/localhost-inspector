@@ -1,0 +1,91 @@
+.combined-report {
+  --report-accent: #087967;
+  container: combined-report / inline-size;
+  max-width: 73rem;
+  margin-inline: auto;
+  padding: 1.75rem 0 2.5rem;
+}
+.dark .combined-report { --report-accent: #52c6ae; }
+
+.combined-report-heading { margin-bottom: 2.5rem; }
+.combined-report-heading h2 {
+  font-size: clamp(1.8rem, 4.4cqi, 3rem);
+  font-weight: 650;
+  line-height: 1.08;
+  letter-spacing: -.055em;
+  text-wrap: balance;
+}
+.combined-report-heading p { margin-top: .6rem; font-size: .9rem; color: var(--muted-foreground); }
+
+.combined-report-body {
+  display: grid;
+  gap: 2rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.5rem;
+}
+.combined-retention {
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 1.5rem;
+}
+@container combined-report (min-width: 810px) {
+  .combined-report-body { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+  .combined-retention { border-top: 0; padding-top: 0; border-inline-start: 1px solid var(--border); padding-inline-start: 2rem; }
+}
+
+.combined-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .65rem;
+  min-height: 2.9rem;
+}
+.combined-section-heading h3 { font-size: 1.1rem; font-weight: 650; letter-spacing: -.022em; }
+.combined-section-heading p { color: var(--muted-foreground); font-size: .75rem; margin-top: .15rem; }
+.combined-section-heading [role='combobox'] { font-size: .75rem; box-shadow: none; height: 2rem; }
+
+.combined-stat {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .25rem .65rem;
+  margin: 1rem 0 1.5rem;
+}
+.combined-stat strong { font-size: 2.7rem; font-weight: 620; letter-spacing: -.065em; line-height: 1; }
+.combined-stat span { font-size: .8rem; color: var(--muted-foreground); }
+
+.combined-stages { display: grid; gap: .85rem; }
+.combined-stage-label { display: flex; justify-content: space-between; gap: .5rem; font-size: .82rem; font-weight: 520; }
+.combined-stage-label strong { font-variant-numeric: tabular-nums; font-weight: 620; }
+.combined-bar-rail { margin-top: .35rem; background: var(--muted); border-radius: .2rem; }
+.combined-bar { height: .52rem; background: var(--report-accent); border-radius: inherit; }
+.combined-stages p { margin-top: .25rem; font-size: .7rem; font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
+.combined-stages .combined-largest-drop { color: var(--foreground); font-weight: 620; }
+.combined-method { margin-top: .85rem; font-size: .7rem; line-height: 1.5; color: var(--muted-foreground); }
+
+.combined-cohort-scroll { overflow-x: auto; }
+.combined-cohort-table { border-collapse: separate; border-spacing: 3px; margin-inline: -3px; width: calc(100% + 3px); min-width: 280px; font-variant-numeric: tabular-nums; }
+.combined-cohort-table thead th { padding-bottom: .28rem; font-size: .67rem; text-align: center; color: var(--muted-foreground); font-weight: 540; }
+.combined-cohort-table th:first-child { text-align: start; }
+.combined-cohort-table tbody th { font-size: .75rem; font-weight: 590; }
+.combined-cohort-table abbr { text-decoration: none; }
+.combined-cohort-table td { height: 1.95rem; text-align: center; font-size: .73rem; }
+.combined-cohort-table .combined-cohort-size { padding-inline: .12rem .5rem; text-align: end; color: var(--muted-foreground); }
+
+.combined-cell {
+  min-width: 2rem;
+  width: 100%;
+  height: 100%;
+  min-height: 1.95rem;
+  cursor: pointer;
+  border-radius: .27rem;
+  font-size: .73rem;
+  font-weight: 590;
+}
+.combined-cell:hover { box-shadow: inset 0 0 0 1px var(--report-accent); }
+.combined-cell[aria-pressed='true'], .combined-cell:focus-visible { outline: 2px solid var(--report-accent); outline-offset: -2px; }
+.combined-cohort-table .combined-unobserved { color: var(--muted-foreground); background: var(--muted); border-radius: .27rem; }
+.combined-detail { display: flex; align-items: baseline; flex-wrap: wrap; gap: .15rem .65rem; margin-top: .85rem; font-size: .75rem; }
+.combined-detail strong { font-weight: 620; }
+.combined-detail span { color: var(--muted-foreground); }
