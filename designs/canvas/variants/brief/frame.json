@@ -1,0 +1,9 @@
+{
+  "id": "brief",
+  "anchor": "frame-2",
+  "label": "Executive brief",
+  "route": "/?tab=reports&study=brief",
+  "created": 1795544074126,
+  "section": "Reports",
+  "note": "Monthly revenue comes first so you can see how the business is doing at a glance."
+}

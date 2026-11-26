@@ -1,0 +1,9 @@
+{
+  "id": "segments",
+  "anchor": "frame-2",
+  "label": "Cohort retention",
+  "route": "/?tab=reports&study=segments",
+  "created": 1795544074506,
+  "section": "Reports",
+  "note": "Each row follows customers who started together, so you can compare how long different groups stay."
+}

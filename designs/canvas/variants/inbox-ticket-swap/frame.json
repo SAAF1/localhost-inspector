@@ -1,0 +1,34 @@
+{
+  "id": "inbox-ticket-swap",
+  "anchor": "frame-10",
+  "label": "Swap a Linear ticket",
+  "route": "/chats?demo=swap-original",
+  "section": "Swap a Linear ticket",
+  "steps": [
+    {
+      "key": "original",
+      "label": "Review the current ticket",
+      "route": "/chats?demo=swap-original",
+      "note": "Taylor’s draft has ENG-142 attached. Use Change ticket to pick a replacement."
+    },
+    {
+      "key": "picker",
+      "label": "Choose a replacement",
+      "route": "/chats?demo=swap-picker",
+      "note": "The current ticket stays visible while you search. Cancel keeps it attached."
+    },
+    {
+      "key": "updated",
+      "label": "Check the updated draft",
+      "route": "/chats?demo=swap-updated",
+      "note": "DES-91 replaces ENG-142. The recipient and draft text are preserved."
+    },
+    {
+      "key": "sent",
+      "label": "See the replacement in the thread",
+      "route": "/chats?demo=swap-sent",
+      "note": "Taylor’s conversation shows the replacement ticket on the sent message."
+    }
+  ],
+  "created": 1795654962399
+}

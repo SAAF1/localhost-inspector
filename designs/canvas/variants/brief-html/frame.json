@@ -1,0 +1,9 @@
+{
+  "id": "brief-html",
+  "anchor": "frame-2",
+  "label": "Executive brief · static HTML",
+  "route": "/executive-brief.html",
+  "created": 1795544074172,
+  "section": "Reports",
+  "note": "This static version uses the same layout to see how quickly we can sketch the monthly report."
+}

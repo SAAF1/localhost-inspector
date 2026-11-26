@@ -1,0 +1,1349 @@
+{
+  "projectName": "shadcn-admin",
+  "origin": "http://127.0.0.1:5273",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "frames": [
+    {
+      "id": "frame-1",
+      "route": "/",
+      "label": "Dashboard",
+      "steps": [],
+      "checkpoint": [
+        {
+          "role": "tabpanel",
+          "label": "Overview"
+        },
+        {
+          "role": "selected-tab",
+          "label": "Overview"
+        }
+      ],
+      "heading": "Dashboard",
+      "image": "frame-1.png"
+    },
+    {
+      "id": "frame-2",
+      "route": "/",
+      "label": "Analytics",
+      "steps": [
+        {
+          "role": "tab",
+          "label": "Analytics",
+          "inMain": true,
+          "popup": false
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "tabpanel",
+          "label": "Analytics"
+        },
+        {
+          "role": "selected-tab",
+          "label": "Analytics"
+        }
+      ],
+      "image": "frame-2.png"
+    },
+    {
+      "id": "frame-3",
+      "route": "/tasks",
+      "label": "Tasks",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Tasks",
+      "image": "frame-3.png"
+    },
+    {
+      "id": "frame-4",
+      "route": "/tasks",
+      "label": "Import",
+      "steps": [
+        {
+          "role": "button",
+          "label": "Import",
+          "inMain": true,
+          "popup": false
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "dialog",
+          "label": "Import Tasks"
+        }
+      ],
+      "image": "frame-4.png"
+    },
+    {
+      "id": "frame-5",
+      "route": "/tasks",
+      "label": "Create",
+      "steps": [
+        {
+          "role": "button",
+          "label": "Create",
+          "inMain": true,
+          "popup": false
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "dialog",
+          "label": "Create Task"
+        }
+      ],
+      "image": "frame-5.png"
+    },
+    {
+      "id": "frame-6",
+      "route": "/tasks",
+      "label": "Status",
+      "steps": [
+        {
+          "role": "button",
+          "label": "Status",
+          "inMain": true,
+          "popup": true
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "dialog",
+          "label": "Backlog 18 Todo 16 In Progress 24 Done 18 Canceled 24"
+        },
+        {
+          "role": "listbox",
+          "label": "Suggestions"
+        }
+      ],
+      "image": "frame-6.png"
+    },
+    {
+      "id": "frame-7",
+      "route": "/tasks",
+      "label": "Priority",
+      "steps": [
+        {
+          "role": "button",
+          "label": "Priority",
+          "inMain": true,
+          "popup": true
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "dialog",
+          "label": "Low 29 Medium 31 High 40 Critical"
+        },
+        {
+          "role": "listbox",
+          "label": "Suggestions"
+        }
+      ],
+      "image": "frame-7.png"
+    },
+    {
+      "id": "frame-8",
+      "route": "/tasks",
+      "label": "View",
+      "steps": [
+        {
+          "role": "button",
+          "label": "View",
+          "inMain": true,
+          "popup": true
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "menu",
+          "label": "View"
+        }
+      ],
+      "image": "frame-8.png"
+    },
+    {
+      "id": "frame-9",
+      "route": "/apps",
+      "label": "App Integrations",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "App Integrations",
+      "image": "frame-9.png"
+    },
+    {
+      "id": "frame-10",
+      "route": "/chats",
+      "label": "Inbox",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Inbox",
+      "image": "frame-10.png"
+    },
+    {
+      "id": "frame-11",
+      "route": "/users",
+      "label": "User List",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "User List",
+      "image": "frame-11.png"
+    },
+    {
+      "id": "frame-12",
+      "route": "/users",
+      "label": "Invite User",
+      "steps": [
+        {
+          "role": "button",
+          "label": "Invite User",
+          "inMain": true,
+          "popup": false
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "dialog",
+          "label": "Invite User"
+        }
+      ],
+      "image": "frame-12.png"
+    },
+    {
+      "id": "frame-13",
+      "route": "/users",
+      "label": "Add User",
+      "steps": [
+        {
+          "role": "button",
+          "label": "Add User",
+          "inMain": true,
+          "popup": false
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "dialog",
+          "label": "Add New User"
+        }
+      ],
+      "image": "frame-13.png"
+    },
+    {
+      "id": "frame-14",
+      "route": "/users",
+      "label": "Status",
+      "steps": [
+        {
+          "role": "button",
+          "label": "Status",
+          "inMain": true,
+          "popup": true
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "dialog",
+          "label": "Active 127 Inactive 113 Invited 139 Suspended 121"
+        },
+        {
+          "role": "listbox",
+          "label": "Suggestions"
+        }
+      ],
+      "image": "frame-14.png"
+    },
+    {
+      "id": "frame-15",
+      "route": "/users",
+      "label": "Role",
+      "steps": [
+        {
+          "role": "button",
+          "label": "Role",
+          "inMain": true,
+          "popup": true
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "dialog",
+          "label": "Superadmin 124 Admin 113 Manager 135 Cashier 128"
+        },
+        {
+          "role": "listbox",
+          "label": "Suggestions"
+        }
+      ],
+      "image": "frame-15.png"
+    },
+    {
+      "id": "frame-16",
+      "route": "/users",
+      "label": "View",
+      "steps": [
+        {
+          "role": "button",
+          "label": "View",
+          "inMain": true,
+          "popup": true
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "menu",
+          "label": "View"
+        }
+      ],
+      "image": "frame-16.png"
+    },
+    {
+      "id": "frame-17",
+      "route": "/help-center",
+      "label": "Coming Soon!",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Coming Soon!",
+      "image": "frame-17.png"
+    },
+    {
+      "id": "frame-18",
+      "route": "/help-center",
+      "label": "Shadcn Admin Vite + ShadcnUI",
+      "steps": [
+        {
+          "role": "button",
+          "label": "Shadcn Admin Vite + ShadcnUI",
+          "inMain": false,
+          "popup": true
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "menu",
+          "label": "Shadcn AdminVite + ShadcnUI"
+        }
+      ],
+      "image": "frame-18.png"
+    },
+    {
+      "id": "frame-19",
+      "route": "/help-center",
+      "label": "SN satnaing satnaingdev@gmail.com",
+      "steps": [
+        {
+          "role": "button",
+          "label": "SN satnaing satnaingdev@gmail.com",
+          "inMain": false,
+          "popup": true
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "menu",
+          "label": "SNsatnaingsatnaingdev@gmail.com"
+        }
+      ],
+      "image": "frame-19.png"
+    },
+    {
+      "id": "frame-20",
+      "route": "/dashboard/overview",
+      "label": "404",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "404",
+      "image": "frame-20.png"
+    },
+    {
+      "id": "frame-21",
+      "route": "/401",
+      "label": "401",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "401",
+      "image": "frame-21.png"
+    },
+    {
+      "id": "frame-22",
+      "route": "/403",
+      "label": "403",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "403",
+      "image": "frame-22.png"
+    },
+    {
+      "id": "frame-23",
+      "route": "/404",
+      "label": "404",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "404",
+      "image": "frame-23.png"
+    },
+    {
+      "id": "frame-24",
+      "route": "/500",
+      "label": "500",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "500",
+      "image": "frame-24.png"
+    },
+    {
+      "id": "frame-25",
+      "route": "/503",
+      "label": "503",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "503",
+      "image": "frame-25.png"
+    },
+    {
+      "id": "frame-26",
+      "route": "/clerk",
+      "label": "Set your Clerk API key",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Set your Clerk API key",
+      "image": "frame-26.png"
+    },
+    {
+      "id": "frame-27",
+      "route": "/clerk/sign-in",
+      "label": "Set your Clerk API key",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Set your Clerk API key",
+      "image": "frame-27.png"
+    },
+    {
+      "id": "frame-28",
+      "route": "/clerk/sign-up",
+      "label": "Set your Clerk API key",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Set your Clerk API key",
+      "image": "frame-28.png"
+    },
+    {
+      "id": "frame-29",
+      "route": "/clerk/user-management",
+      "label": "Set your Clerk API key",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Set your Clerk API key",
+      "image": "frame-29.png"
+    },
+    {
+      "id": "frame-30",
+      "route": "/forgot-password",
+      "label": "Shadcn Admin",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Shadcn Admin",
+      "image": "frame-30.png"
+    },
+    {
+      "id": "frame-31",
+      "route": "/otp",
+      "label": "Shadcn Admin",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Shadcn Admin",
+      "image": "frame-31.png"
+    },
+    {
+      "id": "frame-32",
+      "route": "/settings",
+      "label": "Settings",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Settings",
+      "image": "frame-32.png"
+    },
+    {
+      "id": "frame-33",
+      "route": "/settings/account",
+      "label": "Settings",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Settings",
+      "image": "frame-33.png"
+    },
+    {
+      "id": "frame-34",
+      "route": "/settings/account",
+      "label": "Pick a date",
+      "steps": [
+        {
+          "role": "button",
+          "label": "Pick a date",
+          "inMain": true,
+          "popup": true
+        }
+      ],
+      "checkpoint": [
+        {
+          "role": "dialog",
+          "label": "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec Nov 1926 1927 1928 1929 1930 1931 1932 1933 1934 193"
+        }
+      ],
+      "image": "frame-34.png"
+    },
+    {
+      "id": "frame-35",
+      "route": "/settings/appearance",
+      "label": "Settings",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Settings",
+      "image": "frame-35.png"
+    },
+    {
+      "id": "frame-36",
+      "route": "/settings/display",
+      "label": "Settings",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Settings",
+      "image": "frame-36.png"
+    },
+    {
+      "id": "frame-37",
+      "route": "/settings/notifications",
+      "label": "Settings",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Settings",
+      "image": "frame-37.png"
+    },
+    {
+      "id": "frame-38",
+      "route": "/sign-in",
+      "label": "Shadcn Admin",
+      "steps": [],
+      "checkpoint": [],
+      "heading": "Shadcn Admin",
+      "image": "frame-38.png"
+    }
+  ],
+  "connections": [
+    {
+      "from": "frame-1",
+      "to": "frame-2",
+      "action": "Analytics",
+      "observed": true
+    },
+    {
+      "from": "frame-3",
+      "to": "frame-4",
+      "action": "Import",
+      "observed": true
+    },
+    {
+      "from": "frame-3",
+      "to": "frame-5",
+      "action": "Create",
+      "observed": true
+    },
+    {
+      "from": "frame-3",
+      "to": "frame-6",
+      "action": "Status",
+      "observed": true
+    },
+    {
+      "from": "frame-3",
+      "to": "frame-7",
+      "action": "Priority",
+      "observed": true
+    },
+    {
+      "from": "frame-3",
+      "to": "frame-8",
+      "action": "View",
+      "observed": true
+    },
+    {
+      "from": "frame-11",
+      "to": "frame-12",
+      "action": "Invite User",
+      "observed": true
+    },
+    {
+      "from": "frame-11",
+      "to": "frame-13",
+      "action": "Add User",
+      "observed": true
+    },
+    {
+      "from": "frame-11",
+      "to": "frame-14",
+      "action": "Status",
+      "observed": true
+    },
+    {
+      "from": "frame-11",
+      "to": "frame-15",
+      "action": "Role",
+      "observed": true
+    },
+    {
+      "from": "frame-11",
+      "to": "frame-16",
+      "action": "View",
+      "observed": true
+    },
+    {
+      "from": "frame-17",
+      "to": "frame-18",
+      "action": "Shadcn Admin Vite + ShadcnUI",
+      "observed": true
+    },
+    {
+      "from": "frame-17",
+      "to": "frame-19",
+      "action": "SN satnaing satnaingdev@gmail.com",
+      "observed": true
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-34",
+      "action": "Pick a date",
+      "observed": true
+    },
+    {
+      "from": "frame-1",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-1",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-1",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-1",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-1",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-1",
+      "to": "frame-20",
+      "action": "Overview",
+      "observed": false
+    },
+    {
+      "from": "frame-3",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-3",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-3",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-3",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-3",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-9",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-9",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-9",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-9",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-9",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-10",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-10",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-10",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-10",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-10",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-11",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-11",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-11",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-11",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-11",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-17",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-17",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-17",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-17",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-17",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-26",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-26",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-26",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-26",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-26",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-26",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-27",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-27",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-27",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-27",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-27",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-27",
+      "to": "frame-28",
+      "action": "Sign Up",
+      "observed": false
+    },
+    {
+      "from": "frame-27",
+      "to": "frame-29",
+      "action": "User Management",
+      "observed": false
+    },
+    {
+      "from": "frame-27",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-28",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-28",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-28",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-28",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-28",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-28",
+      "to": "frame-27",
+      "action": "Sign In",
+      "observed": false
+    },
+    {
+      "from": "frame-28",
+      "to": "frame-29",
+      "action": "User Management",
+      "observed": false
+    },
+    {
+      "from": "frame-28",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-29",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-29",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-29",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-29",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-29",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-29",
+      "to": "frame-27",
+      "action": "Sign In",
+      "observed": false
+    },
+    {
+      "from": "frame-29",
+      "to": "frame-28",
+      "action": "Sign Up",
+      "observed": false
+    },
+    {
+      "from": "frame-29",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-31",
+      "to": "frame-38",
+      "action": "Resend a new code.",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-33",
+      "action": "Account",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-35",
+      "action": "Appearance",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-37",
+      "action": "Notifications",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-36",
+      "action": "Display",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-32",
+      "to": "frame-1",
+      "action": "email settings",
+      "observed": false
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-32",
+      "action": "Profile",
+      "observed": false
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-35",
+      "action": "Appearance",
+      "observed": false
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-37",
+      "action": "Notifications",
+      "observed": false
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-36",
+      "action": "Display",
+      "observed": false
+    },
+    {
+      "from": "frame-33",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-35",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-35",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-35",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-35",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-35",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-35",
+      "to": "frame-32",
+      "action": "Profile",
+      "observed": false
+    },
+    {
+      "from": "frame-35",
+      "to": "frame-33",
+      "action": "Account",
+      "observed": false
+    },
+    {
+      "from": "frame-35",
+      "to": "frame-37",
+      "action": "Notifications",
+      "observed": false
+    },
+    {
+      "from": "frame-35",
+      "to": "frame-36",
+      "action": "Display",
+      "observed": false
+    },
+    {
+      "from": "frame-35",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-36",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-36",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-36",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-36",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-36",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-36",
+      "to": "frame-32",
+      "action": "Profile",
+      "observed": false
+    },
+    {
+      "from": "frame-36",
+      "to": "frame-33",
+      "action": "Account",
+      "observed": false
+    },
+    {
+      "from": "frame-36",
+      "to": "frame-35",
+      "action": "Appearance",
+      "observed": false
+    },
+    {
+      "from": "frame-36",
+      "to": "frame-37",
+      "action": "Notifications",
+      "observed": false
+    },
+    {
+      "from": "frame-36",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-1",
+      "action": "Dashboard",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-3",
+      "action": "Tasks",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-9",
+      "action": "Apps",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-10",
+      "action": "Chats 3",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-11",
+      "action": "Users",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-32",
+      "action": "Profile",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-33",
+      "action": "Account",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-35",
+      "action": "Appearance",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-36",
+      "action": "Display",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-17",
+      "action": "Help Center",
+      "observed": false
+    },
+    {
+      "from": "frame-37",
+      "to": "frame-32",
+      "action": "mobile settings",
+      "observed": false
+    },
+    {
+      "from": "frame-38",
+      "to": "frame-30",
+      "action": "Forgot password?",
+      "observed": false
+    }
+  ],
+  "gaps": [
+    {
+      "route": "/errors/$error",
+      "reason": "A concrete example URL is needed"
+    },
+    {
+      "route": "/tasks",
+      "action": "Open menu",
+      "reason": "Control is missing or ambiguous"
+    },
+    {
+      "route": "/users",
+      "action": "Open menu",
+      "reason": "Control is missing or ambiguous"
+    },
+    {
+      "route": "/settings/account",
+      "action": "Select language",
+      "reason": "Control is missing or ambiguous"
+    },
+    {
+      "route": "/sign-in-2",
+      "reason": "Route budget reached"
+    },
+    {
+      "route": "/sign-up",
+      "reason": "Route budget reached"
+    },
+    {
+      "route": "/terms",
+      "reason": "Route budget reached"
+    },
+    {
+      "route": "/privacy",
+      "reason": "Route budget reached"
+    }
+  ],
+  "variants": []
+}

@@ -1,0 +1,9 @@
+{
+  "id": "library",
+  "anchor": "frame-2",
+  "label": "Report library",
+  "route": "/?tab=reports&study=library",
+  "created": 1795544074286,
+  "section": "Reports",
+  "note": "Reports are grouped by topic so you can find one without knowing its name."
+}

@@ -1,0 +1,9 @@
+{
+  "id": "inbox-ticket-sent",
+  "anchor": "frame-10",
+  "label": "See the sent message",
+  "route": "/chats?demo=sent",
+  "section": "Inbox",
+  "note": "The message and ticket appear together in Taylor’s conversation.",
+  "created": 1795653835783
+}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monthly business review · Reports</title>
+<style>
+* {box-sizing:border-box} body {margin:0;background:#f8fafc;color:#101828;font:15px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.shell {min-height:100vh;display:grid;grid-template-columns:244px minmax(0,1fr);gap:8px;padding:8px}
+aside {padding:16px}.brand {display:flex;align-items:center;gap:10px;line-height:1.35;margin-bottom:36px}.brand b:first-child {background:#101828;color:white;border-radius:10px;padding:7px 10px;font-size:20px}
+small,.muted {color:#64748b}.nav {list-style:none;padding:0;margin:8px 0 24px}.nav li {padding:7px 12px}.nav .active,.tabs {background:#f1f5f9;border-radius:8px}.active {font-weight:600}
+main {background:white;border:1px solid #e2e8f0;border-radius:14px;min-width:0;padding:0 20px 24px}.top {display:flex;align-items:center;gap:25px;height:64px;color:#64748b;font-size:14px}.top b {color:#101828}.avatar {margin-left:auto;border-radius:100%;padding:6px;background:#f1f5f9}
+.line {display:flex;align-items:center;justify-content:space-between;gap:12px}.download {background:#101828;color:white;border-radius:7px;padding:7px 14px;font-size:14px}
+h1 {margin:18px 0 6px;font-size:28px;letter-spacing:-.04em} h2 {font-size:21px;letter-spacing:-.03em} h3 {margin:0 0 18px;font-size:16px}
+.tabs {display:inline-flex;padding:4px;gap:3px;font-size:14px}.tabs span {padding:3px 12px}.tabs .active {background:white;border-radius:5px;box-shadow:0 1px 3px #0002}.period {font-size:14px;border:1px solid #e2e8f0;border-radius:7px;padding:5px 10px}
+.card {border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 1px 3px #0001;padding:24px}.hero,.details {display:grid;gap:24px;grid-template-columns:1fr 1.4fr}.details {margin-top:16px;grid-template-columns:1.45fr 1fr;gap:16px}
+.amount {font-size:46px;font-weight:650;letter-spacing:-.055em}.chart {height:158px;display:flex;gap:9px;align-items:flex-end}.bar {flex:1;min-width:0;text-align:center;color:#64748b;font-size:12px}.bar i {display:block;height:var(--height);border-radius:5px 5px 0 0;margin:5px 0;background:#cbd5e1}.bar:last-child i {background:#101828}
+dl {margin:0}dl div {display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #e2e8f0}dl div:last-child {font-weight:650;border:0}.metric {font-size:25px;font-weight:650}.rule {border:0;border-top:1px solid #e2e8f0;margin:12px 0}
+@media(max-width:1000px){.shell{grid-template-columns:178px minmax(0,1fr)}.hero {grid-template-columns:1fr}.chart {height:150px}}
+@media(max-width:720px){aside {display:none}.shell {display:block}.details{grid-template-columns:1fr}.top{gap:9px}.tabs span{padding:3px 6px}main{padding:0 12px 16px}.card{padding:16px}}
+</style>
+</head>
+<body><div class="shell">
+<aside><div class="brand"><b>⌘</b><div><strong>Shadcn Admin</strong><br><small>Vite + ShadcnUI</small></div></div>
+<small>General</small><ul class="nav"><li class="active">Dashboard</li><li>Tasks</li><li>Apps</li><li>Chats</li><li>Users</li></ul><small>Pages</small><ul class="nav"><li>Auth</li><li>Errors</li></ul><small>Other</small><ul class="nav"><li>Settings</li><li>Help Center</li></ul></aside>
+<main><header class="top"><b>Overview</b><span>Customers</span><span>Products</span><span>Settings</span><b class="avatar">SN</b></header>
+<div class="line"><h1>Dashboard</h1><span class="download">Download</span></div><div class="tabs"><span>Overview</span><span>Analytics</span><span class="active">Reports</span><span>Notifications</span></div>
+<div class="line"><h2>Monthly business review</h2><span class="period">October 2026</span></div>
+<section class="card"><h3>Revenue performance</h3><div class="hero"><div><div class="amount">$284,600</div><strong>↗ 11.8%</strong> since September<p class="muted">New business contributed $24,100 to this month’s growth.</p></div>
+<div class="chart" aria-label="Monthly revenue trend">
+<div class="bar" style="--height:66px">$181k<i></i>May</div><div class="bar" style="--height:75px">$204k<i></i>Jun</div><div class="bar" style="--height:83px">$226k<i></i>Jul</div><div class="bar" style="--height:88px">$241k<i></i>Aug</div><div class="bar" style="--height:93px">$255k<i></i>Sep</div><div class="bar" style="--height:104px">$285k<i></i>Oct</div></div></div></section>
+<div class="details"><section class="card"><h3>Revenue movement</h3><dl><div><dt>New business</dt><dd>+$24,100</dd></div><div><dt>Expansion</dt><dd>+$9,600</dd></div><div><dt>Churn</dt><dd>−$3,600</dd></div><div><dt>Net change</dt><dd>+$30,100</dd></div></dl></section>
+<section class="card"><h3>Customer health</h3><div class="metric">128</div><span class="muted">New accounts</span><hr class="rule"><div class="metric">96.2%</div><span class="muted">Account retention</span></section></div></main></div></body></html>

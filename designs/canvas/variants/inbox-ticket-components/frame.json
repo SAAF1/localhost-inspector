@@ -1,0 +1,20 @@
+{
+  "id": "inbox-ticket-components",
+  "anchor": "frame-10",
+  "label": "Swap a Linear ticket",
+  "route": "/component-review.html",
+  "section": "Swap a Linear ticket",
+  "steps": [
+    {
+      "key": "statuses",
+      "label": "Ticket details",
+      "route": "/component-review.html",
+      "note": "",
+      "sectionPath": [
+        "Components"
+      ],
+      "reviewNote": "Select a different issue to compare it with the current attachment. Keep current ticket preserves the draft. Confirm replacement applies the proposed issue."
+    }
+  ],
+  "created": 1795663224319
+}

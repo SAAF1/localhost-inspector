@@ -1,0 +1,412 @@
+{
+  "version": 1,
+  "revision": 7,
+  "edits": [
+    {
+      "id": "852849bf-43dc-49af-b715-032ec0f28741",
+      "route": "/?~7632a20af1768c2fad7c8b3cfaf0d974aaa470f4e29ede05b7d1b9f700377953",
+      "property": "justify-content",
+      "requested": "center",
+      "observed": "center",
+      "before": "normal",
+      "restore": "ambiguous",
+      "target": {
+        "tag": "div",
+        "id": null,
+        "slot": null,
+        "key": null
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "intent": "feature-template",
+      "sourceContext": {
+        "ancestors": [
+          {
+            "tag": "div",
+            "slot": "card-content"
+          },
+          {
+            "tag": "div",
+            "slot": "card"
+          },
+          {
+            "tag": "div"
+          },
+          {
+            "tag": "section"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs-content",
+            "role": "tabpanel"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs"
+          }
+        ],
+        "childTags": [
+          "span",
+          "button",
+          "button"
+        ],
+        "bounds": [
+          736,
+          375,
+          655,
+          53
+        ]
+      }
+    },
+    {
+      "id": "ebd633a6-792e-4713-a2ce-2f4821cc5529",
+      "route": "/?~7632a20af1768c2fad7c8b3cfaf0d974aaa470f4e29ede05b7d1b9f700377953",
+      "property": "justify-content",
+      "requested": "end",
+      "observed": "end",
+      "before": "center",
+      "restore": "ambiguous",
+      "target": {
+        "tag": "div",
+        "id": null,
+        "slot": null,
+        "key": null
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "intent": "feature-template",
+      "sourceContext": {
+        "ancestors": [
+          {
+            "tag": "div",
+            "slot": "card-content"
+          },
+          {
+            "tag": "div",
+            "slot": "card"
+          },
+          {
+            "tag": "div"
+          },
+          {
+            "tag": "section"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs-content",
+            "role": "tabpanel"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs"
+          }
+        ],
+        "childTags": [
+          "span",
+          "button",
+          "button"
+        ],
+        "bounds": [
+          736,
+          375,
+          655,
+          53
+        ]
+      }
+    },
+    {
+      "id": "3a919c99-d226-4d6a-bec7-a5ba3ea8c076",
+      "route": "/?~7632a20af1768c2fad7c8b3cfaf0d974aaa470f4e29ede05b7d1b9f700377953",
+      "property": "justify-content",
+      "requested": "center",
+      "observed": "center",
+      "before": "end",
+      "restore": "ambiguous",
+      "target": {
+        "tag": "div",
+        "id": null,
+        "slot": null,
+        "key": null
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "intent": "feature-template",
+      "sourceContext": {
+        "ancestors": [
+          {
+            "tag": "div",
+            "slot": "card-content"
+          },
+          {
+            "tag": "div",
+            "slot": "card"
+          },
+          {
+            "tag": "div"
+          },
+          {
+            "tag": "section"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs-content",
+            "role": "tabpanel"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs"
+          }
+        ],
+        "childTags": [
+          "span",
+          "button",
+          "button"
+        ],
+        "bounds": [
+          736,
+          375,
+          655,
+          53
+        ]
+      }
+    },
+    {
+      "id": "1eb4ea0e-ba3a-4529-83e2-088c3fd19001",
+      "route": "/?~7632a20af1768c2fad7c8b3cfaf0d974aaa470f4e29ede05b7d1b9f700377953",
+      "property": "align-items",
+      "requested": "end",
+      "observed": "end",
+      "before": "center",
+      "restore": "ambiguous",
+      "target": {
+        "tag": "div",
+        "id": null,
+        "slot": null,
+        "key": null
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "intent": "feature-template",
+      "sourceContext": {
+        "ancestors": [
+          {
+            "tag": "div",
+            "slot": "card-content"
+          },
+          {
+            "tag": "div",
+            "slot": "card"
+          },
+          {
+            "tag": "div"
+          },
+          {
+            "tag": "section"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs-content",
+            "role": "tabpanel"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs"
+          }
+        ],
+        "childTags": [
+          "span",
+          "button",
+          "button"
+        ],
+        "bounds": [
+          736,
+          375,
+          655,
+          53
+        ]
+      }
+    },
+    {
+      "id": "742a0732-8c35-4e95-94cc-0d51668eaba3",
+      "route": "/?~7632a20af1768c2fad7c8b3cfaf0d974aaa470f4e29ede05b7d1b9f700377953",
+      "property": "align-items",
+      "requested": "center",
+      "observed": "center",
+      "before": "end",
+      "restore": "ambiguous",
+      "target": {
+        "tag": "div",
+        "id": null,
+        "slot": null,
+        "key": null
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "intent": "feature-template",
+      "sourceContext": {
+        "ancestors": [
+          {
+            "tag": "div",
+            "slot": "card-content"
+          },
+          {
+            "tag": "div",
+            "slot": "card"
+          },
+          {
+            "tag": "div"
+          },
+          {
+            "tag": "section"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs-content",
+            "role": "tabpanel"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs"
+          }
+        ],
+        "childTags": [
+          "span",
+          "button",
+          "button"
+        ],
+        "bounds": [
+          736,
+          375,
+          655,
+          53
+        ]
+      }
+    },
+    {
+      "id": "6c32fa23-a005-4da5-b337-c508fb99eeeb",
+      "route": "/?~7632a20af1768c2fad7c8b3cfaf0d974aaa470f4e29ede05b7d1b9f700377953",
+      "property": "align-items",
+      "requested": "start",
+      "observed": "start",
+      "before": "center",
+      "restore": "ambiguous",
+      "target": {
+        "tag": "div",
+        "id": null,
+        "slot": null,
+        "key": null
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "intent": "feature-template",
+      "sourceContext": {
+        "ancestors": [
+          {
+            "tag": "div",
+            "slot": "card-content"
+          },
+          {
+            "tag": "div",
+            "slot": "card"
+          },
+          {
+            "tag": "div"
+          },
+          {
+            "tag": "section"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs-content",
+            "role": "tabpanel"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs"
+          }
+        ],
+        "childTags": [
+          "span",
+          "button",
+          "button"
+        ],
+        "bounds": [
+          736,
+          375,
+          655,
+          53
+        ]
+      }
+    },
+    {
+      "id": "e6abcbcb-6b36-49ad-b85e-0c4cc68551b3",
+      "route": "/?~7632a20af1768c2fad7c8b3cfaf0d974aaa470f4e29ede05b7d1b9f700377953",
+      "property": "align-items",
+      "requested": "center",
+      "observed": "center",
+      "before": "start",
+      "restore": "ambiguous",
+      "target": {
+        "tag": "div",
+        "id": null,
+        "slot": null,
+        "key": null
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "intent": "feature-template",
+      "sourceContext": {
+        "ancestors": [
+          {
+            "tag": "div",
+            "slot": "card-content"
+          },
+          {
+            "tag": "div",
+            "slot": "card"
+          },
+          {
+            "tag": "div"
+          },
+          {
+            "tag": "section"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs-content",
+            "role": "tabpanel"
+          },
+          {
+            "tag": "div",
+            "slot": "tabs"
+          }
+        ],
+        "childTags": [
+          "span",
+          "button",
+          "button"
+        ],
+        "bounds": [
+          736,
+          375,
+          655,
+          53
+        ]
+      }
+    }
+  ]
+}
