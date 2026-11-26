@@ -26,7 +26,7 @@ try {
   await label.click({ modifiers: ['Meta'] })
   await panel('#design-tab')
   await panel('#control-font-size')
-  await page.keyboard.press('Meta+a')
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a')
   await page.keyboard.type(size)
   await page.keyboard.press('Enter')
   await until(async () => (await rows()).every(([observed]) => observed === size + 'px'), 'Edit did not take effect')
