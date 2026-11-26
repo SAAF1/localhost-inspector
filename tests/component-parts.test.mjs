@@ -119,4 +119,17 @@ test('only an unshadowed public recipe reaching the returned class can prepare a
   ])
   assert.deepEqual(finiteComponentInputs(root,source,opening('<Chip tone="hover" density="loose"/>')).map(f=>f.field),['density'])
 
+  const withDefaults=multiSource.replace("density:{loose:'pad-large',tight:'pad-small'}}", "density:{loose:'pad-large',tight:'pad-small'}},defaultVariants:{tone:'quiet',density:'loose'}")
+  await writeFile(join(root,file),withDefaults)
+  const defaultsTree=parseAuthoredJsx(withDefaults)
+  const defaults={file,tree:defaultsTree,fn:defaultsTree.program.body[2].declaration,imports:typeModule(defaultsTree,file).imports}
+  const discover=jsx=>finiteComponentInputs(root,defaults,opening(jsx))
+  assert.deepEqual(discover('<Chip/>').map(({field,base,implicit})=>[field,base,implicit]),[
+    ['tone','quiet',true],['density','loose',true],
+  ])
+  assert.equal(discover('<Chip tone={data.tone}/>'),undefined)
+  assert.equal(discover('<Chip tone/>'),undefined)
+  assert.equal(discover('<Chip {...props}/>'),undefined)
+  assert.deepEqual(discover('<Chip tone="quiet"/>'),[fields[0]])
+
 })

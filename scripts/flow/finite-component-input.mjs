@@ -35,15 +35,23 @@ export function finiteComponentInputs(root, definition, opening) {
         const qualified = options.filter(option => typeof option === 'string' &&
           /^[a-zA-Z0-9_-]{1,60}$/.test(option) && verify?.[option]?.tokens.length)
         if (qualified.length >= 2)
-          fields.set(field,{field,attribute:field,options:qualified,verify,component:JSON.stringify([contract.source,contract.name])})
+          fields.set(field,{field,attribute:field,options:qualified,verify,defaultValue:contract.defaults?.[field],component:JSON.stringify([contract.source,contract.name])})
       }
     })
     cache.set(definition,fields)
   }
+  if (opening.attributes.some(attr=>attr.type==='JSXSpreadAttribute')) return
   const supplied = opening.attributes.flatMap(attr => {
     const input = fields.get(attr.name?.name), value=attr.value
     return input && value?.type==='StringLiteral' && input.options.includes(value.value) ? [{...input,base:value.value}] : []
   })
+  // Preserve the exact descriptor of an existing explicitly supplied use.
+  // Defaults are a distinct admission only where no finite field is supplied.
+  if (!supplied.length && !opening.attributes.some(attr=>fields.has(attr.name?.name))) {
+    for (const input of fields.values()) {
+      if (input.options.includes(input.defaultValue)) supplied.push({...input,base:input.defaultValue,implicit:true})
+    }
+  }
   if (!supplied.length || supplied.length > 4 || new Set(supplied.map(input=>input.field)).size !== supplied.length) return
-  return supplied
+  return supplied.map(({defaultValue,...input})=>input)
 }

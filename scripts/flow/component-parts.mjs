@@ -3,9 +3,11 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseAuthoredJsx } from './authored-forwarding.mjs'
+import { localBindingNames } from './authored-use.mjs'
+import { reactReference, renderOwnerFunction } from './record-render-path.mjs'
 import { typeModule } from '../../component-types.mjs'
 
-export function componentDefinitions(root, resolved) {
+export function componentDefinitions(root, resolved, {finiteInputs=false} = {}) {
 	const cache = new Map()
 	function definition(file, spec, seen = new Set()) {
 		const path = spec && resolved.get(JSON.stringify([file, spec.from]))
@@ -25,6 +27,19 @@ export function componentDefinitions(root, resolved) {
 		} else {
 			for (const stmt of tree.program.body) {
 				const fn = stmt.declaration ?? stmt
+				if (finiteInputs && fn.type === 'VariableDeclaration' && fn.kind === 'const') {
+					const entry = fn.declarations.find(d=>d.id.name===(exported?.name ?? spec.name))
+					if (entry && (exported || stmt.type==='ExportNamedDeclaration')) {
+						const call = entry.init
+						const forwarded = call?.type === 'CallExpression' && call.arguments.length === 1 &&
+							reactReference(tree,call.callee,'forwardRef',localBindingNames(tree)) && call.arguments[0]
+						const render = renderOwnerFunction(tree,entry) ?? forwarded
+						if (['ArrowFunctionExpression','FunctionExpression'].includes(render?.type) && !render.async && !render.generator) {
+							result = {fn:render,tree,file:path,files:[path],imports:module.imports}
+							break
+						}
+					}
+				}
 				if (fn.type !== 'FunctionDeclaration') continue
 				if (
 					(spec.name === 'default' &&

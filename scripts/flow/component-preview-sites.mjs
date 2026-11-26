@@ -9,7 +9,7 @@ import { componentContracts, createComponentTypeResolver } from '../../component
 const runtimeFile = fileURLToPath(new URL('../../integrations/react-component-props.mjs', import.meta.url))
 const runtime = 'virtual:localhost-inspector/component-props'
 
-export function componentPreviewSites(project) {
+export function componentPreviewSites(project, {conditionalHosts=false} = {}) {
   const root = realpathSync(project)
   const resolveType = createComponentTypeResolver(root)
   return {
@@ -34,7 +34,17 @@ export function componentPreviewSites(project) {
           if (!contract.fields.length || !['Identifier','ObjectPattern'].includes(param?.type) || fn.async || fn.generator) return
           // Composite-only wrappers own no physical layer. A root marker is an
           // explicit forwarding point; otherwise stamp literal host roots only.
-          const targets = [...roots].filter(el => /^[a-z]/.test(el.name.name) ||
+          const conditional = new Set()
+          if (conditionalHosts && fn.body.type==='BlockStatement') {
+            for (const statement of fn.body.body) {
+              if (statement.type!=='VariableDeclaration' || statement.kind!=='const') continue
+              for (const {id,init} of statement.declarations) {
+                if (id.type==='Identifier' && init?.type==='ConditionalExpression' &&
+                    [init.consequent,init.alternate].some(branch=>branch.type==='StringLiteral' && /^[a-z][a-z0-9-]*$/.test(branch.value))) conditional.add(id.name)
+              }
+            }
+          }
+          const targets = [...roots].filter(el => /^[a-z]/.test(el.name.name) || conditional.has(el.name.name) ||
             el.attributes.some(a => a.name?.name === 'data-slot' && a.value?.type === 'StringLiteral'))
           if (!targets.length) return
           const bindingEnd = param.typeAnnotation?.start ?? param.end
@@ -54,6 +64,10 @@ export function componentPreviewSites(project) {
           }
           for (const element of targets) {
             const at = element.attributes.at(-1)?.end ?? element.name.end
+            if (conditional.has(element.name.name)) {
+              output.appendLeft(at, ' {...(typeof '+element.name.name+' === "string" ? {"data-inspector-source":__liPreview.source,"data-inspector-instance":__liPreview.id} : {})}')
+              continue
+            }
             output.appendLeft(at, ' data-inspector-source={__liPreview.source} data-inspector-instance={__liPreview.id}')
           }
         }, (from, specifier) => {

@@ -29,3 +29,21 @@ test('an Inspector build binds imported slot contracts to the rendered component
   await writeFile(types, "export type TileProps = { tone: 'quiet' | 'saturated', children: React.ReactNode }")
   assert.match(compile(), /"tone":\["quiet","saturated"\]/)
 })
+
+test('conditional host markers require the opt-in and an actual intrinsic branch', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'conditional-contract-')))
+  t.after(() => rm(root, { recursive:true, force:true }))
+  const code = `import React from 'react'
+    import {Slot} from 'ui'
+    export function Chip({asChild, tone = 'quiet'}: {asChild: boolean, tone: 'quiet' | 'loud'}) {
+      const Tag = asChild ? Slot : 'button'
+      return <Tag className={tone}/>
+    }`
+  const compile = (input, optIn) => componentPreviewSites(root,{conditionalHosts:optIn})
+    .transform.call({addWatchFile(){}},input,join(root,'Chip.tsx'))?.code
+  assert.equal(compile(code,false),undefined)
+  const prepared = compile(code,true)
+  assert.match(prepared,/typeof Tag === "string" \? \{"data-inspector-source"/)
+  assert.doesNotThrow(()=>parse(prepared,{sourceType:'module',plugins:['jsx','typescript']}))
+  assert.equal(compile(code.replace("'button'","Other"),true),undefined)
+})

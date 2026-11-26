@@ -111,8 +111,7 @@ function analyze(code, file, config) {
       const forwardsStyle = part && styleProp?.type==='Identifier' && styleProp.name === part.props.get('style')
       const finiteDefinition = config.panelBindings && /^[A-Z]/.test(name) && renderOwnerFunction(tree, owner) &&
         !locals.has(name) && !(config.button && imports.get(name)?.from === '@/components/ui/button') &&
-        opening.attributes.some(a=>a.value?.type==='StringLiteral' && !['className','id','role'].includes(a.name?.name)) &&
-        config.definition(file, imports.get(name))
+        config.finiteDefinitionFor(file, imports.get(name))
       const finite = finiteDefinition && config.hostLibrary(finiteDefinition.file,'class-variance-authority') &&
         finiteComponentInputs(config.root,finiteDefinition,opening)
       let reason = 'no qualified operation'
@@ -122,7 +121,7 @@ function analyze(code, file, config) {
         found.push({ ...raw, moduleClass:reference, surface:surface.surface, styles:surface.styles, componentProof:config.proof(surface.componentFiles),
           dependencies:[...new Set([...raw.dependencies,...surface.dependencies,...config.css.tokenFiles])] })
         reason=null
-      } else if (finite) {
+      } else if (finite && !finite[0].implicit) {
         found.push({...raw,input:finite[0],...(finite.length > 1 ? {additionalInputs:finite.slice(1)} : {}),componentProof:config.proof(finiteDefinition.files),
           dependencies:[...new Set([...raw.dependencies,...finiteDefinition.files])]})
         reason = null
@@ -274,6 +273,12 @@ function analyze(code, file, config) {
           } else reason = 'no verified direct finite slot or variant'
         }
       }
+      if (reason && finite?.[0].implicit && !opening.attributes.some(a=>a.type==='JSXSpreadAttribute')) {
+        found.push({...raw,input:finite[0],...(finite.length>1 ? {additionalInputs:finite.slice(1)} : {}),
+          componentProof:config.proof(finiteDefinition.files),
+          dependencies:[...new Set([...raw.dependencies,...finiteDefinition.files])]})
+        reason=null
+      }
       if (config.panelBindings && owner && typeof name === 'string' && /^[a-z][a-z0-9-]*$/.test(name) &&
           !config.css.indexError && !opening.attributes.some(a => a.name?.name?.startsWith('data-li-'))) {
         // A native host needs no prop-forwarding assumption. Its emitted CSS
@@ -388,6 +393,7 @@ export async function prepareProject(project, destination, namespace, boundary =
   } : undefined, panelBindings ? (file, spec) => classJoins.add(JSON.stringify([file, spec])) : undefined,
     panelBindings ? (file,spec) => libraries.add(JSON.stringify([file,spec])) : undefined)
   const definition = componentDefinitions(root, resolved)
+  const finiteDefinitionFor = componentDefinitions(root,resolved,{finiteInputs:true})
   const proof = componentProof(root)
   const hostLibrary = (file,spec) => libraries.has(JSON.stringify([file,spec]))
   const forwarding = new Map()
@@ -443,7 +449,7 @@ export async function prepareProject(project, destination, namespace, boundary =
           }
           trees.set(path, cached)
         }
-        const result = analyze(code, file, { root, theme, button, tailwind, panelBindings, forwarded, resolved, classJoins, definition, hostLibrary, proof, dependencies: deps, tree: cached.tree, css })
+        const result = analyze(code, file, { root, theme, button, tailwind, panelBindings, forwarded, resolved, classJoins, definition, finiteDefinitionFor, hostLibrary, proof, dependencies: deps, tree: cached.tree, css })
         sites.push(...result.sites)
         unresolved.push(...result.rejected)
         files.push({ file, status: 'indexed', candidates: result.sites.length })

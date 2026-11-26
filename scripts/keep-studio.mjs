@@ -95,8 +95,13 @@ export function keepStudio(dir) {
           if (input?.options.includes(value)) {
             if (input.attribute) {
               const literal = attr(input.attribute)
-              if (literal?.value !== input.base) throw Error('The component input changed.')
-              out.overwrite(literal.start + 1, literal.end - 1, value)
+              if (input.implicit) {
+                if (node.attributes.some(a => a.name?.name === input.attribute || a.type === 'JSXSpreadAttribute')) throw Error('The defaulted component input changed.')
+                out.appendLeft(node.name.end,' '+input.attribute+'='+JSON.stringify(value))
+              } else {
+                if (literal?.value !== input.base) throw Error('The component input changed.')
+                out.overwrite(literal.start + 1, literal.end - 1, value)
+              }
             } else {
               const slots = children.filter(
                 (child) =>

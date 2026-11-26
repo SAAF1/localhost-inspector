@@ -258,10 +258,10 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           if (inputs.length > 4 || new Set(inputs.map(input=>input.field)).size !== inputs.length ||
               (inputs.length > 1 && !inputs.every(input=>input.component && !input.child && !input.choices &&
                 /^[a-zA-Z][a-zA-Z0-9-]{0,59}$/.test(input.field) && input.attribute===input.field &&
-                attr(input.attribute)?.value?.value===input.base))) continue
+                (input.implicit ? !attr(input.attribute) : attr(input.attribute)?.value?.value===input.base)))) continue
           if (!inputs.every(input => {
             const { options, base, attribute, child, choices, verify } = input
-            return renderOwnerFunction(tree, owner) && (attr(attribute)?.value || child) &&
+            return renderOwnerFunction(tree, owner) && (input.implicit ? input.component && !attr(attribute) && !node.attributes.some(a=>a.type==='JSXSpreadAttribute') : attr(attribute)?.value || child) &&
               Array.isArray(options) && options.includes(base) && options.every(key =>
                 typeof key === 'string' && /^[\w-]{1,60}$/.test(key) &&
                 (verify?.[key]?.self || verify?.[key]?.child || (input.component && verify?.[key]?.tokens?.length)) &&
@@ -348,6 +348,9 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
                 options.map(key => JSON.stringify(key) + ':' + choices[key]).join(',') + '})[' +
                 state + '] ?? ' + slotTag.name + ';\n'
               out.overwrite(slotTag.start, slotTag.end, slot)
+            } else if (input.implicit) {
+              // Keep the prop physically absent in the original and empty candidate.
+              markers += ' {...(' + state + ' == null ? {} : {' + JSON.stringify(field) + ':' + state + '})}'
             } else {
               const original =
                 value.type === 'JSXExpressionContainer'
