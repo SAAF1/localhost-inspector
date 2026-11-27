@@ -1,3 +1,4 @@
+import { markMappedPlacements, mappedHostGate } from './shared-preview-bindings.mjs'
 import { registerCatalogImport } from './record-catalog.mjs'
 import { renderOwnerFunction } from './record-render-path.mjs'
 import { markRecordCallers, markRecordHost } from './record-scope.mjs'
@@ -79,7 +80,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
               manifestData.namespace,
               manifestData.boundary,
               server,
-              { panelBindings: Boolean(manifestData.panelBindings) },
+              { panelBindings: Boolean(manifestData.panelBindings), bindingMap: manifestData.bindingMap },
             )
             manifestData = next
             if (runtimeKey(next) === before) return
@@ -219,6 +220,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
         }
         const openings = preparedOpenings(tree)
         const out = new MagicString(code)
+        const mappedCalls = markMappedPlacements(file, sites, code, tree, out)
         const registeredCatalog = manifestData.panelBindings && !/__liRegisterCatalog|__liDerivedRecord/.test(code) && registerCatalogImport(out,file,manifestData.recordCatalog,tree)
         const revisions = {}
         const registrationsForModule = new Set()
@@ -283,6 +285,8 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           if (site.surface && (!surface || code.slice(surface.start,surface.end)!==site.surface.opening)) continue
           const revision = preparedRevision(root, namespace, site, code, tree, owner, dependencies)
           if (!revision) continue
+          const mappingGate = mappedHostGate(tree, site, owner, out)
+          if (mappingGate === null) continue
           revisions[site.id] = revision
           if (site.input || (!site.moduleClass && targets.some(({ style }) => !style.local && !style.forwarded &&
               !style.css?.selector && !['border-radius', 'font-size'].includes(style.property)))) reserved.add(node.start)
@@ -298,7 +302,12 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             const variable = site.styles ? prefix + '-' + property : prefix
             // Preserve dynamic inline/sx ownership. The variable is consumed at
             // the original declaration, so hover and media rules still compete normally.
-            if (style.styleInput) {
+            if (style.inlinePadding) {
+              const expression = paddingParts(style.base).map((base, index) =>
+                'var(' + prefix + '-padding-' + sides[index] + ', ' + base + ')').join(' ')
+              out.overwrite(start, end, JSON.stringify(expression))
+              ;(fields.styleInputs ??= {})[property] = { tag: style.tag, property:'padding', expression }
+            } else if (style.styleInput) {
               const expression = 'var(' + variable + ', ' + style.base + ')'
               out.overwrite(start, end, JSON.stringify(expression))
               ;(fields.styleInputs ??= {})[property] = { tag: style.tag, expression }
@@ -390,6 +399,10 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           if (authoredUseSchema && manifestData.panelBindings && fields.styles?.includes('border-radius'))
             if (!/__liRecordAttrs|__liRecordProof/.test(code) && markRecordHost(tree, node, owner, file, out)) recordRoots.add(node)
           preparedAtOpening.set(node.start, revision)
+          if (site.mapping) {
+            fields.styles = fields.styles.filter(property => site.mapping.properties.includes(property))
+            fields.mapping = site.mapping.scope
+          }
           const contract = { site: site.id, revision, file, ...fields }
           // A render/asChild element can own its own native styling while the
           // surrounding component still supplies the verified public input.
@@ -408,7 +421,13 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
           // Keep the internal host's fallback identity in a distinct attribute.
           const fallbackHost = site.renderedBindings && node.attributes.some(a=>a.type==='JSXSpreadAttribute')
           if (fallbackHost) revisionAttribute = ' data-li-render-revision="' + revision + '"'
-          out.appendLeft(
+          if (site.mapping) {
+            const when = value => mappingGate ? '(' + mappingGate + ' ? ' + value + ' : undefined)' : value
+            out.appendLeft(node.attributes.at(-1)?.end ?? node.name.end,
+              ' data-li-revision={' + when(JSON.stringify(revision)) + '}' +
+              ' data-li-mapped-scope={' + when(JSON.stringify(site.mapping.scope)) + '}' +
+              ' data-li-contract={' + when(JSON.stringify(JSON.stringify(contract))) + '}')
+          } else out.appendLeft(
             node.attributes.at(-1)?.end ?? node.name.end,
             markers +
               revisionAttribute +
@@ -434,7 +453,7 @@ export function preparedSites(root, manifest, { authoredUseSchema = 0 } = {}) {
             root, file, code, tree, out, reserved, preparedAtOpening, schema: authoredUseSchema,
             resolveImport: async (specifier) => (await this.resolve(specifier, id))?.id,
           })
-          if (!recipes.length) return (registeredCatalog || recordRoots.size || records || selected || marked || calls) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
+          if (!recipes.length) return (registeredCatalog || recordRoots.size || records || selected || marked || calls || mappedCalls) ? { code: out.toString(), map: out.generateMap({ hires: true, source: id }) } : undefined
         }
         // Report known-but-stale sites separately from an absent scene. The registry
         // contains only mappings for modules loaded in this page.

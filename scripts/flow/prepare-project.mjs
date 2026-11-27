@@ -1,3 +1,4 @@
+import { mappedPreviewSites } from './shared-preview-bindings.mjs'
 import { recordCatalog } from './record-catalog.mjs'
 import { renderOwnerFunction } from './record-render-path.mjs'
 // Prepare literal Tailwind uses and a verified CVA/Lucide button adapter in a
@@ -383,7 +384,7 @@ function ordinaryCSS(root, graph, classify, panelBindings) {
   return { classes, moduleClasses, descendants, tokenFiles, spacingSources, variableSources, indexError }
 }
 export async function prepareProject(project, destination, namespace, boundary = 'src', server, {
-  classifyCSS, panelBindings = false,
+  classifyCSS, panelBindings = false, bindingMap,
 } = {}) {
   const root = realpathSync(project),
     source = realpathSync(join(root, boundary))
@@ -466,6 +467,17 @@ export async function prepareProject(project, destination, namespace, boundary =
   }
   scan(source)
   const previous = existsSync(destination) ? JSON.parse(readFileSync(destination, 'utf8')) : null
+  let bindingError
+  if (panelBindings && bindingMap) {
+    try {
+      const mapped = mappedPreviewSites(root, bindingMap, graph, resolved, boundary)
+      for (const site of mapped) {
+        const overlap = sites.findIndex(other => other.file === site.file && other.owner === site.owner && other.opening === site.opening)
+        if (overlap >= 0) sites.splice(overlap, 1, site)
+        else sites.push(site)
+      }
+    } catch (error) { bindingError = error.message }
+  }
   const currentIds = new Set(sites.map((site) => site.id))
   const retiredSites =
     previous?.namespace === namespace
@@ -479,6 +491,7 @@ export async function prepareProject(project, destination, namespace, boundary =
     boundary,
     files,
     unresolved,
+    ...(bindingMap ? {bindingMap, ...(bindingError ? {bindingError} : {})} : {}),
     sites,
     retiredSites,
     ...(panelBindings ? { panelBindings: true, recordCatalog:recordCatalog(root,[...dataImports.values()]) } : {}),

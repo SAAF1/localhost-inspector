@@ -16,7 +16,7 @@ function uniqueStyleUse(site, code, openings) {
 
 // Recheck the original component and the component that paints its selected part.
 export async function recheckPreparedOwners(binding, operations, read) {
-  const pending = operations.filter(op => op.status === 'pending' && op.changes.some(edit => edit.prepared?.part || edit.prepared?.styleInput))
+  const pending = operations.filter(op => op.status === 'pending' && op.changes.some(edit => edit.prepared?.part || edit.prepared?.styleInput || edit.prepared?.mapping))
   if (!pending.length) return
   const manifest = binding.authoredUse && await read(join(binding.authoredUse.directory, 'prepared.json'), null)
   const sites = manifest?.namespace && Array.isArray(manifest.sites) ? manifest.sites : []
@@ -75,7 +75,21 @@ export async function recheckPreparedOwners(binding, operations, read) {
   for (const op of pending) {
     for (const { prepared, property } of op.changes) {
       const part = prepared?.part
-      if (!part && !prepared?.styleInput) continue
+      if (!part && !prepared?.styleInput && !prepared?.mapping) continue
+      if (prepared.mapping) {
+        const site = sites.find(entry => entry.id === prepared.site && entry.file === prepared.file)
+        if (site?.mapping?.scope !== prepared.mapping || !site.mapping.properties.includes(property) ||
+            !await matches(prepared.site,prepared.file,prepared.revision)) {
+          op.status = 'blocked'
+          op.reason = 'reviewed-binding-source-changed'
+          break
+        }
+        op.previewScope = {kind:prepared.mapping === 'selected' ? 'one authored occurrence' : 'shared authored use',
+          host:{file:site.file,owner:site.owner,opening:site.opening},
+          ...(site.mapping.invocation ? {invocation:site.mapping.invocation} : {}),
+          ...(site.styles.find(style => style.property === property)?.css ? {declaration:site.styles.find(style=>style.property===property).css} : {})}
+        continue
+      }
       if (!await matches(prepared.site, prepared.file, prepared.revision) ||
           (part?.depth && !await matches(part.site, null, part.revision))) {
         op.status = 'blocked'

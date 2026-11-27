@@ -267,7 +267,7 @@ if (mode === 'handoff' || mode === 'proposal-readiness') {
   await assertAuthoredReady(binding, file, journal, read)
   const handoff = buildSourceHandoff(binding, journal)
   if (mode === 'handoff') await recheckPreparedOwners(binding, handoff.operations, read)
-  for (const op of handoff.operations.filter(op=>op.scope === 'selected-use')) {
+  for (const op of handoff.operations.filter(op=>op.changes[0]?.selectedUse)) {
     const { verifySelectedUse } = await import('./scripts/flow/selected-use.mjs')
     try { verifySelectedUse(binding.source, op.changes[0].selectedUse) }
     catch { op.status='blocked'; op.reason='selected-source-changed' }
@@ -467,6 +467,14 @@ async function handle(message) {
     const imageCleanupFailed = await removeVisualEvidence(root, binding, retired)
     return { revision: journal.revision, completed, imageCleanupFailed, reloadInspector: true }
   }
+  if (message.type === 'save' && message.record?.prepared?.site?.startsWith?.('mapped-')) {
+    if (!binding.authoredUse || !message.record.prepared.mapping) throw Error('Reviewed bindings require a verified preview.')
+    const operation = {status:'pending',changes:[message.record]}
+    await recheckPreparedOwners(binding, [operation], read)
+    if (operation.status !== 'pending') throw Error('The reviewed binding changed. No edit was saved.')
+  }
+  if (message.type === 'savePairedPadding' && message.records?.some?.(record=>record.prepared?.mapping))
+    throw Error('Reviewed bindings require individual property edits.')
   if (message.type === 'save' && message.record?.selectedUse !== undefined) {
     if (!binding.authoredUse) throw Error('Selected source preview requires opt-in.')
     const { verifySelectedUse } = await import('./scripts/flow/selected-use.mjs')

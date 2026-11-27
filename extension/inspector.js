@@ -548,8 +548,9 @@
       authoredUse && !shared.length && origin?.file && 'Selected source · ' + origin.file + ' · ' + origin.owner,
       shared.length && contract.surface && 'Selected envelope and its direct painted surface',
       shared.length && Object.values(contract.parts ?? {}).some(part => part.depth) && 'Selected envelope and its verified painted descendant',
-      shared.length && 'Shared source controls · ' + shared.join(', '),
-      authoredUse && hasSelection && (editScope.value === 'selected'
+      shared.length && (contract.mapping === 'selected' ? 'Reviewed selected part · ' : 'Shared source controls · ') + shared.join(', '),
+      contract?.mapping === 'selected' && editScope.value !== 'selected' && 'Choose Selected element only to edit this reviewed placement.',
+      authoredUse && hasSelection && !contract?.mapping && (editScope.value === 'selected'
         ? (node.hasAttribute('data-li-record-scope') && node.getAttribute('data-inspector-target') ? 'One record · source handoff available for corner radius' : ui.recordContracts.available(node) ? 'One record · source handoff for corner radius and solid Fill' : selectedHeight ? 'Selected action · fixed Height handoff at ' + selectedHeight.owner : 'Selected occurrence preview · separate from source handoff')
         : contract && contract.file + ' · ' + ui.preparedPreview.membersOf(contract.revision).length + ' mounted'),
       hasSelection && preparedStylesUnavailable && 'Shared stylesheet controls are unavailable in this preview.',
@@ -895,13 +896,14 @@
       requested,
       ...tokenOptions,
       target: { tag: node.localName, key: null, slot: node.getAttribute('data-slot'), id: node.id || null },
-      intent: 'feature-template',
+      intent: contract.mapping === 'selected' ? 'selected occurrence only' : 'feature-template',
       restore: 'unique',
       prepared: {
         site: contract.site,
         file: contract.file,
         revision: contract.revision,
-        ...(contract.styleInputs?.[key] ? {styleInput:true} : {}),
+        ...(contract.mapping ? {mapping:contract.mapping} : {}),
+        ...(contract.styleInputs?.[key] && !contract.mapping ? {styleInput:true} : {}),
         ...(field ? { field } : {}),
         ...(sharedUse && key === 'gap' ? { effect: { property: 'gap', value: requested } } : {}),
         ...(contract.parts?.[key] ? { part:{...contract.parts[key],cascade:ui.preparedPreview.cascadeReceipt(key)} } : {}),
@@ -927,7 +929,8 @@
       })) throw Error('The shared members have different source declarations or rendered parts.')
     }
     const untouchedPadding = properties.every(key => key.startsWith('padding-'))
-      ? ['padding-top','padding-right','padding-bottom','padding-left'].filter(key=>!properties.includes(key)).map(key=>[key,read(key)])
+      ? [...originalMembers].flatMap(member => ['padding-top','padding-right','padding-bottom','padding-left']
+        .filter(key => !properties.includes(key)).map(key => [member, key, ui.preparedPreview.read(member, {property:key,prepared:{}})]))
       : []
     function verified(edit) {
       edit.observed = ui.preparedPreview.read(node, edit)
@@ -963,7 +966,7 @@
     try {
       recovery.projectPrepared(records)
       const matches = () => (!sharedUse || authored.samePreparedUse(node, sharedUse, contract)) &&
-        records.every(verified) && untouchedPadding.every(([key,before])=>read(key)===before)
+        records.every(verified) && untouchedPadding.every(([member,key,before])=>ui.preparedPreview.read(member,{property:key,prepared:{}})===before)
       if (!(await ui.waitForPreview(current, matches, previousChoice ? 2 : 0)))
         throw Error('The prepared edit did not reach the selected part in its current state.')
       for (const edit of boundParts) edit.prepared.part.cohort = await ui.preparedPreview.cohortReceipt(edit)
@@ -1099,6 +1102,14 @@
     const prepared = ui.preparedPreview.contract(node)
     if (authoredUse && get('authored-edit-scope').value === 'selected') selectionOnly = true
     const qualifiedPrepared = (prepared?.style === property || prepared?.styles?.includes(property)) && !tokenOptions?.pendingColor
+    if (prepared?.mapping && qualifiedPrepared) {
+      if ((prepared.mapping === 'selected') !== selectionOnly)
+        throw Error('Choose the reviewed scope for this property before editing.')
+      if (tokenOptions) throw Error('Reviewed bindings currently support explicit values.')
+      return commitPrepared(node, prepared, property, requested)
+    }
+    if (node.hasAttribute('data-li-mapped-scope') && ['padding-top','border-radius'].includes(property))
+      throw Error('The reviewed part or property is unavailable. No change was saved.')
     const family = property === 'color' ? 'paint' : ['gap', 'justify-content'].includes(property) ? 'spacing' : null
     const panelProperty = ['background-color', 'border-radius', 'font-size', 'height'].includes(property)
     if (authoredUse && panelProperty) {
@@ -1262,6 +1273,8 @@
       throw Error('Selection changed. Try the edit again.')
     }
     const selectedOnly = authoredUse && get('authored-edit-scope').value === 'selected'
+    if (selected.hasAttribute('data-li-mapped-scope'))
+      throw Error('Edit the reviewed top padding separately from the other sides.')
     if (selectedOnly) scope = { members: [] }
     const contract=ui.preparedPreview.contract(selected)
     if(!selectedOnly && contract && paddingProperties(axis).every(key=>contract.styles?.includes(key) && canEdit(selected,key)))

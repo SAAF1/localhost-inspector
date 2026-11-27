@@ -48,6 +48,7 @@ export function keepStudio(dir) {
         continue
       }
       const prepared = change.prepared
+      if (prepared?.mapping) throw Error('Retain the reviewed binding through the coding-agent source handoff.')
       const matches = prepared && sites.filter(site => site.id === prepared.site)
       if (matches?.length !== 1 || matches[0].file !== prepared.file || !/^src\/[\w/.$()-]+\.[jt]sx$/.test(prepared.file))
         throw Error('This operation needs an individual source handoff.')

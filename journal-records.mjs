@@ -36,6 +36,12 @@ export function journalValidators(journalRoute) {
         record.observed === record.requested && !reference
       if (prepared.styleInput !== undefined && (prepared.styleInput !== true || field ||
           !['height','font-size'].includes(record.property))) throw Error('Invalid prepared inline source input')
+      if (prepared.mapping !== undefined && (field || prepared.part || prepared.styleInput || reference ||
+          !/^mapped-[a-z][a-z0-9-]{0,45}$/.test(prepared.site) ||
+          !['selected','shared'].includes(prepared.mapping) ||
+          !['border-radius','padding-top'].includes(record.property) || record.requested !== record.observed ||
+          (prepared.mapping === 'selected') !== (record.intent === 'selected occurrence only')))
+        throw Error('Invalid reviewed binding request')
       const part = prepared?.part
       const validPart = part === undefined || (!field && ['background-color','border-radius','font-size'].includes(record.property) &&
         /^[a-f0-9]{32}$/.test(part?.id) && /^[a-f0-9]{64}$/.test(part.revision) &&
@@ -56,7 +62,7 @@ export function journalValidators(journalRoute) {
       const validWithdrawal = effect?.withdrawn === undefined || (field && effect.property === 'background-color' &&
         effect.value === 'rgba(0, 0, 0, 0)' && typeof effect.withdrawn === 'string' && /^[\w/-]{1,100}$/.test(effect.withdrawn))
       if (!validWithdrawal || !validEffect || !validPart || !validSite || !validControl || group || pending || record.template || record.frameState ||
-          record.restore !== 'unique' || record.intent !== featureTemplateScope) throw Error('Invalid prepared contract')
+          record.restore !== 'unique' || record.intent !== (prepared.mapping === 'selected' ? 'selected occurrence only' : featureTemplateScope)) throw Error('Invalid prepared contract')
     }
     const validRequest = field ? true : group ? validTextStyleRequest : reference
       ? !(token && spacing) && catalog && (spacing ? /^(gap|padding-(top|right|bottom|left))$/.test(record.property) : colors.has(record.property)) &&
@@ -117,7 +123,7 @@ export function journalValidators(journalRoute) {
     const textStyleToken = textStyle ? { source: textStyle.source, name: textStyle.name } : undefined
     return {
       id, route: journalRoute(route), property, requested, observed, before, restore,
-      ...(prepared ? { prepared: { ...(prepared.styleInput ? {styleInput:true} : {}), site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}),
+      ...(prepared ? { prepared: { ...(prepared.styleInput ? {styleInput:true} : {}), ...(prepared.mapping ? {mapping:prepared.mapping} : {}), site: prepared.site, revision: prepared.revision, file: prepared.file, ...(field ? { field } : {}),
         ...(prepared.effect ? {effect:{property:prepared.effect.property,value:prepared.effect.value,
           ...(prepared.effect.withdrawn ? {withdrawn:prepared.effect.withdrawn} : {})}} : {}),
         ...(prepared.part ? {part:{...Object.fromEntries(['id','revision','depth','file','selector'].map(k=>[k,prepared.part[k]])), ...(prepared.part.cohort ? {cohort:prepared.part.cohort} : {}), ...(prepared.part.cascade ? {cascade:prepared.part.cascade} : {}), ...(prepared.part.site ? {site:prepared.part.site} : {})}} : {}) } } : {}),

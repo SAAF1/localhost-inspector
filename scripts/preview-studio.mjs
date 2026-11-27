@@ -131,8 +131,12 @@ try {
         origin = 'http://127.0.0.1:' + port
       versions.push({ id, label, port, origin, app, basis, directory: dir })
     }
+    const bindingMapPath = process.env.INSPECTOR_SHARED_BINDING_MAP
+    if (bindingMapPath && process.env.INSPECTOR_AUTHORED_USE !== '1')
+      throw Error('Shared preview bindings require the authored-use experiment.')
     studio = {
       version: 1,
+      ...(bindingMapPath ? {bindingMap:JSON.parse(readFileSync(realpathSync(bindingMapPath), 'utf8'))} : {}),
       authoredUses: process.env.INSPECTOR_AUTHORED_USE === '1',
       authoredUseSchema: process.env.INSPECTOR_AUTHORED_USE === '1' ? 2 : 0,
       source,
@@ -217,7 +221,8 @@ try {
       if (!existsSync(join(map, name)) && existsSync(join(capturedMap, name)))
         copyFileSync(join(capturedMap, name), join(map, name))
     }
-    const inventory = await prepareProject(app, manifest, studio.namespace, studio.boundary, undefined, { panelBindings: Boolean(studio.authoredUseSchema) })
+    const inventory = await prepareProject(app, manifest, studio.namespace, studio.boundary, undefined, { panelBindings: Boolean(studio.authoredUseSchema), bindingMap: id === 'original' ? undefined : studio.bindingMap })
+    if (inventory.bindingError) console.warn('Reviewed preview bindings unavailable for ' + id + ': ' + inventory.bindingError)
     if (inventory.preparation?.preparedStyles === 'unavailable')
       console.warn('Shared stylesheet controls unavailable for ' + id + '. See diagnostics in ' + manifest)
     const child = await start(

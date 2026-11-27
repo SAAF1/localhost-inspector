@@ -73,7 +73,27 @@
     return ':is([data-li-revision="' + value + '"],[data-li-render-revision="' + value + '"]:not([data-li-revision]))'
   }
   function membersOf(revision, field) {
-    return document.querySelectorAll(revisionSelector(revision, field))
+    const nodes = [...document.querySelectorAll(revisionSelector(revision, field))]
+    return nodes.length > 1 && nodes.some(node => node.getAttribute('data-li-mapped-scope') === 'selected') ? [] : nodes
+  }
+  const activePlacements = new Map()
+  let placementObserver
+  function attachPlacements(edits) {
+    for (const [revision,node] of activePlacements) {
+      if (!edits.has(revision) || !node.isConnected || membersOf(revision)[0] !== node) {
+        node.removeAttribute('data-li-active-binding')
+        activePlacements.delete(revision)
+      }
+    }
+    for (const revision of edits) {
+      const [node] = membersOf(revision)
+      for (const active of document.querySelectorAll('[data-li-active-binding="' + revision + '"]'))
+        if (active !== node) active.removeAttribute('data-li-active-binding')
+      if (node?.getAttribute('data-li-mapped-scope') === 'selected' && !activePlacements.has(revision)) {
+        node.setAttribute('data-li-active-binding',revision)
+        activePlacements.set(revision,node)
+      }
+    }
   }
   const renderedFields = ['background-color', 'border-radius', 'font-size']
   function declaration(part, property) {
@@ -251,13 +271,15 @@
         revisions[c.site] === c.revision &&
         revision === c.revision
       ) {
+        if (c.mapping && (node.getAttribute('data-li-mapped-scope') !== c.mapping ||
+            (c.mapping === 'selected' && membersOf(revision)[0] !== node))) return
         if (c.surface) c.styles = c.styles.filter(property => surfacePart(node,c,property))
         if (node.matches('[data-li-local-ordinary~="align-items"]') &&
             !['flex', 'inline-flex'].includes(getComputedStyle(node).display))
           c.styles = c.styles.filter(property => property !== 'align-items')
         if (c.styleInputs) c.styles = c.styles.filter(property => {
           const input = c.styleInputs[property]
-          return !input || (node.localName === input.tag && node.style.getPropertyValue(property) === input.expression)
+          return !input || (node.localName === input.tag && node.style.getPropertyValue(input.property ?? property) === input.expression)
         })
         if(c.cssReady){
           const computed=getComputedStyle(node)
@@ -300,6 +322,7 @@
   function project(records) {
     const next = new Map()
     const rules = []
+    const placements = new Set()
     declarations = new Map()
     for (const edit of records) {
       if (!edit.prepared || edit.previewHidden) continue
@@ -308,6 +331,11 @@
       if (field) next.set(revision + ':' + field, edit)
       else if (supportedDeclaration(edit)) {
         declarations.set(revision + ':' + edit.property, edit)
+        let selector = '[data-li-revision="' + revision + '"]'
+        if (edit.prepared.mapping === 'selected') {
+          selector += '[data-li-active-binding="' + revision + '"]'
+          placements.add(revision)
+        }
         const part = edit.prepared.part
         if (part) {
           if (/^[a-f0-9]{32}$/.test(part.id) && /^[a-f0-9]{64}$/.test(part.revision) &&
@@ -325,20 +353,27 @@
           // Add a source-local default only while a value exists. A more specific
           // app rule in the same layer keeps its conditional ownership.
           for (const layer of ['ordinary', 'utilities']) {
-            const selector = ':where([data-li-revision="' + revision + '"][data-li-local-' + layer + '~="' + edit.property + '"])'
-            const rule = selector + '{' + edit.property + ':' + edit.requested + '}'
+            const localSelector = ':where(' + selector + '[data-li-local-' + layer + '~="' + edit.property + '"])'
+            const rule = localSelector + '{' + edit.property + ':' + edit.requested + '}'
             rules.push(layer === 'ordinary' ? rule : '@layer utilities{' + rule + '}')
           }
         }
         if(edit.property.startsWith('padding-')){
           const prefix='--li-'+revision.slice(0,20)
           const shorthand=['top','right','bottom','left'].map(side=>'var('+prefix+'-padding-'+side+', var('+prefix+'-base-padding-'+side+'))').join(' ')
-          rules.push('[data-li-revision="'+revision+'"]{'+prefix+'-padding:'+shorthand+'}')
+          rules.push(selector+'{'+prefix+'-padding:'+shorthand+'}')
         }
         rules.push(
-          '[data-li-revision="' + revision + '"]{--li-' + revision.slice(0, 20) + ':' + edit.requested + ';--li-' + revision.slice(0, 20) + '-' + edit.property + ':' + edit.requested + '}',
+          selector + '{--li-' + revision.slice(0, 20) + ':' + edit.requested + ';--li-' + revision.slice(0, 20) + '-' + edit.property + ':' + edit.requested + '}',
         )
       }
+    }
+    placementObserver?.disconnect()
+    attachPlacements(placements)
+    if (placements.size) {
+      placementObserver = new MutationObserver(() => attachPlacements(placements))
+      placementObserver.observe(document.documentElement, {childList:true,subtree:true,attributes:true,
+        attributeFilter:['data-li-revision','data-li-mapped-scope']})
     }
     if (sheet || rules.length) {
       if (!sheet) {
@@ -356,7 +391,7 @@
     inputs = next
   }
   function locate(edit) {
-    return document.querySelector(revisionSelector(edit.prepared.revision, edit.prepared.field))
+    return membersOf(edit.prepared.revision, edit.prepared.field)[0]
   }
   // A saved destination may mount its members after the application fetches
   // its data. Observe this revision only while the requested page is open.

@@ -72,6 +72,24 @@ export function preparedOpenings(tree) {
   return openings
 }
 
+export function inlinePadding(node) {
+  const attrs = node.attributes.filter(attr => attr.name?.name === 'style')
+  const obj = attrs.length === 1 && attrs[0].value?.expression
+  if (node.attributes.some(attr => attr.type === 'JSXSpreadAttribute') || obj?.type !== 'ObjectExpression') return
+  let padding
+  for (const property of obj.properties) {
+    if (property.type !== 'ObjectProperty' || property.computed) return
+    const key = property.key.name ?? property.key.value
+    if (!/^padding/i.test(key)) continue
+    if (key !== 'padding' || padding) return
+    padding = property.value
+  }
+  if (padding?.type === 'NumericLiteral' && padding.value >= 0)
+    return { start: padding.start, end: padding.end, base: padding.value + 'px' }
+  if (padding?.type === 'StringLiteral' && /^(?:0|\d+(?:\.\d+)?(?:px|rem|em))(?:\s+(?:0|\d+(?:\.\d+)?(?:px|rem|em))){0,3}$/.test(padding.value.trim()))
+    return { start: padding.start, end: padding.end, base: padding.value }
+}
+
 // Qualify the entire site before registering CSS or changing even one source span.
 export function preparedStyleTargets(site, node, code) {
   const targets = []
@@ -81,6 +99,12 @@ export function preparedStyleTargets(site, node, code) {
       if (!site.surface || site.surface.file!==style.css?.file || site.surface.member!==style.css?.member ||
           !['background-color','border-radius'].includes(property)) return
       targets.push({style})
+      continue
+    }
+    if (style.inlinePadding) {
+      const value = inlinePadding(node)
+      if (property !== 'padding-top' || !value || value.base !== style.base || style.tag !== node.name.name) return
+      targets.push({style,start:value.start,end:value.end})
       continue
     }
     if (style.styleInput) {

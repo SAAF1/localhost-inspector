@@ -104,12 +104,24 @@ export function preparedStyles(root, manifest) {
       if (rendered) sheet.walkDecls(d => originalValues.set(d,d.value))
       let changed = false
       sheet.walkRules((rule) => {
-        if (!baseRule(rule)) return
         const literal = rule.selector.slice(1).replace(/\\([.\[\]])/g, '$1')
-        const styles = rule.selector.startsWith('.') && byClass.get('.' + literal)
+        const styles = byClass.get(rule.selector) ?? (rule.selector.startsWith('.') && byClass.get('.' + literal))
         if (!styles) return
         for (const decl of [...rule.nodes]) {
           if (decl.type !== 'decl') continue
+          const mapped = styles.get(decl.prop === 'padding' ? 'padding-top' : decl.prop)
+          if (!decl.important && mapped?.css?.mappedDeclarations?.some(d =>
+            d.declaration === decl.prop && d.value === decl.value)) {
+            const variable = cssInput(mapped)
+            if (decl.prop === 'padding') {
+              const [top, ...untouched] = paddingParts(decl.value)
+              decl.value = ['var(' + variable + ', ' + top + ')', ...untouched].join(' ')
+            } else decl.value = 'var(' + variable + ', ' + decl.value + ')'
+            rule.append({prop:cssReady(mapped),value:'1'})
+            changed = true
+            continue
+          }
+          if (!baseRule(rule)) continue
           const wrap = (field, value) => {
             // A conditional branch or an independent unlayered rule owns its own value.
             if (
